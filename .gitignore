@@ -1,0 +1,15 @@
+# .NET build outputs
+bin/
+obj/
+
+# VS Code / local cache
+.vscode/
+*.csproj.lscache
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+
+# OS files
+.DS_Store
