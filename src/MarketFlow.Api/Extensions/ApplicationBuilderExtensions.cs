@@ -21,6 +21,8 @@ public static class ApplicationBuilderExtensions
             });
         }
 
+        app.UseCors(ServiceCollectionExtensions.FrontendCorsPolicy);
+
         app.MapControllers();
 
         return app;

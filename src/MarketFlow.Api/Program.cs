@@ -1,6 +1,10 @@
+using MarketFlow.Api.Configuration;
 using MarketFlow.Api.Extensions;
 
+DotEnv.Load();
+
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddFriendlyEnvironmentVariables();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

@@ -2,6 +2,9 @@
 bin/
 obj/
 
+# Local environment variables
+.env
+
 # VS Code / local cache
 .vscode/
 *.csproj.lscache
