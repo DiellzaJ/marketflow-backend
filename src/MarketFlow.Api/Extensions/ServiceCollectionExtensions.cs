@@ -1,5 +1,7 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 using MarketFlow.Application.Features.Auth.Interfaces;
-using MarketFlow.Application.Features.Auth.Services;
 using MarketFlow.Application.Features.Companies.Interfaces;
 using MarketFlow.Application.Features.Companies.Services;
 using MarketFlow.Application.Features.Inventory.Interfaces;
@@ -17,7 +19,10 @@ using MarketFlow.Infrastructure.MultiTenancy;
 using MarketFlow.Infrastructure.Persistence;
 using MarketFlow.Infrastructure.Repositories;
 using MarketFlow.Infrastructure.Services;
+using MarketFlow.Infrastructure.Services.Auth;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 
 namespace MarketFlow.Api.Extensions;
@@ -52,7 +57,54 @@ public static class ServiceCollectionExtensions
             });
         });
 
-        services.AddScoped<IAuthService, AuthService>();
+        var jwtSecret = GetRequiredConfigurationValue(configuration, "Jwt:Secret", "Jwt__Secret");
+
+        services
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = GetRequiredConfigurationValue(configuration, "Jwt:Issuer", "Jwt__Issuer"),
+                    ValidateAudience = true,
+                    ValidAudience = GetRequiredConfigurationValue(configuration, "Jwt:Audience", "Jwt__Audience"),
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.Zero
+                };
+
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        var tokenId = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti);
+
+                        if (string.IsNullOrWhiteSpace(tokenId))
+                        {
+                            context.Fail("Access token is missing token id.");
+                            return;
+                        }
+
+                        var dbContext = context.HttpContext.RequestServices
+                            .GetRequiredService<ApplicationDbContext>();
+
+                        var tokenIsRevoked = await dbContext.RevokedAccessTokens
+                            .AnyAsync(x => x.TokenId == tokenId && x.ExpiresAt > DateTimeOffset.UtcNow);
+
+                        if (tokenIsRevoked)
+                        {
+                            context.Fail("Access token has been revoked.");
+                        }
+                    }
+                };
+            });
+
+        services.AddAuthorization();
+
+        services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
+        services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IProductService, ProductService>();

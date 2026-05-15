@@ -14,7 +14,7 @@ public static class EnvironmentVariableConfigurationExtensions
             ["JWT_SECRET"] = "Jwt:Secret",
             ["JWT_ISSUER"] = "Jwt:Issuer",
             ["JWT_AUDIENCE"] = "Jwt:Audience",
-            ["JWT_EXPIRES_MINUTES"] = "Jwt:ExpiresMinutes",
+            ["JWT_EXPIRES_MINUTES"] = "Jwt:AccessTokenMinutes",
             ["REFRESH_TOKEN_EXPIRES_DAYS"] = "Jwt:RefreshTokenExpiresDays",
             ["ROOT_ADMIN_FULL_NAME"] = "RootAdmin:FullName",
             ["ROOT_ADMIN_EMAIL"] = "RootAdmin:Email",
