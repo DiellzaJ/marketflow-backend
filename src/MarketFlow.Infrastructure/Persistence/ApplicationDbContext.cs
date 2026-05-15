@@ -10,37 +10,29 @@ public class ApplicationDbContext : DbContext
     {
     }
 
+    // Global schema tables
+    public DbSet<Role> Roles => Set<Role>();
     public DbSet<Company> Companies => Set<Company>();
-
     public DbSet<User> Users => Set<User>();
 
-    public DbSet<Role> Roles => Set<Role>();
-
-    public DbSet<Category> Categories => Set<Category>();
-
+    // Temporary DbSets because existing repositories reference them.
+    // These will be configured properly later in the tenant schema issue.
     public DbSet<Product> Products => Set<Product>();
-
-    public DbSet<Inventory> Inventories => Set<Inventory>();
-
-    public DbSet<InventoryMovement> InventoryMovements => Set<InventoryMovement>();
-
-    public DbSet<Supplier> Suppliers => Set<Supplier>();
-
-    public DbSet<Purchase> Purchases => Set<Purchase>();
-
-    public DbSet<PurchaseItem> PurchaseItems => Set<PurchaseItem>();
-
-    public DbSet<Customer> Customers => Set<Customer>();
-
     public DbSet<Sale> Sales => Set<Sale>();
-
-    public DbSet<SaleItem> SaleItems => Set<SaleItem>();
-
-    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<Inventory> Inventories => Set<Inventory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.HasDefaultSchema("public");
+
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
+
+        // Important:
+        // Do not include tenant tables in InitialGlobalSchema migration yet.
+        modelBuilder.Ignore<Product>();
+        modelBuilder.Ignore<Sale>();
+        modelBuilder.Ignore<Inventory>();
     }
 }

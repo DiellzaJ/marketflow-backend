@@ -1,5 +1,6 @@
 using MarketFlow.Api.Configuration;
 using MarketFlow.Api.Extensions;
+using MarketFlow.Infrastructure.Seed;
 
 DotEnv.Load();
 
@@ -22,6 +23,11 @@ builder.Services.AddOpenApi(options =>
 builder.Services.AddApiServices(builder.Configuration);
 
 var app = builder.Build();
+
+if (app.Environment.IsDevelopment())
+{
+    await app.Services.SeedGlobalDataAsync();
+}
 
 app.UseApiPipeline();
 
