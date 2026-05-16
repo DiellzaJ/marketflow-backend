@@ -1,20 +1,94 @@
-using MarketFlow.Application.Common.Models;
+using System.Globalization;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using MarketFlow.Application.Features.Auth.DTOs;
 using MarketFlow.Application.Features.Auth.Interfaces;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class AuthController(IAuthService authService) : ControllerBase
+public class AuthController : ControllerBase
 {
-    [HttpPost("login")]
-    public async Task<ActionResult<ServiceResult<AuthResponseDto>>> LoginAsync(
-        [FromBody] LoginRequestDto request,
-        CancellationToken cancellationToken)
+    private readonly IAuthService _authService;
+
+    public AuthController(IAuthService authService)
     {
-        var result = await authService.LoginAsync(request, cancellationToken);
-        return Ok(result);
+        _authService = authService;
+    }
+
+    [HttpPost("register")]
+    public async Task<IActionResult> Register(RegisterRequest request)
+    {
+        var response = await _authService.RegisterAsync(request);
+
+        return Ok(response);
+    }
+
+    [HttpPost("login")]
+    public async Task<IActionResult> Login(LoginRequest request)
+    {
+        var response = await _authService.LoginAsync(request);
+
+        return Ok(response);
+    }
+
+    [HttpPost("refresh-token")]
+    public async Task<IActionResult> RefreshToken(RefreshTokenRequest request)
+    {
+        var response = await _authService.RefreshTokenAsync(request);
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var accessTokenId = User.FindFirstValue(JwtRegisteredClaimNames.Jti);
+        var expiresAtClaim = User.FindFirstValue(JwtRegisteredClaimNames.Exp);
+
+        if (!int.TryParse(userIdClaim, out var userId) ||
+            string.IsNullOrWhiteSpace(accessTokenId) ||
+            !TryParseUnixTimeSeconds(expiresAtClaim, out var accessTokenExpiresAt))
+        {
+            return Unauthorized();
+        }
+
+        await _authService.LogoutAsync(userId, accessTokenId, accessTokenExpiresAt);
+
+        return NoContent();
+    }
+
+    [Authorize]
+    [HttpGet("me")]
+    public IActionResult Me()
+    {
+        return Ok(new
+        {
+            UserId = User.FindFirstValue(ClaimTypes.NameIdentifier),
+            Email = User.FindFirstValue(ClaimTypes.Email),
+            FullName = User.FindFirstValue(ClaimTypes.Name),
+            Role = User.FindFirstValue(ClaimTypes.Role),
+            CompanyId = User.FindFirstValue("company_id"),
+            SchemaName = User.FindFirstValue("schema_name")
+        });
+    }
+
+    private static bool TryParseUnixTimeSeconds(string? value, out DateTimeOffset dateTimeOffset)
+    {
+        dateTimeOffset = default;
+
+        if (!long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var seconds))
+        {
+            return false;
+        }
+
+        dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(seconds);
+
+        return true;
     }
 }

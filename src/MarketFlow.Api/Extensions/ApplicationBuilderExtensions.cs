@@ -12,16 +12,20 @@ public static class ApplicationBuilderExtensions
         if (app.Environment.IsDevelopment())
         {
             app.MapOpenApi();
-            app.MapOpenApi("/swagger/{documentName}/swagger.json");
+
             app.UseSwaggerUI(options =>
             {
-                options.RoutePrefix = "swagger";
-                options.DocumentTitle = "MarketFlow API";
                 options.SwaggerEndpoint("/openapi/v1.json", "MarketFlow API v1");
+                options.RoutePrefix = "swagger";
             });
         }
 
+        app.UseHttpsRedirection();
+
         app.UseCors(ServiceCollectionExtensions.FrontendCorsPolicy);
+
+        app.UseAuthentication();
+        app.UseAuthorization();
 
         app.MapControllers();
 
