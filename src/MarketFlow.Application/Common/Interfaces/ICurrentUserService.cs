@@ -2,9 +2,11 @@ namespace MarketFlow.Application.Common.Interfaces;
 
 public interface ICurrentUserService
 {
-    Guid? UserId { get; }
+    int? UserId { get; }
 
-    Guid? CompanyId { get; }
+    int? CompanyId { get; }
 
     string? Email { get; }
+
+    string? SchemaName { get; }
 }

@@ -48,9 +48,9 @@ public class AuthService : IAuthService
             throw new InvalidOperationException("Role does not exist.");
         }
 
-        if (role.Name == "RootAdmin")
+        if (role.Name != "Seller")
         {
-            throw new InvalidOperationException("RootAdmin cannot be created from public register endpoint.");
+            throw new InvalidOperationException("Public registration can only create Seller users.");
         }
 
         var user = new User
