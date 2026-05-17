@@ -54,4 +54,15 @@ public class PurchasesController(IPurchaseService purchaseService) : ControllerB
 
         return result.Succeeded ? Ok(result) : NotFound(result);
     }
+
+    [HttpDelete("{id:int}")]
+    [Authorize(Policy = AuthorizationPolicies.DeletePurchases)]
+    public async Task<ActionResult<ServiceResult<bool>>> DeleteAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await purchaseService.DeletePurchaseAsync(id, cancellationToken);
+
+        return result.Succeeded ? Ok(result) : NotFound(result);
+    }
 }

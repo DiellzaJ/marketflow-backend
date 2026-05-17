@@ -72,4 +72,15 @@ public class PurchaseService : IPurchaseService
             ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.")
             : ServiceResult<PurchaseDto>.Success(purchase, "Purchase updated.");
     }
+
+    public async Task<ServiceResult<bool>> DeletePurchaseAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var deleted = await _tenantQueryService.DeletePurchaseAsync(id, cancellationToken);
+
+        return deleted
+            ? ServiceResult<bool>.Success(true, "Purchase deleted.")
+            : ServiceResult<bool>.Failure("Purchase was not found.");
+    }
 }

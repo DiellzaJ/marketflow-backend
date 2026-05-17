@@ -30,11 +30,16 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                     "products:delete": true,
                     "sales:read": true,
                     "sales:create": true,
+                    "sales:update": true,
+                    "sales:delete": true,
+                    "inventory:create": true,
                     "inventory:read": true,
                     "inventory:update": true,
+                    "inventory:delete": true,
                     "purchases:read": true,
                     "purchases:create": true,
-                    "purchases:update": true
+                    "purchases:update": true,
+                    "purchases:delete": true
                 }'::jsonb
                 WHERE name = 'CompanyAdmin';
 
@@ -46,13 +51,28 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                     "products:delete": true,
                     "sales:read": true,
                     "sales:create": true,
+                    "sales:update": true,
+                    "sales:delete": true,
+                    "inventory:create": true,
                     "inventory:read": true,
                     "inventory:update": true,
+                    "inventory:delete": true,
                     "purchases:read": true,
                     "purchases:create": true,
-                    "purchases:update": true
+                    "purchases:update": true,
+                    "purchases:delete": true
                 }'::jsonb
                 WHERE name = 'MainOperator';
+
+                UPDATE public.roles
+                SET permissions = '{
+                    "products:read": true,
+                    "inventory:create": true,
+                    "inventory:read": true,
+                    "inventory:update": true,
+                    "inventory:delete": true
+                }'::jsonb
+                WHERE name = 'DepartmentManager';
 
                 UPDATE public.roles
                 SET permissions = '{
@@ -60,7 +80,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                     "inventory:read": true,
                     "inventory:update": true
                 }'::jsonb
-                WHERE name IN ('DepartmentManager', 'InventoryEmployee');
+                WHERE name = 'InventoryEmployee';
 
                 UPDATE public.roles
                 SET permissions = '{

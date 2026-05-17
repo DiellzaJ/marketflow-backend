@@ -21,4 +21,8 @@ public interface IPurchaseService
         int id,
         PatchPurchaseRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<bool>> DeletePurchaseAsync(
+        int id,
+        CancellationToken cancellationToken = default);
 }

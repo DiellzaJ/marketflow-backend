@@ -146,17 +146,32 @@ public static class ServiceCollectionExtensions
             options.AddPolicy(AuthorizationPolicies.UpdatePurchases, policy =>
                 policy.Requirements.Add(new PermissionRequirement("purchases", "update")));
 
+            options.AddPolicy(AuthorizationPolicies.DeletePurchases, policy =>
+                policy.Requirements.Add(new PermissionRequirement("purchases", "delete")));
+
             options.AddPolicy(AuthorizationPolicies.ReadSales, policy =>
                 policy.Requirements.Add(new PermissionRequirement("sales", "read")));
 
             options.AddPolicy(AuthorizationPolicies.CreateSales, policy =>
                 policy.Requirements.Add(new PermissionRequirement("sales", "create")));
 
+            options.AddPolicy(AuthorizationPolicies.UpdateSales, policy =>
+                policy.Requirements.Add(new PermissionRequirement("sales", "update")));
+
+            options.AddPolicy(AuthorizationPolicies.DeleteSales, policy =>
+                policy.Requirements.Add(new PermissionRequirement("sales", "delete")));
+
+            options.AddPolicy(AuthorizationPolicies.CreateInventory, policy =>
+                policy.Requirements.Add(new PermissionRequirement("inventory", "create")));
+
             options.AddPolicy(AuthorizationPolicies.UpdateInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("inventory", "update")));
 
             options.AddPolicy(AuthorizationPolicies.ReadInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("inventory", "read")));
+
+            options.AddPolicy(AuthorizationPolicies.DeleteInventory, policy =>
+                policy.Requirements.Add(new PermissionRequirement("inventory", "delete")));
         });
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 

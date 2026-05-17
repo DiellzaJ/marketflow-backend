@@ -25,6 +25,28 @@ public class InventoryService : IInventoryService
         return ServiceResult<IReadOnlyCollection<InventoryItemDto>>.Success(inventory);
     }
 
+    public async Task<ServiceResult<InventoryItemDto>> CreateInventoryItemAsync(
+        CreateInventoryItemRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.ProductId <= 0 || request.MarketId <= 0)
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Product and market are required.");
+        }
+
+        if (request.Quantity < 0 || request.ReservedQuantity < 0)
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Inventory quantities cannot be negative.");
+        }
+
+        var inventoryItem = await _tenantQueryService.CreateInventoryItemAsync(
+            request,
+            _currentUserService.UserId,
+            cancellationToken);
+
+        return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item created.");
+    }
+
     public async Task<ServiceResult<InventoryItemDto>> UpdateInventoryItemAsync(
         int id,
         UpdateInventoryItemRequest request,
@@ -65,5 +87,16 @@ public class InventoryService : IInventoryService
         return inventoryItem is null
             ? ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.")
             : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item updated.");
+    }
+
+    public async Task<ServiceResult<bool>> DeleteInventoryItemAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var deleted = await _tenantQueryService.DeleteInventoryItemAsync(id, cancellationToken);
+
+        return deleted
+            ? ServiceResult<bool>.Success(true, "Inventory item deleted.")
+            : ServiceResult<bool>.Failure("Inventory item was not found.");
     }
 }

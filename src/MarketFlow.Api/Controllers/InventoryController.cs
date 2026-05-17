@@ -20,6 +20,17 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
         return Ok(result);
     }
 
+    [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.CreateInventory)]
+    public async Task<ActionResult<ServiceResult<InventoryItemDto>>> CreateAsync(
+        CreateInventoryItemRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.CreateInventoryItemAsync(request, cancellationToken);
+
+        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
+    }
+
     [HttpPut("{id:int}")]
     [Authorize(Policy = AuthorizationPolicies.UpdateInventory)]
     public async Task<ActionResult<ServiceResult<InventoryItemDto>>> UpdateAsync(
@@ -40,6 +51,17 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
         CancellationToken cancellationToken)
     {
         var result = await inventoryService.PatchInventoryItemAsync(id, request, cancellationToken);
+
+        return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
+    [HttpDelete("{id:int}")]
+    [Authorize(Policy = AuthorizationPolicies.DeleteInventory)]
+    public async Task<ActionResult<ServiceResult<bool>>> DeleteAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.DeleteInventoryItemAsync(id, cancellationToken);
 
         return result.Succeeded ? Ok(result) : NotFound(result);
     }

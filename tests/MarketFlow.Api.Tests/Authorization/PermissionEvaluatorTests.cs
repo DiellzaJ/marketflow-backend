@@ -18,11 +18,16 @@ public sealed class PermissionEvaluatorTests
             "products:delete": true,
             "sales:read": true,
             "sales:create": true,
+            "sales:update": true,
+            "sales:delete": true,
+            "inventory:create": true,
             "inventory:read": true,
             "inventory:update": true,
+            "inventory:delete": true,
             "purchases:read": true,
             "purchases:create": true,
-            "purchases:update": true
+            "purchases:update": true,
+            "purchases:delete": true
         }
         """;
 
@@ -34,11 +39,16 @@ public sealed class PermissionEvaluatorTests
             "products:delete": true,
             "sales:read": true,
             "sales:create": true,
+            "sales:update": true,
+            "sales:delete": true,
+            "inventory:create": true,
             "inventory:read": true,
             "inventory:update": true,
+            "inventory:delete": true,
             "purchases:read": true,
             "purchases:create": true,
-            "purchases:update": true
+            "purchases:update": true,
+            "purchases:delete": true
         }
         """;
 
@@ -59,6 +69,9 @@ public sealed class PermissionEvaluatorTests
         { CompanyAdminPermissions, "products", "delete" },
         { MainOperatorPermissions, "products", "update" },
         { MainOperatorPermissions, "purchases", "create" },
+        { MainOperatorPermissions, "purchases", "delete" },
+        { MainOperatorPermissions, "sales", "delete" },
+        { MainOperatorPermissions, "inventory", "create" },
         { SellerPermissions, "products", "read" },
         { SellerPermissions, "sales", "create" },
         { SellerPermissions, "inventory", "update" },
@@ -71,8 +84,11 @@ public sealed class PermissionEvaluatorTests
         { MainOperatorPermissions, "users", "create" },
         { SellerPermissions, "users", "read" },
         { SellerPermissions, "sales", "read" },
+        { SellerPermissions, "sales", "delete" },
         { SellerPermissions, "products", "create" },
         { SellerPermissions, "purchases", "create" },
+        { SellerPermissions, "purchases", "delete" },
+        { SellerPermissions, "inventory", "create" },
         { SellerPermissions, "inventory", "delete" }
     };
 

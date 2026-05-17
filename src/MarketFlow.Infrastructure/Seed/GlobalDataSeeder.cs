@@ -35,19 +35,19 @@ public static class GlobalDataSeeder
             {
                 Name = "CompanyAdmin",
                 Description = "Company-level administrator",
-                Permissions = "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true}"
+                Permissions = "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"inventory:delete\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"
             },
             new Role
             {
                 Name = "MainOperator",
                 Description = "Market-level manager",
-                Permissions = "{\"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true}"
+                Permissions = "{\"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"inventory:delete\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"
             },
             new Role
             {
                 Name = "DepartmentManager",
                 Description = "Department-level manager",
-                Permissions = "{\"products:read\": true, \"inventory:read\": true, \"inventory:update\": true}"
+                Permissions = "{\"products:read\": true, \"inventory:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"inventory:delete\": true}"
             },
             new Role
             {

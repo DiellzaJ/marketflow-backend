@@ -228,6 +228,45 @@ public sealed class TenantQueryService : ITenantQueryService
         return inventory;
     }
 
+    public async Task<InventoryItemDto> CreateInventoryItemAsync(
+        CreateInventoryItemRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            INSERT INTO {schemaName}.inventory (
+                product_id,
+                market_id,
+                department_id,
+                quantity,
+                reserved_quantity,
+                last_updated_by)
+            VALUES (
+                @product_id,
+                @market_id,
+                @department_id,
+                @quantity,
+                @reserved_quantity,
+                @last_updated_by)
+            RETURNING id;
+            """, cancellationToken);
+
+        command.Parameters.AddWithValue("product_id", request.ProductId);
+        command.Parameters.AddWithValue("market_id", request.MarketId);
+        command.Parameters.AddWithValue("department_id", DbValue(request.DepartmentId));
+        command.Parameters.AddWithValue("quantity", request.Quantity);
+        command.Parameters.AddWithValue("reserved_quantity", request.ReservedQuantity);
+        command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
+
+        var createdId = (int?)await command.ExecuteScalarAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Inventory item was not created.");
+
+        return await GetInventoryItemAsync(createdId, cancellationToken)
+            ?? throw new InvalidOperationException("Inventory item was not found after creation.");
+    }
+
     public async Task<InventoryItemDto?> UpdateInventoryItemAsync(
         int id,
         UpdateInventoryItemRequest request,
@@ -254,6 +293,21 @@ public sealed class TenantQueryService : ITenantQueryService
         var updatedId = await command.ExecuteScalarAsync(cancellationToken);
 
         return updatedId is null ? null : await GetInventoryItemAsync(id, cancellationToken);
+    }
+
+    public async Task<bool> DeleteInventoryItemAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            DELETE FROM {schemaName}.inventory
+            WHERE id = @id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task<InventoryItemDto?> PatchInventoryItemAsync(
@@ -350,6 +404,81 @@ public sealed class TenantQueryService : ITenantQueryService
 
         return await ReadSaleAsync(command, cancellationToken)
             ?? throw new InvalidOperationException("Sale was not created.");
+    }
+
+    public async Task<SaleDto?> UpdateSaleAsync(
+        int id,
+        UpdateSaleRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.sales
+            SET market_id = @market_id,
+                sale_date = @sale_date,
+                payment_method = @payment_method,
+                discount_amount = @discount_amount,
+                total_amount = @total_amount,
+                notes = @notes
+            WHERE id = @id
+            RETURNING id, market_id, sale_date, payment_method, total_amount;
+            """, cancellationToken);
+
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("market_id", request.MarketId);
+        command.Parameters.AddWithValue("sale_date", request.SaleDate);
+        command.Parameters.AddWithValue("payment_method", request.PaymentMethod.Trim());
+        command.Parameters.AddWithValue("discount_amount", request.DiscountAmount);
+        command.Parameters.AddWithValue("total_amount", request.TotalAmount);
+        command.Parameters.AddWithValue("notes", DbValue(request.Notes));
+
+        return await ReadSaleAsync(command, cancellationToken);
+    }
+
+    public async Task<SaleDto?> PatchSaleAsync(
+        int id,
+        PatchSaleRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.sales
+            SET market_id = COALESCE(@market_id, market_id),
+                sale_date = COALESCE(@sale_date, sale_date),
+                payment_method = COALESCE(@payment_method, payment_method),
+                discount_amount = COALESCE(@discount_amount, discount_amount),
+                total_amount = COALESCE(@total_amount, total_amount),
+                notes = COALESCE(@notes, notes)
+            WHERE id = @id
+            RETURNING id, market_id, sale_date, payment_method, total_amount;
+            """, cancellationToken);
+
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("market_id", DbValue(request.MarketId));
+        command.Parameters.AddWithValue("sale_date", DbValue(request.SaleDate));
+        command.Parameters.AddWithValue("payment_method", DbValue(request.PaymentMethod?.Trim()));
+        command.Parameters.AddWithValue("discount_amount", DbValue(request.DiscountAmount));
+        command.Parameters.AddWithValue("total_amount", DbValue(request.TotalAmount));
+        command.Parameters.AddWithValue("notes", DbValue(request.Notes));
+
+        return await ReadSaleAsync(command, cancellationToken);
+    }
+
+    public async Task<bool> DeleteSaleAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            DELETE FROM {schemaName}.sales
+            WHERE id = @id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(
@@ -479,6 +608,21 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
         return await ReadPurchaseAsync(command, cancellationToken);
+    }
+
+    public async Task<bool> DeletePurchaseAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            DELETE FROM {schemaName}.purchases
+            WHERE id = @id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     private async Task<InventoryItemDto?> GetInventoryItemAsync(
