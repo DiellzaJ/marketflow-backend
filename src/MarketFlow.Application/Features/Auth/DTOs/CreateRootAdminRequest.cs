@@ -1,0 +1,10 @@
+namespace MarketFlow.Application.Features.Auth.DTOs;
+
+public class CreateRootAdminRequest
+{
+    public string FullName { get; set; } = string.Empty;
+
+    public string Email { get; set; } = string.Empty;
+
+    public string Password { get; set; } = string.Empty;
+}

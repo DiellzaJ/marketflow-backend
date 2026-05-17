@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using MarketFlow.Api.Authorization;
 using MarketFlow.Application.Features.Auth.DTOs;
 using MarketFlow.Application.Features.Auth.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -23,6 +24,15 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Register(RegisterRequest request)
     {
         var response = await _authService.RegisterAsync(request);
+
+        return Ok(response);
+    }
+
+    [Authorize(Policy = AuthorizationPolicies.RootAdminOnly)]
+    [HttpPost("root-admins")]
+    public async Task<IActionResult> CreateRootAdmin(CreateRootAdminRequest request)
+    {
+        var response = await _authService.CreateRootAdminAsync(request);
 
         return Ok(response);
     }
