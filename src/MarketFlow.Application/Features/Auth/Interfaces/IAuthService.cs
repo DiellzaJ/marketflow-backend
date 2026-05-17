@@ -6,7 +6,7 @@ public interface IAuthService
 {
     Task<AuthResponse> RegisterAsync(RegisterRequest request);
 
-    Task<AuthResponse> CreateRootAdminAsync(CreateRootAdminRequest request);
+    Task<CreateRootAdminResponse> CreateRootAdminAsync(CreateRootAdminRequest request);
 
     Task<AuthResponse> LoginAsync(LoginRequest request);
 

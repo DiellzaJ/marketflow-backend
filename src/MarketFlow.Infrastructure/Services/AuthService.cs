@@ -29,7 +29,7 @@ public class AuthService : IAuthService
 
     public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
     {
-        var email = request.Email.Trim().ToLower();
+        var email = NormalizeEmail(request.Email);
 
         var emailExists = await _dbContext.Users
             .AnyAsync(x => x.Email == email);
@@ -79,7 +79,7 @@ public class AuthService : IAuthService
         return await GenerateAuthResponseAsync(user);
     }
 
-    public async Task<AuthResponse> CreateRootAdminAsync(CreateRootAdminRequest request)
+    public async Task<CreateRootAdminResponse> CreateRootAdminAsync(CreateRootAdminRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.FullName) ||
             string.IsNullOrWhiteSpace(request.Email) ||
@@ -108,7 +108,7 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("Only active RootAdmin users can create platform administrators.");
         }
 
-        var email = request.Email.Trim().ToLowerInvariant();
+        var email = NormalizeEmail(request.Email);
 
         var emailExists = await _dbContext.Users
             .AnyAsync(x => x.Email == email);
@@ -150,12 +150,20 @@ public class AuthService : IAuthService
         user.Company = platformCompany;
         user.Role = rootRole;
 
-        return await GenerateAuthResponseAsync(user);
+        return new CreateRootAdminResponse
+        {
+            UserId = user.Id,
+            FullName = user.FullName,
+            Email = user.Email,
+            Role = rootRole.Name,
+            CompanyId = user.CompanyId,
+            SchemaName = platformCompany.SchemaName
+        };
     }
 
     public async Task<AuthResponse> LoginAsync(LoginRequest request)
     {
-        var email = request.Email.Trim().ToLower();
+        var email = NormalizeEmail(request.Email);
 
         var user = await _dbContext.Users
             .Include(x => x.Role)
@@ -252,5 +260,10 @@ public class AuthService : IAuthService
             AccessToken = accessToken,
             RefreshToken = refreshToken
         };
+    }
+
+    private static string NormalizeEmail(string email)
+    {
+        return email.Trim().ToLowerInvariant();
     }
 }
