@@ -18,6 +18,8 @@ public sealed class CurrentUserService : ICurrentUserService
 
     public string? Email => User.FindFirstValue(ClaimTypes.Email);
 
+    public string? Role => User.FindFirstValue(ClaimTypes.Role);
+
     public string? SchemaName => User.FindFirstValue("schema_name");
 
     private ClaimsPrincipal User =>

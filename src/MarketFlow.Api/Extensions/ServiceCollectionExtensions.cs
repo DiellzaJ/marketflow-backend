@@ -113,28 +113,71 @@ public static class ServiceCollectionExtensions
             options.AddPolicy(AuthorizationPolicies.ManageCompanies, policy =>
                 policy.Requirements.Add(new PermissionRequirement("company")));
 
-            options.AddPolicy(AuthorizationPolicies.ManageUsers, policy =>
-                policy.Requirements.Add(new PermissionRequirement("users")));
+            options.AddPolicy(AuthorizationPolicies.ReadUsers, policy =>
+                policy.Requirements.Add(new PermissionRequirement("users", "read")));
 
-            options.AddPolicy(AuthorizationPolicies.ManageProducts, policy =>
-                policy.Requirements.Add(new PermissionRequirement("products")));
+            options.AddPolicy(AuthorizationPolicies.CreateUsers, policy =>
+                policy.Requirements.Add(new PermissionRequirement("users", "create")));
 
-            options.AddPolicy(AuthorizationPolicies.ManagePurchases, policy =>
-                policy.Requirements.Add(new PermissionRequirement("purchases")));
+            options.AddPolicy(AuthorizationPolicies.UpdateUsers, policy =>
+                policy.Requirements.Add(new PermissionRequirement("users", "update")));
 
-            options.AddPolicy(AuthorizationPolicies.ManageSales, policy =>
-                policy.Requirements.Add(new PermissionRequirement("sales")));
+            options.AddPolicy(AuthorizationPolicies.DeleteUsers, policy =>
+                policy.Requirements.Add(new PermissionRequirement("users", "delete")));
 
-            options.AddPolicy(AuthorizationPolicies.ManageInventory, policy =>
+            options.AddPolicy(AuthorizationPolicies.ReadProducts, policy =>
+                policy.Requirements.Add(new PermissionRequirement("products", "read")));
+
+            options.AddPolicy(AuthorizationPolicies.CreateProducts, policy =>
+                policy.Requirements.Add(new PermissionRequirement("products", "create")));
+
+            options.AddPolicy(AuthorizationPolicies.UpdateProducts, policy =>
+                policy.Requirements.Add(new PermissionRequirement("products", "update")));
+
+            options.AddPolicy(AuthorizationPolicies.DeleteProducts, policy =>
+                policy.Requirements.Add(new PermissionRequirement("products", "delete")));
+
+            options.AddPolicy(AuthorizationPolicies.ReadPurchases, policy =>
+                policy.Requirements.Add(new PermissionRequirement("purchases", "read")));
+
+            options.AddPolicy(AuthorizationPolicies.CreatePurchases, policy =>
+                policy.Requirements.Add(new PermissionRequirement("purchases", "create")));
+
+            options.AddPolicy(AuthorizationPolicies.UpdatePurchases, policy =>
+                policy.Requirements.Add(new PermissionRequirement("purchases", "update")));
+
+            options.AddPolicy(AuthorizationPolicies.DeletePurchases, policy =>
+                policy.Requirements.Add(new PermissionRequirement("purchases", "delete")));
+
+            options.AddPolicy(AuthorizationPolicies.ReadSales, policy =>
+                policy.Requirements.Add(new PermissionRequirement("sales", "read")));
+
+            options.AddPolicy(AuthorizationPolicies.CreateSales, policy =>
+                policy.Requirements.Add(new PermissionRequirement("sales", "create")));
+
+            options.AddPolicy(AuthorizationPolicies.UpdateSales, policy =>
+                policy.Requirements.Add(new PermissionRequirement("sales", "update")));
+
+            options.AddPolicy(AuthorizationPolicies.DeleteSales, policy =>
+                policy.Requirements.Add(new PermissionRequirement("sales", "delete")));
+
+            options.AddPolicy(AuthorizationPolicies.CreateInventory, policy =>
+                policy.Requirements.Add(new PermissionRequirement("inventory", "create")));
+
+            options.AddPolicy(AuthorizationPolicies.UpdateInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("inventory", "update")));
 
             options.AddPolicy(AuthorizationPolicies.ReadInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("inventory", "read")));
+
+            options.AddPolicy(AuthorizationPolicies.DeleteInventory, policy =>
+                policy.Requirements.Add(new PermissionRequirement("inventory", "delete")));
         });
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<ITenantQueryService, TenantQueryService>();
+        services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();

@@ -37,13 +37,16 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
             return;
         }
 
-        if (TryHasPermission(user.Role.Permissions, requirement.Permission, requirement.Access))
+        if (PermissionEvaluator.TryHasPermission(user.Role.Permissions, requirement.Permission, requirement.Access))
         {
             context.Succeed(requirement);
         }
     }
+}
 
-    private static bool TryHasPermission(string permissionsJson, string permission, string? requiredAccess)
+internal static class PermissionEvaluator
+{
+    public static bool TryHasPermission(string permissionsJson, string permission, string? requiredAccess = null)
     {
         try
         {
@@ -67,6 +70,12 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
         if (IsTruthy(root, "all"))
         {
             return true;
+        }
+
+        if (requiredAccess is not null &&
+            root.TryGetProperty($"{permission}:{requiredAccess}", out var actionValue))
+        {
+            return IsTruthy(actionValue);
         }
 
         if (!root.TryGetProperty(permission, out var value))

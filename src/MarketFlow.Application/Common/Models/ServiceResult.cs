@@ -17,4 +17,13 @@ public class ServiceResult<T>
             Data = data
         };
     }
+
+    public static ServiceResult<T> Failure(string message)
+    {
+        return new ServiceResult<T>
+        {
+            Succeeded = false,
+            Message = message
+        };
+    }
 }
