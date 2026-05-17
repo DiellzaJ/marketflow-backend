@@ -1,4 +1,5 @@
 using BCrypt.Net;
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Features.Auth.DTOs;
 using MarketFlow.Application.Features.Auth.Interfaces;
 using MarketFlow.Domain.Entities;
@@ -9,14 +10,20 @@ namespace MarketFlow.Infrastructure.Services.Auth;
 
 public class AuthService : IAuthService
 {
+    private const string PlatformAdminSchemaName = "platform_admin";
+    private const string RootAdminRoleName = "RootAdmin";
+
     private readonly ApplicationDbContext _dbContext;
+    private readonly ICurrentUserService _currentUserService;
     private readonly IJwtTokenService _jwtTokenService;
 
     public AuthService(
         ApplicationDbContext dbContext,
+        ICurrentUserService currentUserService,
         IJwtTokenService jwtTokenService)
     {
         _dbContext = dbContext;
+        _currentUserService = currentUserService;
         _jwtTokenService = jwtTokenService;
     }
 
@@ -68,6 +75,80 @@ public class AuthService : IAuthService
 
         user.Company = company;
         user.Role = role;
+
+        return await GenerateAuthResponseAsync(user);
+    }
+
+    public async Task<AuthResponse> CreateRootAdminAsync(CreateRootAdminRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.FullName) ||
+            string.IsNullOrWhiteSpace(request.Email) ||
+            string.IsNullOrWhiteSpace(request.Password))
+        {
+            throw new InvalidOperationException("Full name, email, and password are required.");
+        }
+
+        var currentUserId = _currentUserService.UserId;
+
+        if (currentUserId is null)
+        {
+            throw new UnauthorizedAccessException("Current user is required.");
+        }
+
+        var currentUser = await _dbContext.Users
+            .Include(x => x.Role)
+            .Include(x => x.Company)
+            .FirstOrDefaultAsync(x => x.Id == currentUserId.Value);
+
+        if (currentUser is null ||
+            !currentUser.IsActive ||
+            !currentUser.Company.IsActive ||
+            !string.Equals(currentUser.Role.Name, RootAdminRoleName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException("Only active RootAdmin users can create platform administrators.");
+        }
+
+        var email = request.Email.Trim().ToLowerInvariant();
+
+        var emailExists = await _dbContext.Users
+            .AnyAsync(x => x.Email == email);
+
+        if (emailExists)
+        {
+            throw new InvalidOperationException("A user with this email already exists.");
+        }
+
+        var rootRole = await _dbContext.Roles
+            .FirstOrDefaultAsync(x => x.Name == RootAdminRoleName);
+
+        if (rootRole is null)
+        {
+            throw new InvalidOperationException("RootAdmin role does not exist.");
+        }
+
+        var platformCompany = await _dbContext.Companies
+            .FirstOrDefaultAsync(x => x.SchemaName == PlatformAdminSchemaName && x.IsActive);
+
+        if (platformCompany is null)
+        {
+            throw new InvalidOperationException("Platform admin company does not exist or is inactive.");
+        }
+
+        var user = new User
+        {
+            FullName = request.FullName.Trim(),
+            Email = email,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password),
+            CompanyId = platformCompany.Id,
+            RoleId = rootRole.Id,
+            IsActive = true
+        };
+
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+
+        user.Company = platformCompany;
+        user.Role = rootRole;
 
         return await GenerateAuthResponseAsync(user);
     }
