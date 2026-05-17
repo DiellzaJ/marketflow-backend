@@ -2,9 +2,15 @@ namespace MarketFlow.Application.Features.Purchases.DTOs;
 
 public class PurchaseDto
 {
-    public Guid Id { get; set; }
+    public int Id { get; set; }
 
-    public string ReferenceNumber { get; set; } = string.Empty;
+    public int SupplierId { get; set; }
+
+    public int MarketId { get; set; }
+
+    public DateOnly PurchaseDate { get; set; }
+
+    public string Status { get; set; } = string.Empty;
 
     public decimal TotalAmount { get; set; }
 }

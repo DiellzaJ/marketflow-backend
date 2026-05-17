@@ -40,6 +40,7 @@ public class JwtTokenService : IJwtTokenService
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Name, user.FullName),
             new Claim(ClaimTypes.Role, user.Role.Name),
+            new Claim("permissions", user.Role.Permissions),
             new Claim("company_id", user.CompanyId.ToString()),
             new Claim("schema_name", user.Company.SchemaName)
         };

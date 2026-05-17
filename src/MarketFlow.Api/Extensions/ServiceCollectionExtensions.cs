@@ -1,6 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using MarketFlow.Api.Authorization;
+using MarketFlow.Api.Services;
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Features.Auth.Interfaces;
 using MarketFlow.Application.Features.Companies.Interfaces;
 using MarketFlow.Application.Features.Companies.Services;
@@ -21,6 +24,7 @@ using MarketFlow.Infrastructure.Repositories;
 using MarketFlow.Infrastructure.Services;
 using MarketFlow.Infrastructure.Services.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
@@ -101,7 +105,36 @@ public static class ServiceCollectionExtensions
                 };
             });
 
-        services.AddAuthorization();
+        services.AddAuthorization(options =>
+        {
+            options.AddPolicy(AuthorizationPolicies.RootAdminOnly, policy =>
+                policy.RequireRole("RootAdmin"));
+
+            options.AddPolicy(AuthorizationPolicies.ManageCompanies, policy =>
+                policy.Requirements.Add(new PermissionRequirement("company")));
+
+            options.AddPolicy(AuthorizationPolicies.ManageUsers, policy =>
+                policy.Requirements.Add(new PermissionRequirement("users")));
+
+            options.AddPolicy(AuthorizationPolicies.ManageProducts, policy =>
+                policy.Requirements.Add(new PermissionRequirement("products")));
+
+            options.AddPolicy(AuthorizationPolicies.ManagePurchases, policy =>
+                policy.Requirements.Add(new PermissionRequirement("purchases")));
+
+            options.AddPolicy(AuthorizationPolicies.ManageSales, policy =>
+                policy.Requirements.Add(new PermissionRequirement("sales")));
+
+            options.AddPolicy(AuthorizationPolicies.ManageInventory, policy =>
+                policy.Requirements.Add(new PermissionRequirement("inventory", "update")));
+
+            options.AddPolicy(AuthorizationPolicies.ReadInventory, policy =>
+                policy.Requirements.Add(new PermissionRequirement("inventory", "read")));
+        });
+        services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+
+        services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<ITenantQueryService, TenantQueryService>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
