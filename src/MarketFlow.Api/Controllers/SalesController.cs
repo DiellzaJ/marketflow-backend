@@ -9,14 +9,25 @@ namespace MarketFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = AuthorizationPolicies.ManageSales)]
 public class SalesController(ISalesService salesService) : ControllerBase
 {
     [HttpGet]
+    [Authorize(Policy = AuthorizationPolicies.ReadSales)]
     public async Task<ActionResult<ServiceResult<IReadOnlyCollection<SaleDto>>>> GetAsync(
         CancellationToken cancellationToken)
     {
         var result = await salesService.GetSalesAsync(cancellationToken);
         return Ok(result);
+    }
+
+    [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.CreateSales)]
+    public async Task<ActionResult<ServiceResult<SaleDto>>> CreateAsync(
+        CreateSaleRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await salesService.CreateSaleAsync(request, cancellationToken);
+
+        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
     }
 }

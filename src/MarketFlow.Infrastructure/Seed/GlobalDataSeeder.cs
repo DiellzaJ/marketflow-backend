@@ -35,42 +35,46 @@ public static class GlobalDataSeeder
             {
                 Name = "CompanyAdmin",
                 Description = "Company-level administrator",
-                Permissions = "{\"company\": true, \"markets\": true, \"users\": true}"
+                Permissions = "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true}"
             },
             new Role
             {
                 Name = "MainOperator",
                 Description = "Market-level manager",
-                Permissions = "{\"market\": true, \"products\": true, \"purchases\": true, \"sales\": true}"
+                Permissions = "{\"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true}"
             },
             new Role
             {
                 Name = "DepartmentManager",
                 Description = "Department-level manager",
-                Permissions = "{\"department\": true, \"inventory\": true, \"employees\": true}"
+                Permissions = "{\"products:read\": true, \"inventory:read\": true, \"inventory:update\": true}"
             },
             new Role
             {
                 Name = "InventoryEmployee",
                 Description = "Stock and inventory employee",
-                Permissions = "{\"inventory\": \"read-update\"}"
+                Permissions = "{\"products:read\": true, \"inventory:read\": true, \"inventory:update\": true}"
             },
             new Role
             {
                 Name = "Seller",
                 Description = "Creates sales and handles POS operations",
-                Permissions = "{\"sales\": true, \"inventory\": \"update\"}"
+                Permissions = "{\"products:read\": true, \"sales:create\": true, \"inventory:read\": true, \"inventory:update\": true}"
             }
         };
 
         foreach (var role in roles)
         {
-            var exists = await dbContext.Roles.AnyAsync(x => x.Name == role.Name);
+            var existingRole = await dbContext.Roles.FirstOrDefaultAsync(x => x.Name == role.Name);
 
-            if (!exists)
+            if (existingRole is null)
             {
                 dbContext.Roles.Add(role);
+                continue;
             }
+
+            existingRole.Description = role.Description;
+            existingRole.Permissions = role.Permissions;
         }
 
         await dbContext.SaveChangesAsync();
