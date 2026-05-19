@@ -91,6 +91,8 @@ public sealed class CompanyStore : ICompanyStore
         CancellationToken cancellationToken = default)
     {
         var normalizedAdminEmail = NormalizeEmail(request.CompanyAdmin.Email);
+
+        // GlobalDataSeeder must seed this role before RootAdmin company onboarding can run.
         var companyAdminRole = await _dbContext.Roles
             .FirstOrDefaultAsync(x => x.Name == "CompanyAdmin", cancellationToken);
 
@@ -119,6 +121,7 @@ public sealed class CompanyStore : ICompanyStore
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.CompanyAdmin.Password),
             Company = company,
             Role = companyAdminRole,
+            // RootAdmin-initiated onboarding intentionally activates the first company admin immediately.
             IsActive = true,
             CreatedAt = DateTimeOffset.UtcNow
         };
