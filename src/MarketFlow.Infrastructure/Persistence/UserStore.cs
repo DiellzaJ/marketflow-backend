@@ -56,10 +56,10 @@ public sealed class UserStore : IUserStore
             return null;
         }
 
-        var companyExists = await _dbContext.Companies
-            .AnyAsync(x => x.Id == companyId && x.IsActive, cancellationToken);
+        var company = await _dbContext.Companies
+            .FirstOrDefaultAsync(x => x.Id == companyId && x.IsActive, cancellationToken);
 
-        if (!companyExists)
+        if (company is null)
         {
             return null;
         }
@@ -83,7 +83,21 @@ public sealed class UserStore : IUserStore
         };
 
         _dbContext.Users.Add(user);
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        if (request.MarketId.HasValue)
+        {
+            await CreateStaffAssignmentAsync(
+                company.SchemaName,
+                user.Id,
+                request.MarketId.Value,
+                request.DepartmentId,
+                cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
 
         return MapUser(user, role.Name);
     }
@@ -250,5 +264,45 @@ public sealed class UserStore : IUserStore
     private static string NormalizeEmail(string email)
     {
         return email.Trim().ToLowerInvariant();
+    }
+
+    private async Task CreateStaffAssignmentAsync(
+        string schemaName,
+        int userId,
+        int marketId,
+        int? departmentId,
+        CancellationToken cancellationToken)
+    {
+        var quotedSchemaName = QuoteIdentifier(schemaName);
+
+#pragma warning disable EF1002
+        // Tenant schema names are persisted validated identifiers; values remain parameterized.
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            $"""
+            INSERT INTO {quotedSchemaName}.staff_assignments (
+                user_id,
+                market_id,
+                department_id,
+                is_active
+            )
+            VALUES (
+                @user_id,
+                @market_id,
+                @department_id,
+                TRUE
+            );
+            """,
+            [
+                new Npgsql.NpgsqlParameter("user_id", userId),
+                new Npgsql.NpgsqlParameter("market_id", marketId),
+                new Npgsql.NpgsqlParameter("department_id", departmentId ?? (object)DBNull.Value)
+            ],
+            cancellationToken);
+#pragma warning restore EF1002
+    }
+
+    private static string QuoteIdentifier(string identifier)
+    {
+        return "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     }
 }
