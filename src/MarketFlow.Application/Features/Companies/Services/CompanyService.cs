@@ -50,26 +50,55 @@ public class CompanyService : ICompanyService
             : ServiceResult<CompanyDto>.Success(company);
     }
 
-    public async Task<ServiceResult<CompanyDto>> CreateCompanyAsync(
+    public async Task<ServiceResult<CompanyOnboardingDto>> CreateCompanyAsync(
         CreateCompanyRequest request,
         CancellationToken cancellationToken = default)
     {
         var name = (request.Name ?? string.Empty).Trim();
         var companyType = (request.CompanyType ?? string.Empty).Trim().ToUpperInvariant();
+        var adminFullName = (request.CompanyAdmin?.FullName ?? string.Empty).Trim();
+        var adminEmail = (request.CompanyAdmin?.Email ?? string.Empty).Trim();
+        var adminPassword = request.CompanyAdmin?.Password ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(name))
         {
-            return ServiceResult<CompanyDto>.Failure("Company name is required.");
+            return ServiceResult<CompanyOnboardingDto>.Failure("Company name is required.");
         }
 
         if (name.Length > 150)
         {
-            return ServiceResult<CompanyDto>.Failure("Company name cannot exceed 150 characters.");
+            return ServiceResult<CompanyOnboardingDto>.Failure("Company name cannot exceed 150 characters.");
         }
 
         if (!AllowedCompanyTypes.Contains(companyType))
         {
-            return ServiceResult<CompanyDto>.Failure("Company type must be SMALL, MEDIUM, or BIG.");
+            return ServiceResult<CompanyOnboardingDto>.Failure("Company type must be SMALL, MEDIUM, or BIG.");
+        }
+
+        if (string.IsNullOrWhiteSpace(adminFullName) ||
+            string.IsNullOrWhiteSpace(adminEmail) ||
+            string.IsNullOrWhiteSpace(adminPassword))
+        {
+            return ServiceResult<CompanyOnboardingDto>.Failure(
+                "Company admin full name, email, and password are required.");
+        }
+
+        if (adminFullName.Length > 150)
+        {
+            return ServiceResult<CompanyOnboardingDto>.Failure(
+                "Company admin full name cannot exceed 150 characters.");
+        }
+
+        if (adminEmail.Length > 255)
+        {
+            return ServiceResult<CompanyOnboardingDto>.Failure(
+                "Company admin email cannot exceed 255 characters.");
+        }
+
+        if (adminPassword.Length < 8)
+        {
+            return ServiceResult<CompanyOnboardingDto>.Failure(
+                "Company admin password must be at least 8 characters.");
         }
 
         var schemaName = string.IsNullOrWhiteSpace(request.SchemaName)
@@ -78,20 +107,31 @@ public class CompanyService : ICompanyService
 
         if (!SchemaNamePattern.IsMatch(schemaName))
         {
-            return ServiceResult<CompanyDto>.Failure(
+            return ServiceResult<CompanyOnboardingDto>.Failure(
                 "Schema name must start with a lowercase letter and contain only lowercase letters, numbers, and underscores.");
         }
 
         if (await _companyStore.SchemaNameExistsAsync(schemaName, cancellationToken))
         {
-            return ServiceResult<CompanyDto>.Failure("Schema name is already used.");
+            return ServiceResult<CompanyOnboardingDto>.Failure("Schema name is already used.");
+        }
+
+        if (await _companyStore.EmailExistsAsync(adminEmail, cancellationToken))
+        {
+            return ServiceResult<CompanyOnboardingDto>.Failure("Company admin email is already used.");
         }
 
         var createRequest = new CreateCompanyRequest
         {
             Name = name,
             CompanyType = companyType,
-            SchemaName = schemaName
+            SchemaName = schemaName,
+            CompanyAdmin = new CreateCompanyAdminRequest
+            {
+                FullName = adminFullName,
+                Email = adminEmail,
+                Password = adminPassword
+            }
         };
 
         var company = await _companyStore.CreateCompanyAsync(
@@ -100,8 +140,8 @@ public class CompanyService : ICompanyService
             cancellationToken);
 
         return company is null
-            ? ServiceResult<CompanyDto>.Failure("Company could not be created.")
-            : ServiceResult<CompanyDto>.Success(company, "Company created.");
+            ? ServiceResult<CompanyOnboardingDto>.Failure("Company could not be created.")
+            : ServiceResult<CompanyOnboardingDto>.Success(company, "Company created.");
     }
 
     private static string GenerateSchemaName(string companyName)

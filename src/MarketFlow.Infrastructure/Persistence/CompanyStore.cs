@@ -75,11 +75,33 @@ public sealed class CompanyStore : ICompanyStore
             .AnyAsync(x => x.SchemaName == schemaName, cancellationToken);
     }
 
-    public async Task<CompanyDto?> CreateCompanyAsync(
+    public async Task<bool> EmailExistsAsync(
+        string email,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedEmail = NormalizeEmail(email);
+
+        return await _dbContext.Users
+            .AnyAsync(x => x.Email == normalizedEmail, cancellationToken);
+    }
+
+    public async Task<CompanyOnboardingDto?> CreateCompanyAsync(
         CreateCompanyRequest request,
         string schemaName,
         CancellationToken cancellationToken = default)
     {
+        var normalizedAdminEmail = NormalizeEmail(request.CompanyAdmin.Email);
+
+        // GlobalDataSeeder must seed this role before RootAdmin company onboarding can run.
+        var companyAdminRole = await _dbContext.Roles
+            .FirstOrDefaultAsync(x => x.Name == "CompanyAdmin", cancellationToken);
+
+        if (companyAdminRole is null)
+        {
+            _logger.LogError("Company onboarding failed because CompanyAdmin role does not exist.");
+            return null;
+        }
+
         var company = new Company
         {
             Name = request.Name,
@@ -92,11 +114,26 @@ public sealed class CompanyStore : ICompanyStore
             CreatedAt = DateTimeOffset.UtcNow
         };
 
+        var companyAdmin = new User
+        {
+            FullName = request.CompanyAdmin.FullName,
+            Email = normalizedAdminEmail,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.CompanyAdmin.Password),
+            Company = company,
+            Role = companyAdminRole,
+            // RootAdmin-initiated onboarding intentionally activates the first company admin immediately.
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
         _dbContext.Companies.Add(company);
+        _dbContext.Users.Add(companyAdmin);
 
         try
         {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
             await _dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
         catch (DbUpdateException exception)
             when (exception.InnerException is PostgresException
@@ -105,8 +142,9 @@ public sealed class CompanyStore : ICompanyStore
             })
         {
             _logger.LogWarning(
-                "Company creation rejected because schema name {SchemaName} already exists.",
-                schemaName);
+                "Company onboarding rejected because schema name {SchemaName} or admin email {Email} already exists.",
+                schemaName,
+                normalizedAdminEmail);
 
             return null;
         }
@@ -114,7 +152,7 @@ public sealed class CompanyStore : ICompanyStore
         {
             _logger.LogError(
                 exception,
-                "Database error while creating company {CompanyName} with schema {SchemaName}.",
+                "Database error while onboarding company {CompanyName} with schema {SchemaName}.",
                 request.Name,
                 schemaName);
 
@@ -126,17 +164,33 @@ public sealed class CompanyStore : ICompanyStore
             company.Name,
             company.SchemaName);
 
-        return new CompanyDto
+        return new CompanyOnboardingDto
         {
-            Id = company.Id,
-            Name = company.Name,
-            SchemaName = company.SchemaName,
-            CompanyType = company.CompanyType,
-            SubscriptionPlan = company.SubscriptionPlan,
-            MaxMarkets = company.MaxMarkets,
-            MaxUsers = company.MaxUsers,
-            IsActive = company.IsActive,
-            CreatedAt = company.CreatedAt
+            Company = new CompanyDto
+            {
+                Id = company.Id,
+                Name = company.Name,
+                SchemaName = company.SchemaName,
+                CompanyType = company.CompanyType,
+                SubscriptionPlan = company.SubscriptionPlan,
+                MaxMarkets = company.MaxMarkets,
+                MaxUsers = company.MaxUsers,
+                IsActive = company.IsActive,
+                CreatedAt = company.CreatedAt
+            },
+            CompanyAdmin = new CompanyAdminSummaryDto
+            {
+                Id = companyAdmin.Id,
+                FullName = companyAdmin.FullName,
+                Email = companyAdmin.Email,
+                RoleName = companyAdminRole.Name,
+                IsActive = companyAdmin.IsActive
+            }
         };
+    }
+
+    private static string NormalizeEmail(string email)
+    {
+        return email.Trim().ToLowerInvariant();
     }
 }

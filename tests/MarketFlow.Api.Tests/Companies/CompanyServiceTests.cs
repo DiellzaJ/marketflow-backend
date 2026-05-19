@@ -15,19 +15,28 @@ public sealed class CompanyServiceTests
         var result = await service.CreateCompanyAsync(new CreateCompanyRequest
         {
             Name = "Fresh Market",
-            CompanyType = "small"
+            CompanyType = "small",
+            CompanyAdmin = new CreateCompanyAdminRequest
+            {
+                FullName = "Fresh Admin",
+                Email = "Admin@FreshMarket.test",
+                Password = "Admin12345"
+            }
         });
 
         Assert.True(result.Succeeded);
         Assert.NotNull(result.Data);
-        Assert.Equal("Fresh Market", result.Data.Name);
-        Assert.Equal("SMALL", result.Data.CompanyType);
-        Assert.Equal("fresh_market", result.Data.SchemaName);
-        Assert.Equal("BASIC", result.Data.SubscriptionPlan);
-        Assert.Equal(5, result.Data.MaxMarkets);
-        Assert.Equal(50, result.Data.MaxUsers);
-        Assert.True(result.Data.IsActive);
-        Assert.NotEqual(default, result.Data.CreatedAt);
+        Assert.Equal("Fresh Market", result.Data.Company.Name);
+        Assert.Equal("SMALL", result.Data.Company.CompanyType);
+        Assert.Equal("fresh_market", result.Data.Company.SchemaName);
+        Assert.Equal("BASIC", result.Data.Company.SubscriptionPlan);
+        Assert.Equal(5, result.Data.Company.MaxMarkets);
+        Assert.Equal(50, result.Data.Company.MaxUsers);
+        Assert.True(result.Data.Company.IsActive);
+        Assert.NotEqual(default, result.Data.Company.CreatedAt);
+        Assert.Equal("Fresh Admin", result.Data.CompanyAdmin.FullName);
+        Assert.Equal("admin@freshmarket.test", result.Data.CompanyAdmin.Email);
+        Assert.Equal("CompanyAdmin", result.Data.CompanyAdmin.RoleName);
         Assert.Single(store.CreatedCompanies);
     }
 
@@ -44,7 +53,8 @@ public sealed class CompanyServiceTests
         {
             Name = "Fresh Market",
             CompanyType = "SMALL",
-            SchemaName = schemaName
+            SchemaName = schemaName,
+            CompanyAdmin = ValidAdminRequest()
         });
 
         Assert.False(result.Succeeded);
@@ -61,7 +71,8 @@ public sealed class CompanyServiceTests
         var result = await service.CreateCompanyAsync(new CreateCompanyRequest
         {
             Name = "Fresh Market",
-            CompanyType = "SMALL"
+            CompanyType = "SMALL",
+            CompanyAdmin = ValidAdminRequest()
         });
 
         Assert.False(result.Succeeded);
@@ -79,18 +90,70 @@ public sealed class CompanyServiceTests
         var result = await service.CreateCompanyAsync(new CreateCompanyRequest
         {
             Name = "Fresh Market",
-            CompanyType = companyType
+            CompanyType = companyType,
+            CompanyAdmin = ValidAdminRequest()
         });
 
         Assert.False(result.Succeeded);
         Assert.Contains("Company type", result.Message);
     }
 
+    [Fact]
+    public async Task CreateCompanyAsync_WithDuplicateAdminEmail_ReturnsFailure()
+    {
+        var store = new FakeCompanyStore();
+        store.ExistingEmails.Add("admin@freshmarket.test");
+        var service = new CompanyService(store);
+
+        var result = await service.CreateCompanyAsync(new CreateCompanyRequest
+        {
+            Name = "Fresh Market",
+            CompanyType = "SMALL",
+            CompanyAdmin = ValidAdminRequest()
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Company admin email is already used.", result.Message);
+        Assert.Empty(store.CreatedCompanies);
+    }
+
+    [Fact]
+    public async Task CreateCompanyAsync_WhenCompanyAdminRoleIsMissing_ReturnsFailure()
+    {
+        var store = new FakeCompanyStore { CompanyAdminRoleExists = false };
+        var service = new CompanyService(store);
+
+        var result = await service.CreateCompanyAsync(new CreateCompanyRequest
+        {
+            Name = "Fresh Market",
+            CompanyType = "SMALL",
+            CompanyAdmin = ValidAdminRequest()
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Company could not be created.", result.Message);
+        Assert.Empty(store.CreatedCompanies);
+    }
+
+    private static CreateCompanyAdminRequest ValidAdminRequest()
+    {
+        return new CreateCompanyAdminRequest
+        {
+            FullName = "Fresh Admin",
+            Email = "admin@freshmarket.test",
+            Password = "Admin12345"
+        };
+    }
+
     private sealed class FakeCompanyStore : ICompanyStore
     {
         public HashSet<string> ExistingSchemaNames { get; } = new(StringComparer.Ordinal);
 
+        public HashSet<string> ExistingEmails { get; } = new(StringComparer.Ordinal);
+
         public List<CompanyDto> CreatedCompanies { get; } = new();
+
+        public bool CompanyAdminRoleExists { get; set; } = true;
 
         public Task<IReadOnlyCollection<CompanyDto>> GetCompaniesAsync(
             CancellationToken cancellationToken = default)
@@ -112,11 +175,24 @@ public sealed class CompanyServiceTests
             return Task.FromResult(ExistingSchemaNames.Contains(schemaName));
         }
 
-        public Task<CompanyDto?> CreateCompanyAsync(
+        public Task<bool> EmailExistsAsync(
+            string email,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(ExistingEmails.Contains(NormalizeEmail(email)));
+        }
+
+        public Task<CompanyOnboardingDto?> CreateCompanyAsync(
             CreateCompanyRequest request,
             string schemaName,
             CancellationToken cancellationToken = default)
         {
+            if (!CompanyAdminRoleExists)
+            {
+                return Task.FromResult<CompanyOnboardingDto?>(null);
+            }
+
+            var normalizedAdminEmail = NormalizeEmail(request.CompanyAdmin.Email);
             var company = new CompanyDto
             {
                 Id = CreatedCompanies.Count + 1,
@@ -132,8 +208,27 @@ public sealed class CompanyServiceTests
 
             CreatedCompanies.Add(company);
             ExistingSchemaNames.Add(schemaName);
+            ExistingEmails.Add(normalizedAdminEmail);
 
-            return Task.FromResult<CompanyDto?>(company);
+            var response = new CompanyOnboardingDto
+            {
+                Company = company,
+                CompanyAdmin = new CompanyAdminSummaryDto
+                {
+                    Id = CreatedCompanies.Count,
+                    FullName = request.CompanyAdmin.FullName,
+                    Email = normalizedAdminEmail,
+                    RoleName = "CompanyAdmin",
+                    IsActive = true
+                }
+            };
+
+            return Task.FromResult<CompanyOnboardingDto?>(response);
+        }
+
+        private static string NormalizeEmail(string email)
+        {
+            return email.Trim().ToLowerInvariant();
         }
     }
 }
