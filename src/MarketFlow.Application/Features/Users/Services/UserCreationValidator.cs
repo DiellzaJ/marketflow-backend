@@ -15,6 +15,9 @@ public sealed class UserCreationValidator : IUserCreationValidator
         _userStore = userStore;
     }
 
+    /// <summary>
+    /// Validates user creation and returns the resolved company id in Data on success.
+    /// </summary>
     public async Task<ServiceResult<int>> ValidateAsync(
         CreateUserRequest request,
         bool isRootAdmin,

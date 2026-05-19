@@ -31,6 +31,10 @@ public static class RoleAssignmentRules
         };
     }
 
+    /// <summary>
+    /// Validates whether a role can be created with the provided market and department assignment.
+    /// </summary>
+    /// <returns>An error message when invalid; otherwise null.</returns>
     public static string? ValidateAssignment(string roleName, int? marketId, int? departmentId)
     {
         var normalizedRoleName = NormalizeRoleName(roleName);

@@ -1,7 +1,5 @@
 using BCrypt.Net;
-using System.Data;
 using MarketFlow.Application.Common.Interfaces;
-using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -67,9 +65,8 @@ public sealed class UserStore : IUserStore
             return null;
         }
 
-        var roleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName);
         var role = await _dbContext.Roles
-            .FirstOrDefaultAsync(x => x.Name == roleName, cancellationToken);
+            .FirstOrDefaultAsync(x => x.Name == request.RoleName, cancellationToken);
 
         if (role is null)
         {
@@ -128,12 +125,15 @@ public sealed class UserStore : IUserStore
         }
 
         var quotedSchemaName = QuoteIdentifier(schemaName);
-        await using var command = await CreateCommandAsync(
-            $"SELECT EXISTS (SELECT 1 FROM {quotedSchemaName}.markets WHERE id = @market_id);",
-            cancellationToken);
-        command.Parameters.AddWithValue("market_id", marketId);
 
-        return await ExecuteExistsAsync(command, cancellationToken);
+#pragma warning disable EF1002
+        // Tenant schema names are persisted validated identifiers; values remain parameterized.
+        return await _dbContext.Database
+            .SqlQueryRaw<bool>(
+                $"SELECT EXISTS (SELECT 1 FROM {quotedSchemaName}.markets WHERE id = @market_id);",
+                new NpgsqlParameter("market_id", marketId))
+            .FirstOrDefaultAsync(cancellationToken);
+#pragma warning restore EF1002
     }
 
     public async Task<bool> DepartmentExistsAsync(
@@ -150,20 +150,23 @@ public sealed class UserStore : IUserStore
         }
 
         var quotedSchemaName = QuoteIdentifier(schemaName);
-        await using var command = await CreateCommandAsync(
-            $"""
-            SELECT EXISTS (
-                SELECT 1
-                FROM {quotedSchemaName}.departments
-                WHERE id = @department_id
-                  AND market_id = @market_id
-            );
-            """,
-            cancellationToken);
-        command.Parameters.AddWithValue("department_id", departmentId);
-        command.Parameters.AddWithValue("market_id", marketId);
 
-        return await ExecuteExistsAsync(command, cancellationToken);
+#pragma warning disable EF1002
+        // Tenant schema names are persisted validated identifiers; values remain parameterized.
+        return await _dbContext.Database
+            .SqlQueryRaw<bool>(
+                $"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM {quotedSchemaName}.departments
+                    WHERE id = @department_id
+                      AND market_id = @market_id
+                );
+                """,
+                new NpgsqlParameter("department_id", departmentId),
+                new NpgsqlParameter("market_id", marketId))
+            .FirstOrDefaultAsync(cancellationToken);
+#pragma warning restore EF1002
     }
 
     public async Task<UserDto?> UpdateUserAsync(
@@ -380,25 +383,4 @@ public sealed class UserStore : IUserStore
         return "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     }
 
-    private async Task<NpgsqlCommand> CreateCommandAsync(
-        string commandText,
-        CancellationToken cancellationToken)
-    {
-        var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
-
-        if (connection.State != ConnectionState.Open)
-        {
-            await connection.OpenAsync(cancellationToken);
-        }
-
-        return new NpgsqlCommand(commandText, connection);
-    }
-
-    private static async Task<bool> ExecuteExistsAsync(
-        NpgsqlCommand command,
-        CancellationToken cancellationToken)
-    {
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result is bool exists && exists;
-    }
 }
