@@ -66,6 +66,7 @@ public sealed class UserStore : IUserStore
         }
 
         var role = await _dbContext.Roles
+            // CreateUserAsync receives a role name normalized by UserService.
             .FirstOrDefaultAsync(x => x.Name == request.RoleName, cancellationToken);
 
         if (role is null)

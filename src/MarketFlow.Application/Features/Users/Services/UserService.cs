@@ -56,6 +56,7 @@ public class UserService : IUserService
             Email = request.Email.Trim(),
             Password = request.Password,
             CompanyId = request.CompanyId,
+            // Canonical role names keep database role lookups case-insensitive at the service boundary.
             RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName ?? string.Empty),
             MarketId = request.MarketId,
             DepartmentId = request.DepartmentId,
