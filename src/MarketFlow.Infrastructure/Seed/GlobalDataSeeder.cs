@@ -1,14 +1,36 @@
+using System.Data;
+using System.Text.RegularExpressions;
 using BCrypt.Net;
 using MarketFlow.Domain.Entities;
 using MarketFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 
 namespace MarketFlow.Infrastructure.Seed;
 
 public static class GlobalDataSeeder
 {
+    private static readonly Regex SchemaNamePattern = new(
+        "^[a-zA-Z_][a-zA-Z0-9_]{0,62}$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly (string Name, string Description)[] DefaultCategories =
+    [
+        ("Uncategorized", "Fallback category for imported or legacy products."),
+        ("Beverages", "Drinks, juices, water, coffee, tea, and soft drinks."),
+        ("Dairy", "Milk, cheese, yogurt, butter, and other dairy products."),
+        ("Bakery", "Bread, pastries, cakes, and baked goods."),
+        ("Fruits & Vegetables", "Fresh fruits, vegetables, herbs, and produce."),
+        ("Meat & Fish", "Fresh and packaged meat, poultry, seafood, and fish."),
+        ("Snacks", "Chips, sweets, biscuits, nuts, and snack foods."),
+        ("Hygiene", "Personal care, toiletries, and hygiene products."),
+        ("Cleaning Products", "Household cleaning supplies and detergents."),
+        ("Frozen Foods", "Frozen meals, vegetables, desserts, and ice cream."),
+        ("Household", "General household essentials and everyday goods.")
+    ];
+
     public static async Task SeedGlobalDataAsync(this IServiceProvider serviceProvider)
     {
         using var scope = serviceProvider.CreateScope();
@@ -19,6 +41,7 @@ public static class GlobalDataSeeder
         await SeedRolesAsync(dbContext);
         await SeedRootAdminCompanyAsync(dbContext);
         await SeedRootAdminUserAsync(dbContext, configuration);
+        await SeedDefaultCategoriesAsync(dbContext);
     }
 
     private static async Task SeedRolesAsync(ApplicationDbContext dbContext)
@@ -151,5 +174,80 @@ public static class GlobalDataSeeder
         dbContext.Users.Add(user);
 
         await dbContext.SaveChangesAsync();
+    }
+
+    private static async Task SeedDefaultCategoriesAsync(ApplicationDbContext dbContext)
+    {
+        var schemaNames = await dbContext.Companies
+            .AsNoTracking()
+            .Where(x => x.IsActive)
+            .Select(x => x.SchemaName)
+            .ToListAsync();
+
+        var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync();
+        }
+
+        foreach (var schemaName in schemaNames)
+        {
+            if (!SchemaNamePattern.IsMatch(schemaName))
+            {
+                continue;
+            }
+
+            await using (var createSchemaCommand = new NpgsqlCommand(
+                "SELECT public.create_tenant_schema(@schema_name);",
+                connection))
+            {
+                createSchemaCommand.Parameters.AddWithValue("schema_name", schemaName);
+                await createSchemaCommand.ExecuteNonQueryAsync();
+            }
+
+            var quotedSchemaName = QuoteIdentifier(schemaName);
+
+            foreach (var category in DefaultCategories)
+            {
+                await using var insertCommand = new NpgsqlCommand(
+                    $"""
+                    INSERT INTO {quotedSchemaName}.categories (name, description)
+                    SELECT @name, @description
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM {quotedSchemaName}.categories
+                        WHERE lower(name) = lower(@name)
+                    );
+                    """,
+                    connection);
+
+                insertCommand.Parameters.AddWithValue("name", category.Name);
+                insertCommand.Parameters.AddWithValue("description", category.Description);
+                await insertCommand.ExecuteNonQueryAsync();
+            }
+
+            await using var repairProductsCommand = new NpgsqlCommand(
+                $"""
+                UPDATE {quotedSchemaName}.products
+                SET category_id = (
+                    SELECT id
+                    FROM {quotedSchemaName}.categories
+                    WHERE lower(name) = lower(@uncategorized_name)
+                    ORDER BY id
+                    LIMIT 1
+                )
+                WHERE category_id IS NULL;
+                """,
+                connection);
+
+            repairProductsCommand.Parameters.AddWithValue("uncategorized_name", "Uncategorized");
+            await repairProductsCommand.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static string QuoteIdentifier(string identifier)
+    {
+        return "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
     }
 }

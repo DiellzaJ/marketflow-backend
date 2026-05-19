@@ -5,6 +5,8 @@ using MarketFlow.Api.Authorization;
 using MarketFlow.Api.Services;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Features.Auth.Interfaces;
+using MarketFlow.Application.Features.Categories.Interfaces;
+using MarketFlow.Application.Features.Categories.Services;
 using MarketFlow.Application.Features.Companies.Interfaces;
 using MarketFlow.Application.Features.Companies.Services;
 using MarketFlow.Application.Features.Inventory.Interfaces;
@@ -182,6 +184,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<ICompanyService, CompanyService>();
+        services.AddScoped<ICategoryService, CategoryService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IInventoryService, InventoryService>();
