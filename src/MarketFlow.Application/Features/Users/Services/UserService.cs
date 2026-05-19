@@ -84,6 +84,8 @@ public class UserService : IUserService
             return ServiceResult<UserDto>.Failure("Full name and email are required.");
         }
 
+        request.RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName ?? string.Empty);
+
         var user = await _userStore.UpdateUserAsync(
             id,
             _currentUserService.CompanyId,
@@ -101,6 +103,11 @@ public class UserService : IUserService
         PatchUserRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (!string.IsNullOrWhiteSpace(request.RoleName))
+        {
+            request.RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName);
+        }
+
         var user = await _userStore.PatchUserAsync(
             id,
             _currentUserService.CompanyId,
