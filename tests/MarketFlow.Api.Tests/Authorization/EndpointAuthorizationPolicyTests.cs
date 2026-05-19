@@ -30,6 +30,9 @@ public sealed class EndpointAuthorizationPolicyTests
         { typeof(InventoryController), nameof(InventoryController.PatchAsync), AuthorizationPolicies.UpdateInventory },
         { typeof(InventoryController), nameof(InventoryController.DeleteAsync), AuthorizationPolicies.DeleteInventory },
         { typeof(AuthController), nameof(AuthController.CreateRootAdmin), AuthorizationPolicies.RootAdminOnly },
+        { typeof(CompaniesController), nameof(CompaniesController.GetAsync), AuthorizationPolicies.RootAdminOnly },
+        { typeof(CompaniesController), nameof(CompaniesController.GetByIdAsync), AuthorizationPolicies.RootAdminOnly },
+        { typeof(CompaniesController), nameof(CompaniesController.CreateAsync), AuthorizationPolicies.RootAdminOnly },
         { typeof(UsersController), nameof(UsersController.GetAsync), AuthorizationPolicies.ReadUsers },
         { typeof(UsersController), nameof(UsersController.CreateAsync), AuthorizationPolicies.CreateUsers },
         { typeof(UsersController), nameof(UsersController.UpdateAsync), AuthorizationPolicies.UpdateUsers },
@@ -50,7 +53,9 @@ public sealed class EndpointAuthorizationPolicyTests
 
         Assert.NotNull(method);
 
-        var authorizeAttribute = method.GetCustomAttribute<AuthorizeAttribute>();
+        var authorizeAttribute =
+            method.GetCustomAttribute<AuthorizeAttribute>() ??
+            controllerType.GetCustomAttribute<AuthorizeAttribute>();
 
         Assert.NotNull(authorizeAttribute);
         Assert.Equal(expectedPolicy, authorizeAttribute.Policy);

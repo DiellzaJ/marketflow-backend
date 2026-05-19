@@ -176,6 +176,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<ICompanyStore, CompanyStore>();
         services.AddScoped<ITenantQueryService, TenantQueryService>();
         services.AddScoped<IUserStore, UserStore>();
 
