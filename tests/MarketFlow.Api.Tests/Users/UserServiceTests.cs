@@ -1,4 +1,5 @@
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 using MarketFlow.Application.Features.Users.Services;
 
@@ -10,7 +11,7 @@ public sealed class UserServiceTests
     public async Task CreateUserAsync_ForCompanyAdmin_DerivesCompanyFromCurrentUser()
     {
         var store = new FakeUserStore();
-        var service = new UserService(
+        var service = CreateUserService(
             store,
             new FakeCurrentUserService { CompanyId = 12, Role = "CompanyAdmin" });
 
@@ -32,7 +33,7 @@ public sealed class UserServiceTests
     public async Task CreateUserAsync_ForRootAdmin_UsesSelectedCompany()
     {
         var store = new FakeUserStore();
-        var service = new UserService(
+        var service = CreateUserService(
             store,
             new FakeCurrentUserService { CompanyId = 1, Role = "RootAdmin" });
 
@@ -53,7 +54,7 @@ public sealed class UserServiceTests
     [Fact]
     public async Task CreateUserAsync_ForRootAdminWithoutSelectedCompany_ReturnsValidationError()
     {
-        var service = new UserService(
+        var service = CreateUserService(
             new FakeUserStore(),
             new FakeCurrentUserService { CompanyId = 1, Role = "RootAdmin" });
 
@@ -111,10 +112,55 @@ public sealed class UserServiceTests
     }
 
     [Fact]
+    public async Task CreateUserAsync_ForDepartmentManagerWithOnlyMarket_ReturnsValidationError()
+    {
+        var service = CreateCompanyAdminService();
+        var request = ValidRequest("DepartmentManager");
+        request.MarketId = 3;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("DepartmentManager requires market and department assignment.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ForSellerWithValidMarket_CreatesUserSuccessfully()
+    {
+        var store = new FakeUserStore();
+        var service = CreateCompanyAdminService(store);
+        var request = ValidRequest("Seller");
+        request.MarketId = 3;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(3, store.CreatedRequest?.MarketId);
+        Assert.Null(store.CreatedRequest?.DepartmentId);
+    }
+
+    [Theory]
+    [InlineData("seller")]
+    [InlineData("SELLER")]
+    [InlineData("SeLlEr")]
+    public async Task CreateUserAsync_IsCaseInsensitiveForRoleNames(string roleName)
+    {
+        var store = new FakeUserStore();
+        var service = CreateCompanyAdminService(store);
+        var request = ValidRequest(roleName);
+        request.MarketId = 3;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Seller", result.Data?.RoleName);
+    }
+
+    [Fact]
     public async Task CreateUserAsync_ForCompanyAdminWithNoAssignment_CreatesUser()
     {
         var store = new FakeUserStore();
-        var service = new UserService(
+        var service = CreateUserService(
             store,
             new FakeCurrentUserService { CompanyId = 12, Role = "CompanyAdmin" });
 
@@ -151,11 +197,68 @@ public sealed class UserServiceTests
         Assert.Equal("Department assignment requires market assignment.", result.Message);
     }
 
-    private static UserService CreateCompanyAdminService()
+    [Fact]
+    public async Task CreateUserAsync_WithMarketThatDoesNotExist_ReturnsValidationError()
+    {
+        var store = new FakeUserStore();
+        store.ExistingMarketIds.Clear();
+        var service = CreateCompanyAdminService(store);
+        var request = ValidRequest("Seller");
+        request.MarketId = 99;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Market ID 99 not found.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_WithDepartmentThatDoesNotExist_ReturnsValidationError()
+    {
+        var store = new FakeUserStore();
+        store.ExistingDepartmentIds.Clear();
+        var service = CreateCompanyAdminService(store);
+        var request = ValidRequest("DepartmentManager");
+        request.MarketId = 3;
+        request.DepartmentId = 44;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Department ID 44 not found in market 3.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_WithStaffAssignment_StoresMarketAndDepartmentIds()
+    {
+        var store = new FakeUserStore();
+        var service = CreateCompanyAdminService(store);
+        var request = ValidRequest("DepartmentManager");
+        request.MarketId = 3;
+        request.DepartmentId = 4;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(3, store.CreatedRequest?.MarketId);
+        Assert.Equal(4, store.CreatedRequest?.DepartmentId);
+    }
+
+    private static UserService CreateCompanyAdminService(FakeUserStore? store = null)
+    {
+        return CreateUserService(
+            store ?? new FakeUserStore(),
+            new FakeCurrentUserService { CompanyId = 12, Role = "CompanyAdmin" });
+    }
+
+    private static UserService CreateUserService(
+        FakeUserStore store,
+        FakeCurrentUserService currentUserService)
     {
         return new UserService(
-            new FakeUserStore(),
-            new FakeCurrentUserService { CompanyId = 12, Role = "CompanyAdmin" });
+            store,
+            currentUserService,
+            new UserCreationValidator(store));
     }
 
     private static CreateUserRequest ValidRequest(string roleName)
@@ -174,6 +277,13 @@ public sealed class UserServiceTests
         public int? CreatedCompanyId { get; private set; }
 
         public CreateUserRequest? CreatedRequest { get; private set; }
+
+        public HashSet<int> ExistingMarketIds { get; } = new() { 3 };
+
+        public HashSet<(int MarketId, int DepartmentId)> ExistingDepartmentIds { get; } = new()
+        {
+            (3, 4)
+        };
 
         public Task<IReadOnlyCollection<UserDto>> GetUsersAsync(
             int? companyId,
@@ -197,9 +307,26 @@ public sealed class UserServiceTests
                 Id = 1,
                 FullName = request.FullName,
                 Email = request.Email,
-                RoleName = request.RoleName,
+                RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName),
                 IsActive = request.IsActive
             });
+        }
+
+        public Task<bool> MarketExistsAsync(
+            int companyId,
+            int marketId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(ExistingMarketIds.Contains(marketId));
+        }
+
+        public Task<bool> DepartmentExistsAsync(
+            int companyId,
+            int marketId,
+            int departmentId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(ExistingDepartmentIds.Contains((marketId, departmentId)));
         }
 
         public Task<UserDto?> UpdateUserAsync(

@@ -14,6 +14,17 @@ public interface IUserStore
         CreateUserRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<bool> MarketExistsAsync(
+        int companyId,
+        int marketId,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> DepartmentExistsAsync(
+        int companyId,
+        int marketId,
+        int departmentId,
+        CancellationToken cancellationToken = default);
+
     Task<UserDto?> UpdateUserAsync(
         int id,
         int? companyId,
