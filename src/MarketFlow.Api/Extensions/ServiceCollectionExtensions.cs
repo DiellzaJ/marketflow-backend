@@ -183,6 +183,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<ICompanyService, CompanyService>();
+        services.AddScoped<IUserCreationValidator, UserCreationValidator>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IInventoryService, InventoryService>();

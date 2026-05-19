@@ -2,6 +2,7 @@ using BCrypt.Net;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Features.Users.DTOs;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
@@ -56,15 +57,16 @@ public sealed class UserStore : IUserStore
             return null;
         }
 
-        var companyExists = await _dbContext.Companies
-            .AnyAsync(x => x.Id == companyId && x.IsActive, cancellationToken);
+        var company = await _dbContext.Companies
+            .FirstOrDefaultAsync(x => x.Id == companyId && x.IsActive, cancellationToken);
 
-        if (!companyExists)
+        if (company is null)
         {
             return null;
         }
 
         var role = await _dbContext.Roles
+            // CreateUserAsync receives a role name normalized by UserService.
             .FirstOrDefaultAsync(x => x.Name == request.RoleName, cancellationToken);
 
         if (role is null)
@@ -83,9 +85,89 @@ public sealed class UserStore : IUserStore
         };
 
         _dbContext.Users.Add(user);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            if (request.MarketId.HasValue)
+            {
+                await CreateStaffAssignmentAsync(
+                    company.SchemaName,
+                    user.Id,
+                    request.MarketId.Value,
+                    request.DepartmentId,
+                    cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
 
         return MapUser(user, role.Name);
+    }
+
+    public async Task<bool> MarketExistsAsync(
+        int companyId,
+        int marketId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetCompanySchemaNameAsync(companyId, cancellationToken);
+
+        if (schemaName is null)
+        {
+            return false;
+        }
+
+        var quotedSchemaName = QuoteIdentifier(schemaName);
+
+#pragma warning disable EF1002
+        // Tenant schema names are persisted validated identifiers; values remain parameterized.
+        return await _dbContext.Database
+            .SqlQueryRaw<bool>(
+                $"SELECT EXISTS (SELECT 1 FROM {quotedSchemaName}.markets WHERE id = @market_id);",
+                new NpgsqlParameter("market_id", marketId))
+            .FirstOrDefaultAsync(cancellationToken);
+#pragma warning restore EF1002
+    }
+
+    public async Task<bool> DepartmentExistsAsync(
+        int companyId,
+        int marketId,
+        int departmentId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetCompanySchemaNameAsync(companyId, cancellationToken);
+
+        if (schemaName is null)
+        {
+            return false;
+        }
+
+        var quotedSchemaName = QuoteIdentifier(schemaName);
+
+#pragma warning disable EF1002
+        // Tenant schema names are persisted validated identifiers; values remain parameterized.
+        return await _dbContext.Database
+            .SqlQueryRaw<bool>(
+                $"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM {quotedSchemaName}.departments
+                    WHERE id = @department_id
+                      AND market_id = @market_id
+                );
+                """,
+                new NpgsqlParameter("department_id", departmentId),
+                new NpgsqlParameter("market_id", marketId))
+            .FirstOrDefaultAsync(cancellationToken);
+#pragma warning restore EF1002
     }
 
     public async Task<UserDto?> UpdateUserAsync(
@@ -251,4 +333,55 @@ public sealed class UserStore : IUserStore
     {
         return email.Trim().ToLowerInvariant();
     }
+
+    private async Task<string?> GetCompanySchemaNameAsync(
+        int companyId,
+        CancellationToken cancellationToken)
+    {
+        return await _dbContext.Companies
+            .Where(x => x.Id == companyId && x.IsActive)
+            .Select(x => x.SchemaName)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task CreateStaffAssignmentAsync(
+        string schemaName,
+        int userId,
+        int marketId,
+        int? departmentId,
+        CancellationToken cancellationToken)
+    {
+        var quotedSchemaName = QuoteIdentifier(schemaName);
+
+#pragma warning disable EF1002
+        // Tenant schema names are persisted validated identifiers; values remain parameterized.
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            $"""
+            INSERT INTO {quotedSchemaName}.staff_assignments (
+                user_id,
+                market_id,
+                department_id,
+                is_active
+            )
+            VALUES (
+                @user_id,
+                @market_id,
+                @department_id,
+                TRUE
+            );
+            """,
+            [
+                new Npgsql.NpgsqlParameter("user_id", userId),
+                new Npgsql.NpgsqlParameter("market_id", marketId),
+                new Npgsql.NpgsqlParameter("department_id", departmentId ?? (object)DBNull.Value)
+            ],
+            cancellationToken);
+#pragma warning restore EF1002
+    }
+
+    private static string QuoteIdentifier(string identifier)
+    {
+        return "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+    }
+
 }
