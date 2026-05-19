@@ -14,11 +14,17 @@ public interface IUserStore
         CreateUserRequest request,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Checks whether the market exists in the selected company's tenant schema.
+    /// </summary>
     Task<bool> MarketExistsAsync(
         int companyId,
         int marketId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Checks whether the department exists inside the selected market in the company's tenant schema.
+    /// </summary>
     Task<bool> DepartmentExistsAsync(
         int companyId,
         int marketId,
