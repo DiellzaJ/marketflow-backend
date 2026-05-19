@@ -12,7 +12,7 @@ public interface ICompanyService
         int id,
         CancellationToken cancellationToken = default);
 
-    Task<ServiceResult<CompanyDto>> CreateCompanyAsync(
+    Task<ServiceResult<CompanyOnboardingDto>> CreateCompanyAsync(
         CreateCompanyRequest request,
         CancellationToken cancellationToken = default);
 }
