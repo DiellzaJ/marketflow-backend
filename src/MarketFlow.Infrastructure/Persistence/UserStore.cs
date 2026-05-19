@@ -1,7 +1,10 @@
 using BCrypt.Net;
+using System.Data;
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
@@ -64,8 +67,9 @@ public sealed class UserStore : IUserStore
             return null;
         }
 
+        var roleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName);
         var role = await _dbContext.Roles
-            .FirstOrDefaultAsync(x => x.Name == request.RoleName, cancellationToken);
+            .FirstOrDefaultAsync(x => x.Name == roleName, cancellationToken);
 
         if (role is null)
         {
@@ -85,21 +89,81 @@ public sealed class UserStore : IUserStore
         _dbContext.Users.Add(user);
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
 
-        if (request.MarketId.HasValue)
+        try
         {
-            await CreateStaffAssignmentAsync(
-                company.SchemaName,
-                user.Id,
-                request.MarketId.Value,
-                request.DepartmentId,
-                cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            if (request.MarketId.HasValue)
+            {
+                await CreateStaffAssignmentAsync(
+                    company.SchemaName,
+                    user.Id,
+                    request.MarketId.Value,
+                    request.DepartmentId,
+                    cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
         }
 
-        await transaction.CommitAsync(cancellationToken);
-
         return MapUser(user, role.Name);
+    }
+
+    public async Task<bool> MarketExistsAsync(
+        int companyId,
+        int marketId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetCompanySchemaNameAsync(companyId, cancellationToken);
+
+        if (schemaName is null)
+        {
+            return false;
+        }
+
+        var quotedSchemaName = QuoteIdentifier(schemaName);
+        await using var command = await CreateCommandAsync(
+            $"SELECT EXISTS (SELECT 1 FROM {quotedSchemaName}.markets WHERE id = @market_id);",
+            cancellationToken);
+        command.Parameters.AddWithValue("market_id", marketId);
+
+        return await ExecuteExistsAsync(command, cancellationToken);
+    }
+
+    public async Task<bool> DepartmentExistsAsync(
+        int companyId,
+        int marketId,
+        int departmentId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetCompanySchemaNameAsync(companyId, cancellationToken);
+
+        if (schemaName is null)
+        {
+            return false;
+        }
+
+        var quotedSchemaName = QuoteIdentifier(schemaName);
+        await using var command = await CreateCommandAsync(
+            $"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {quotedSchemaName}.departments
+                WHERE id = @department_id
+                  AND market_id = @market_id
+            );
+            """,
+            cancellationToken);
+        command.Parameters.AddWithValue("department_id", departmentId);
+        command.Parameters.AddWithValue("market_id", marketId);
+
+        return await ExecuteExistsAsync(command, cancellationToken);
     }
 
     public async Task<UserDto?> UpdateUserAsync(
@@ -266,6 +330,16 @@ public sealed class UserStore : IUserStore
         return email.Trim().ToLowerInvariant();
     }
 
+    private async Task<string?> GetCompanySchemaNameAsync(
+        int companyId,
+        CancellationToken cancellationToken)
+    {
+        return await _dbContext.Companies
+            .Where(x => x.Id == companyId && x.IsActive)
+            .Select(x => x.SchemaName)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
     private async Task CreateStaffAssignmentAsync(
         string schemaName,
         int userId,
@@ -304,5 +378,27 @@ public sealed class UserStore : IUserStore
     private static string QuoteIdentifier(string identifier)
     {
         return "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+    }
+
+    private async Task<NpgsqlCommand> CreateCommandAsync(
+        string commandText,
+        CancellationToken cancellationToken)
+    {
+        var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
+
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        return new NpgsqlCommand(commandText, connection);
+    }
+
+    private static async Task<bool> ExecuteExistsAsync(
+        NpgsqlCommand command,
+        CancellationToken cancellationToken)
+    {
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is bool exists && exists;
     }
 }

@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 using MarketFlow.Application.Features.Users.Interfaces;
 
@@ -7,21 +8,18 @@ namespace MarketFlow.Application.Features.Users.Services;
 
 public class UserService : IUserService
 {
-    private const string RootAdminRoleName = "RootAdmin";
-    private const string CompanyAdminRoleName = "CompanyAdmin";
-    private const string SellerRoleName = "Seller";
-    private const string MainOperatorRoleName = "MainOperator";
-    private const string DepartmentManagerRoleName = "DepartmentManager";
-
     private readonly IUserStore _userStore;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IUserCreationValidator _userCreationValidator;
 
     public UserService(
         IUserStore userStore,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IUserCreationValidator userCreationValidator)
     {
         _userStore = userStore;
         _currentUserService = currentUserService;
+        _userCreationValidator = userCreationValidator;
     }
 
     public async Task<ServiceResult<IReadOnlyCollection<UserDto>>> GetUsersAsync(
@@ -40,33 +38,34 @@ public class UserService : IUserService
         CancellationToken cancellationToken = default)
     {
         var isRootAdmin = IsRootAdmin();
-        var companyId = isRootAdmin
-            ? request.CompanyId
-            : _currentUserService.CompanyId;
 
-        if (companyId is null)
+        var validation = await _userCreationValidator.ValidateAsync(
+            request,
+            isRootAdmin,
+            _currentUserService.CompanyId,
+            cancellationToken);
+
+        if (!validation.Succeeded)
         {
-            return ServiceResult<UserDto>.Failure(
-                isRootAdmin
-                    ? "Company is required when RootAdmin creates a user."
-                    : "Current company is required.");
+            return ServiceResult<UserDto>.Failure(validation.Message);
         }
 
-        if (string.IsNullOrWhiteSpace(request.FullName) ||
-            string.IsNullOrWhiteSpace(request.Email) ||
-            string.IsNullOrWhiteSpace(request.Password))
+        var normalizedRequest = new CreateUserRequest
         {
-            return ServiceResult<UserDto>.Failure("Full name, email, and password are required.");
-        }
+            FullName = request.FullName.Trim(),
+            Email = request.Email.Trim(),
+            Password = request.Password,
+            CompanyId = request.CompanyId,
+            RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName ?? string.Empty),
+            MarketId = request.MarketId,
+            DepartmentId = request.DepartmentId,
+            IsActive = request.IsActive
+        };
 
-        var assignmentValidation = ValidateRoleAssignment(request);
-
-        if (!string.IsNullOrWhiteSpace(assignmentValidation))
-        {
-            return ServiceResult<UserDto>.Failure(assignmentValidation);
-        }
-
-        var user = await _userStore.CreateUserAsync(companyId.Value, request, cancellationToken);
+        var user = await _userStore.CreateUserAsync(
+            validation.Data,
+            normalizedRequest,
+            cancellationToken);
 
         return user is null
             ? ServiceResult<UserDto>.Failure("Role does not exist or email is already used.")
@@ -130,28 +129,6 @@ public class UserService : IUserService
 
     private bool IsRootAdmin()
     {
-        return string.Equals(_currentUserService.Role, RootAdminRoleName, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string? ValidateRoleAssignment(CreateUserRequest request)
-    {
-        var roleName = (request.RoleName ?? string.Empty).Trim();
-        var hasMarket = request.MarketId.HasValue;
-        var hasDepartment = request.DepartmentId.HasValue;
-
-        return roleName switch
-        {
-            SellerRoleName or MainOperatorRoleName when !hasMarket =>
-                $"{roleName} requires market assignment.",
-            SellerRoleName or MainOperatorRoleName when hasDepartment =>
-                $"{roleName} cannot be assigned to a department.",
-            DepartmentManagerRoleName when !hasMarket || !hasDepartment =>
-                "DepartmentManager requires market and department assignment.",
-            CompanyAdminRoleName when hasMarket || hasDepartment =>
-                "CompanyAdmin cannot be assigned to a market or department.",
-            _ when hasDepartment && !hasMarket =>
-                "Department assignment requires market assignment.",
-            _ => null
-        };
+        return string.Equals(_currentUserService.Role, RoleAssignmentRules.RootAdmin, StringComparison.OrdinalIgnoreCase);
     }
 }
