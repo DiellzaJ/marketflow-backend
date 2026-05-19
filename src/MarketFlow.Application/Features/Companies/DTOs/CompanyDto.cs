@@ -10,5 +10,13 @@ public class CompanyDto
 
     public string CompanyType { get; set; } = string.Empty;
 
+    public string SubscriptionPlan { get; set; } = string.Empty;
+
+    public int MaxMarkets { get; set; }
+
+    public int MaxUsers { get; set; }
+
     public bool IsActive { get; set; }
+
+    public DateTimeOffset CreatedAt { get; set; }
 }

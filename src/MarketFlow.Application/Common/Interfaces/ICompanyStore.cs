@@ -7,6 +7,10 @@ public interface ICompanyStore
     Task<IReadOnlyCollection<CompanyDto>> GetCompaniesAsync(
         CancellationToken cancellationToken = default);
 
+    Task<CompanyDto?> GetCompanyByIdAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
     Task<bool> SchemaNameExistsAsync(
         string schemaName,
         CancellationToken cancellationToken = default);

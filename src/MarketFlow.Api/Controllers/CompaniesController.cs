@@ -13,7 +13,6 @@ namespace MarketFlow.Api.Controllers;
 public class CompaniesController(ICompanyService companyService) : ControllerBase
 {
     [HttpGet]
-    [Authorize(Policy = AuthorizationPolicies.RootAdminOnly)]
     public async Task<ActionResult<ServiceResult<IReadOnlyCollection<CompanyDto>>>> GetAsync(
         CancellationToken cancellationToken)
     {
@@ -21,14 +20,29 @@ public class CompaniesController(ICompanyService companyService) : ControllerBas
         return Ok(result);
     }
 
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<ServiceResult<CompanyDto>>> GetByIdAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await companyService.GetCompanyByIdAsync(id, cancellationToken);
+
+        return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
     [HttpPost]
-    [Authorize(Policy = AuthorizationPolicies.RootAdminOnly)]
+    [ProducesResponseType(typeof(ServiceResult<CompanyDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ServiceResult<CompanyDto>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<ServiceResult<CompanyDto>>> CreateAsync(
         CreateCompanyRequest request,
         CancellationToken cancellationToken)
     {
         var result = await companyService.CreateCompanyAsync(request, cancellationToken);
 
-        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
+        return result.Succeeded
+            ? CreatedAtAction(nameof(GetByIdAsync), new { id = result.Data!.Id }, result)
+            : BadRequest(result);
     }
 }
