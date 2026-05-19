@@ -11,53 +11,80 @@ public sealed class CompaniesControllerTests
     [Fact]
     public async Task CreateAsync_WhenCompanyIsCreated_ReturnsCreatedAtGetById()
     {
-        var company = new CompanyDto
+        var onboarding = new CompanyOnboardingDto
         {
-            Id = 7,
-            Name = "Fresh Market",
-            SchemaName = "fresh_market",
-            CompanyType = "SMALL",
-            SubscriptionPlan = "BASIC",
-            MaxMarkets = 5,
-            MaxUsers = 50,
-            IsActive = true,
-            CreatedAt = DateTimeOffset.UtcNow
+            Company = new CompanyDto
+            {
+                Id = 7,
+                Name = "Fresh Market",
+                SchemaName = "fresh_market",
+                CompanyType = "SMALL",
+                SubscriptionPlan = "BASIC",
+                MaxMarkets = 5,
+                MaxUsers = 50,
+                IsActive = true,
+                CreatedAt = DateTimeOffset.UtcNow
+            },
+            CompanyAdmin = new CompanyAdminSummaryDto
+            {
+                Id = 11,
+                FullName = "Fresh Admin",
+                Email = "admin@freshmarket.test",
+                RoleName = "CompanyAdmin",
+                IsActive = true
+            }
         };
         var controller = new CompaniesController(
-            new FakeCompanyService(ServiceResult<CompanyDto>.Success(company, "Company created.")));
+            new FakeCompanyService(ServiceResult<CompanyOnboardingDto>.Success(onboarding, "Company created.")));
 
         var response = await controller.CreateAsync(
-            new CreateCompanyRequest { Name = "Fresh Market", CompanyType = "SMALL" },
+            ValidRequest(),
             CancellationToken.None);
 
         var created = Assert.IsType<CreatedAtActionResult>(response.Result);
         Assert.Equal(nameof(CompaniesController.GetByIdAsync), created.ActionName);
-        Assert.Equal(company.Id, created.RouteValues?["id"]);
-        var result = Assert.IsType<ServiceResult<CompanyDto>>(created.Value);
+        Assert.Equal(onboarding.Company.Id, created.RouteValues?["id"]);
+        var result = Assert.IsType<ServiceResult<CompanyOnboardingDto>>(created.Value);
         Assert.True(result.Succeeded);
-        Assert.Equal(company.Id, result.Data?.Id);
+        Assert.Equal(onboarding.Company.Id, result.Data?.Company.Id);
+        Assert.Equal("CompanyAdmin", result.Data?.CompanyAdmin.RoleName);
     }
 
     [Fact]
     public async Task CreateAsync_WhenCompanyIsInvalid_ReturnsBadRequest()
     {
         var controller = new CompaniesController(
-            new FakeCompanyService(ServiceResult<CompanyDto>.Failure("Schema name is already used.")));
+            new FakeCompanyService(ServiceResult<CompanyOnboardingDto>.Failure("Schema name is already used.")));
 
         var response = await controller.CreateAsync(
-            new CreateCompanyRequest { Name = "Fresh Market", CompanyType = "SMALL" },
+            ValidRequest(),
             CancellationToken.None);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(response.Result);
-        var result = Assert.IsType<ServiceResult<CompanyDto>>(badRequest.Value);
+        var result = Assert.IsType<ServiceResult<CompanyOnboardingDto>>(badRequest.Value);
         Assert.False(result.Succeeded);
+    }
+
+    private static CreateCompanyRequest ValidRequest()
+    {
+        return new CreateCompanyRequest
+        {
+            Name = "Fresh Market",
+            CompanyType = "SMALL",
+            CompanyAdmin = new CreateCompanyAdminRequest
+            {
+                FullName = "Fresh Admin",
+                Email = "admin@freshmarket.test",
+                Password = "Admin12345"
+            }
+        };
     }
 
     private sealed class FakeCompanyService : ICompanyService
     {
-        private readonly ServiceResult<CompanyDto> _createResult;
+        private readonly ServiceResult<CompanyOnboardingDto> _createResult;
 
-        public FakeCompanyService(ServiceResult<CompanyDto> createResult)
+        public FakeCompanyService(ServiceResult<CompanyOnboardingDto> createResult)
         {
             _createResult = createResult;
         }
@@ -73,10 +100,10 @@ public sealed class CompaniesControllerTests
             int id,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(_createResult);
+            return Task.FromResult(ServiceResult<CompanyDto>.Success(_createResult.Data?.Company));
         }
 
-        public Task<ServiceResult<CompanyDto>> CreateCompanyAsync(
+        public Task<ServiceResult<CompanyOnboardingDto>> CreateCompanyAsync(
             CreateCompanyRequest request,
             CancellationToken cancellationToken = default)
         {

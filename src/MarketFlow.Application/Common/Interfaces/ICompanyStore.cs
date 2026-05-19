@@ -15,7 +15,11 @@ public interface ICompanyStore
         string schemaName,
         CancellationToken cancellationToken = default);
 
-    Task<CompanyDto?> CreateCompanyAsync(
+    Task<bool> EmailExistsAsync(
+        string email,
+        CancellationToken cancellationToken = default);
+
+    Task<CompanyOnboardingDto?> CreateCompanyAsync(
         CreateCompanyRequest request,
         string schemaName,
         CancellationToken cancellationToken = default);
