@@ -13,10 +13,22 @@ namespace MarketFlow.Api.Controllers;
 public class CompaniesController(ICompanyService companyService) : ControllerBase
 {
     [HttpGet]
+    [Authorize(Policy = AuthorizationPolicies.RootAdminOnly)]
     public async Task<ActionResult<ServiceResult<IReadOnlyCollection<CompanyDto>>>> GetAsync(
         CancellationToken cancellationToken)
     {
         var result = await companyService.GetCompaniesAsync(cancellationToken);
         return Ok(result);
+    }
+
+    [HttpPost]
+    [Authorize(Policy = AuthorizationPolicies.RootAdminOnly)]
+    public async Task<ActionResult<ServiceResult<CompanyDto>>> CreateAsync(
+        CreateCompanyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await companyService.CreateCompanyAsync(request, cancellationToken);
+
+        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
     }
 }
