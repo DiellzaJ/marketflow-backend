@@ -57,7 +57,7 @@ public class CompanyService : ICompanyService
         var name = (request.Name ?? string.Empty).Trim();
         var companyType = (request.CompanyType ?? string.Empty).Trim().ToUpperInvariant();
         var adminFullName = (request.CompanyAdmin?.FullName ?? string.Empty).Trim();
-        var adminEmail = (request.CompanyAdmin?.Email ?? string.Empty).Trim().ToLowerInvariant();
+        var adminEmail = (request.CompanyAdmin?.Email ?? string.Empty).Trim();
         var adminPassword = request.CompanyAdmin?.Password ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(name))
