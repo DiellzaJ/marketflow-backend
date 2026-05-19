@@ -12,5 +12,9 @@ public class CreateUserRequest
 
     public string RoleName { get; set; } = "Seller";
 
+    public int? MarketId { get; set; }
+
+    public int? DepartmentId { get; set; }
+
     public bool IsActive { get; set; } = true;
 }
