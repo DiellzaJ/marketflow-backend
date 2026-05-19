@@ -23,7 +23,11 @@ public sealed class CompanyServiceTests
         Assert.Equal("Fresh Market", result.Data.Name);
         Assert.Equal("SMALL", result.Data.CompanyType);
         Assert.Equal("fresh_market", result.Data.SchemaName);
+        Assert.Equal("BASIC", result.Data.SubscriptionPlan);
+        Assert.Equal(5, result.Data.MaxMarkets);
+        Assert.Equal(50, result.Data.MaxUsers);
         Assert.True(result.Data.IsActive);
+        Assert.NotEqual(default, result.Data.CreatedAt);
         Assert.Single(store.CreatedCompanies);
     }
 
@@ -94,6 +98,13 @@ public sealed class CompanyServiceTests
             return Task.FromResult<IReadOnlyCollection<CompanyDto>>(CreatedCompanies);
         }
 
+        public Task<CompanyDto?> GetCompanyByIdAsync(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(CreatedCompanies.FirstOrDefault(x => x.Id == id));
+        }
+
         public Task<bool> SchemaNameExistsAsync(
             string schemaName,
             CancellationToken cancellationToken = default)
@@ -112,7 +123,11 @@ public sealed class CompanyServiceTests
                 Name = request.Name,
                 SchemaName = schemaName,
                 CompanyType = request.CompanyType,
-                IsActive = true
+                SubscriptionPlan = "BASIC",
+                MaxMarkets = 5,
+                MaxUsers = 50,
+                IsActive = true,
+                CreatedAt = DateTimeOffset.UtcNow
             };
 
             CreatedCompanies.Add(company);

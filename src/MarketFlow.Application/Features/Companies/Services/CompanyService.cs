@@ -39,6 +39,17 @@ public class CompanyService : ICompanyService
         return ServiceResult<IReadOnlyCollection<CompanyDto>>.Success(companies);
     }
 
+    public async Task<ServiceResult<CompanyDto>> GetCompanyByIdAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var company = await _companyStore.GetCompanyByIdAsync(id, cancellationToken);
+
+        return company is null
+            ? ServiceResult<CompanyDto>.Failure("Company was not found.")
+            : ServiceResult<CompanyDto>.Success(company);
+    }
+
     public async Task<ServiceResult<CompanyDto>> CreateCompanyAsync(
         CreateCompanyRequest request,
         CancellationToken cancellationToken = default)
@@ -112,7 +123,11 @@ public class CompanyService : ICompanyService
             .Replace(builder.ToString().Normalize(NormalizationForm.FormC), "_")
             .Trim('_');
 
-        if (string.IsNullOrWhiteSpace(schemaName) || !char.IsLetter(schemaName[0]))
+        if (string.IsNullOrWhiteSpace(schemaName))
+        {
+            schemaName = $"tenant_{Guid.NewGuid():N}"[..15];
+        }
+        else if (!char.IsLetter(schemaName[0]))
         {
             schemaName = $"tenant_{schemaName}";
         }
