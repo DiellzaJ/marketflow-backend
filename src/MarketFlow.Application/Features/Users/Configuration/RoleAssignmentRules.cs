@@ -7,12 +7,14 @@ public static class RoleAssignmentRules
     public const string Seller = "Seller";
     public const string MainOperator = "MainOperator";
     public const string DepartmentManager = "DepartmentManager";
+    public const string InventoryEmployee = "InventoryEmployee";
 
     private static readonly Dictionary<string, RoleRequirements> Rules = new(StringComparer.OrdinalIgnoreCase)
     {
-        [Seller] = new RoleRequirements(RequiresMarket: true, AllowsDepartment: false),
-        [MainOperator] = new RoleRequirements(RequiresMarket: true, AllowsDepartment: false),
-        [DepartmentManager] = new RoleRequirements(RequiresMarket: true, RequiresDepartment: true),
+        [Seller] = new RoleRequirements(RequiresMarket: true),
+        [MainOperator] = new RoleRequirements(RequiresMarket: true),
+        [DepartmentManager] = new RoleRequirements(RequiresMarket: true),
+        [InventoryEmployee] = new RoleRequirements(RequiresMarket: true),
         [CompanyAdmin] = new RoleRequirements(AllowsMarket: false, AllowsDepartment: false)
     };
 
@@ -25,6 +27,7 @@ public static class RoleAssignmentRules
             "SELLER" => Seller,
             "MAINOPERATOR" => MainOperator,
             "DEPARTMENTMANAGER" => DepartmentManager,
+            "INVENTORYEMPLOYEE" => InventoryEmployee,
             "COMPANYADMIN" => CompanyAdmin,
             "ROOTADMIN" => RootAdmin,
             _ => trimmedRoleName
