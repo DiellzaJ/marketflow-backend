@@ -40,7 +40,19 @@ public sealed class CompanyStore : ICompanyStore
                 MaxMarkets = x.MaxMarkets,
                 MaxUsers = x.MaxUsers,
                 IsActive = x.IsActive,
-                CreatedAt = x.CreatedAt
+                CreatedAt = x.CreatedAt,
+                CompanyAdminFullName = x.Users
+                    .Where(user => user.Role.Name == "CompanyAdmin")
+                    .OrderBy(user => user.CreatedAt)
+                    .ThenBy(user => user.Id)
+                    .Select(user => user.FullName)
+                    .FirstOrDefault() ?? string.Empty,
+                CompanyAdminEmail = x.Users
+                    .Where(user => user.Role.Name == "CompanyAdmin")
+                    .OrderBy(user => user.CreatedAt)
+                    .ThenBy(user => user.Id)
+                    .Select(user => user.Email)
+                    .FirstOrDefault() ?? string.Empty
             })
             .ToListAsync(cancellationToken);
     }
@@ -62,7 +74,19 @@ public sealed class CompanyStore : ICompanyStore
                 MaxMarkets = x.MaxMarkets,
                 MaxUsers = x.MaxUsers,
                 IsActive = x.IsActive,
-                CreatedAt = x.CreatedAt
+                CreatedAt = x.CreatedAt,
+                CompanyAdminFullName = x.Users
+                    .Where(user => user.Role.Name == "CompanyAdmin")
+                    .OrderBy(user => user.CreatedAt)
+                    .ThenBy(user => user.Id)
+                    .Select(user => user.FullName)
+                    .FirstOrDefault() ?? string.Empty,
+                CompanyAdminEmail = x.Users
+                    .Where(user => user.Role.Name == "CompanyAdmin")
+                    .OrderBy(user => user.CreatedAt)
+                    .ThenBy(user => user.Id)
+                    .Select(user => user.Email)
+                    .FirstOrDefault() ?? string.Empty
             })
             .FirstOrDefaultAsync(cancellationToken);
     }
@@ -176,7 +200,9 @@ public sealed class CompanyStore : ICompanyStore
                 MaxMarkets = company.MaxMarkets,
                 MaxUsers = company.MaxUsers,
                 IsActive = company.IsActive,
-                CreatedAt = company.CreatedAt
+                CreatedAt = company.CreatedAt,
+                CompanyAdminFullName = companyAdmin.FullName,
+                CompanyAdminEmail = companyAdmin.Email
             },
             CompanyAdmin = new CompanyAdminSummaryDto
             {

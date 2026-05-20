@@ -19,4 +19,8 @@ public class CompanyDto
     public bool IsActive { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    public string CompanyAdminFullName { get; set; } = string.Empty;
+
+    public string CompanyAdminEmail { get; set; } = string.Empty;
 }
