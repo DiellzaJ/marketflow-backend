@@ -18,11 +18,30 @@ public sealed class ProductServiceTests
 
         var result = await service.CreateProductAsync(new CreateProductRequest
         {
-            Name = "Milk"
+            Name = "Milk",
+            Barcode = "123456789"
         });
 
         Assert.False(result.Succeeded);
         Assert.Equal("Category is required.", result.Message);
+        Assert.False(tenantQueryService.CreateProductWasCalled);
+    }
+
+    [Fact]
+    public async Task CreateProductAsync_RejectsMissingBarcode()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.CreateProductAsync(new CreateProductRequest
+        {
+            Name = "Milk",
+            Barcode = " ",
+            CategoryId = 1
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Barcode is required.", result.Message);
         Assert.False(tenantQueryService.CreateProductWasCalled);
     }
 
@@ -35,6 +54,7 @@ public sealed class ProductServiceTests
         var result = await service.CreateProductAsync(new CreateProductRequest
         {
             Name = "Milk",
+            Barcode = "123456789",
             CategoryId = 1
         });
 
@@ -52,11 +72,30 @@ public sealed class ProductServiceTests
 
         var result = await service.UpdateProductAsync(10, new UpdateProductRequest
         {
-            Name = "Milk"
+            Name = "Milk",
+            Barcode = "123456789"
         });
 
         Assert.False(result.Succeeded);
         Assert.Equal("Category is required.", result.Message);
+        Assert.False(tenantQueryService.UpdateProductWasCalled);
+    }
+
+    [Fact]
+    public async Task UpdateProductAsync_RejectsMissingBarcode()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.UpdateProductAsync(10, new UpdateProductRequest
+        {
+            Name = "Milk",
+            Barcode = " ",
+            CategoryId = 1
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Barcode is required.", result.Message);
         Assert.False(tenantQueryService.UpdateProductWasCalled);
     }
 
@@ -69,6 +108,7 @@ public sealed class ProductServiceTests
         var result = await service.UpdateProductAsync(10, new UpdateProductRequest
         {
             Name = "Milk",
+            Barcode = "123456789",
             CategoryId = 1
         });
 
@@ -104,6 +144,7 @@ public sealed class ProductServiceTests
             {
                 Id = 10,
                 Name = request.Name,
+                Barcode = request.Barcode,
                 CategoryId = request.CategoryId
             });
         }
@@ -119,6 +160,7 @@ public sealed class ProductServiceTests
             {
                 Id = id,
                 Name = request.Name,
+                Barcode = request.Barcode,
                 CategoryId = request.CategoryId
             });
         }

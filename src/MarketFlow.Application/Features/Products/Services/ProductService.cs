@@ -41,6 +41,11 @@ public class ProductService : IProductService
             return ServiceResult<ProductDto>.Failure("Product name is required.");
         }
 
+        if (string.IsNullOrWhiteSpace(request.Barcode))
+        {
+            return ServiceResult<ProductDto>.Failure("Barcode is required.");
+        }
+
         if (!request.CategoryId.HasValue)
         {
             return ServiceResult<ProductDto>.Failure("Category is required.");
@@ -58,6 +63,11 @@ public class ProductService : IProductService
         if (string.IsNullOrWhiteSpace(request.Name))
         {
             return ServiceResult<ProductDto>.Failure("Product name is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Barcode))
+        {
+            return ServiceResult<ProductDto>.Failure("Barcode is required.");
         }
 
         if (!request.CategoryId.HasValue)
