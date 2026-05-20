@@ -3,6 +3,7 @@ using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Features.Users.DTOs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
 
@@ -13,10 +14,14 @@ public sealed class UserStore : IUserStore
     private const int StaffAssignmentLookupBatchSize = 1_000;
 
     private readonly ApplicationDbContext _dbContext;
+    private readonly ILogger<UserStore> _logger;
 
-    public UserStore(ApplicationDbContext dbContext)
+    public UserStore(
+        ApplicationDbContext dbContext,
+        ILogger<UserStore> logger)
     {
         _dbContext = dbContext;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyCollection<UserDto>> GetUsersAsync(
@@ -512,6 +517,15 @@ public sealed class UserStore : IUserStore
                 }
             }
         }
+        catch (PostgresException exception) when (IsRecoverableAssignmentLookupException(exception))
+        {
+            _logger.LogWarning(
+                exception,
+                "Unable to load staff assignments from tenant schema {SchemaName}. Returning users without assignment summaries.",
+                schemaName);
+
+            return [];
+        }
         finally
         {
             if (closeConnection)
@@ -521,6 +535,14 @@ public sealed class UserStore : IUserStore
         }
 
         return assignments;
+    }
+
+    private static bool IsRecoverableAssignmentLookupException(PostgresException exception)
+    {
+        return exception.SqlState is
+            "3F000" or // undefined_schema
+            "42P01" or // undefined_table
+            "42501"; // insufficient_privilege
     }
 
     private static string QuoteIdentifier(string identifier)
