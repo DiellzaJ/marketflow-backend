@@ -39,3 +39,12 @@ Assignment summaries are read from each company's tenant schema. If a tenant sch
 For companies with large user counts, monitor the user list assignment lookup query against `staff_assignments`. The backend batches assignment summary lookups per tenant schema in groups of 1,000 users and uses the existing `idx_staff_user` index.
 
 Controller tests cover the user API response shape for assignment summaries. Add database-backed integration or E2E coverage when a test Postgres tenant schema is available in CI.
+
+An opt-in live smoke test covers the graceful fallback path for a tenant schema that is present but missing `staff_assignments`. To run it, point `MARKETFLOW_TEST_DB_CONNECTION_STRING` at a disposable Postgres database that has the global MarketFlow migrations applied, then run the normal test command:
+
+```bash
+MARKETFLOW_TEST_DB_CONNECTION_STRING="Host=localhost;Port=5432;Database=marketflow_test;Username=postgres;Password=postgres" \
+dotnet test tests/MarketFlow.Api.Tests/MarketFlow.Api.Tests.csproj
+```
+
+For production deployments with multi-region or cross-database tenancy, verify that the API role has read access to each tenant schema's `markets`, `departments`, and `staff_assignments` tables, write access to `staff_assignments` for user creation, and acceptable latency for per-schema assignment summary lookups.
