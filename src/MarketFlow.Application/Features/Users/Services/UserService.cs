@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 using MarketFlow.Application.Features.Users.Interfaces;
 
@@ -9,13 +10,16 @@ public class UserService : IUserService
 {
     private readonly IUserStore _userStore;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IUserCreationValidator _userCreationValidator;
 
     public UserService(
         IUserStore userStore,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IUserCreationValidator userCreationValidator)
     {
         _userStore = userStore;
         _currentUserService = currentUserService;
+        _userCreationValidator = userCreationValidator;
     }
 
     public async Task<ServiceResult<IReadOnlyCollection<UserDto>>> GetUsersAsync(
@@ -33,23 +37,36 @@ public class UserService : IUserService
         CreateUserRequest request,
         CancellationToken cancellationToken = default)
     {
-        var companyId = IsRootAdmin()
-            ? request.CompanyId ?? _currentUserService.CompanyId
-            : _currentUserService.CompanyId;
+        var isRootAdmin = IsRootAdmin();
 
-        if (companyId is null)
+        var validation = await _userCreationValidator.ValidateAsync(
+            request,
+            isRootAdmin,
+            _currentUserService.CompanyId,
+            cancellationToken);
+
+        if (!validation.Succeeded)
         {
-            return ServiceResult<UserDto>.Failure("Current company is required.");
+            return ServiceResult<UserDto>.Failure(validation.Message);
         }
 
-        if (string.IsNullOrWhiteSpace(request.FullName) ||
-            string.IsNullOrWhiteSpace(request.Email) ||
-            string.IsNullOrWhiteSpace(request.Password))
+        var normalizedRequest = new CreateUserRequest
         {
-            return ServiceResult<UserDto>.Failure("Full name, email, and password are required.");
-        }
+            FullName = request.FullName.Trim(),
+            Email = request.Email.Trim(),
+            Password = request.Password,
+            CompanyId = request.CompanyId,
+            // Canonical role names keep database role lookups case-insensitive at the service boundary.
+            RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName ?? string.Empty),
+            MarketId = request.MarketId,
+            DepartmentId = request.DepartmentId,
+            IsActive = request.IsActive
+        };
 
-        var user = await _userStore.CreateUserAsync(companyId.Value, request, cancellationToken);
+        var user = await _userStore.CreateUserAsync(
+            validation.Data,
+            normalizedRequest,
+            cancellationToken);
 
         return user is null
             ? ServiceResult<UserDto>.Failure("Role does not exist or email is already used.")
@@ -66,6 +83,8 @@ public class UserService : IUserService
         {
             return ServiceResult<UserDto>.Failure("Full name and email are required.");
         }
+
+        request.RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName ?? string.Empty);
 
         var user = await _userStore.UpdateUserAsync(
             id,
@@ -84,6 +103,11 @@ public class UserService : IUserService
         PatchUserRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (!string.IsNullOrWhiteSpace(request.RoleName))
+        {
+            request.RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName);
+        }
+
         var user = await _userStore.PatchUserAsync(
             id,
             _currentUserService.CompanyId,
@@ -113,6 +137,6 @@ public class UserService : IUserService
 
     private bool IsRootAdmin()
     {
-        return string.Equals(_currentUserService.Role, "RootAdmin", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(_currentUserService.Role, RoleAssignmentRules.RootAdmin, StringComparison.OrdinalIgnoreCase);
     }
 }

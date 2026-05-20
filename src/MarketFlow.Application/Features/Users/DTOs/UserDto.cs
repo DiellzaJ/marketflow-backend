@@ -11,4 +11,9 @@ public class UserDto
     public string RoleName { get; set; } = string.Empty;
 
     public bool IsActive { get; set; }
+
+    /// <summary>
+    /// Current active staff assignment for operational users. CompanyAdmin users usually have no assignment.
+    /// </summary>
+    public UserAssignmentSummaryDto? Assignment { get; set; }
 }
