@@ -189,91 +189,183 @@ public static class GlobalDataSeeder
             .ToListAsync();
 
         var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+        var shouldCloseConnection = connection.State != ConnectionState.Open;
 
-        if (connection.State != ConnectionState.Open)
+        if (shouldCloseConnection)
         {
             await connection.OpenAsync();
         }
 
-        foreach (var schemaName in schemaNames)
+        try
         {
-            if (!SchemaNamePattern.IsMatch(schemaName))
+            var createTenantSchemaFunctionExists = await CreateTenantSchemaFunctionExistsAsync(connection);
+
+            if (!createTenantSchemaFunctionExists)
             {
-                continue;
+                logger.LogWarning(
+                    "public.create_tenant_schema(text) was not found. Default category seeding will use existing tenant schemas only.");
             }
 
-            await using var transaction = await connection.BeginTransactionAsync();
-
-            try
+            foreach (var schemaName in schemaNames)
             {
-                await using (var createSchemaCommand = new NpgsqlCommand(
-                    "SELECT public.create_tenant_schema(@schema_name);",
-                    connection,
-                    transaction))
+                if (!SchemaNamePattern.IsMatch(schemaName))
                 {
-                    createSchemaCommand.Parameters.AddWithValue("schema_name", schemaName);
-                    await createSchemaCommand.ExecuteNonQueryAsync();
+                    logger.LogWarning("Skipping default category seeding for invalid tenant schema name {SchemaName}.", schemaName);
+                    continue;
                 }
 
-                var quotedSchemaName = QuoteIdentifier(schemaName);
-
-                foreach (var category in DefaultCategories)
-                {
-                    await using var insertCommand = new NpgsqlCommand(
-                        $"""
-                        INSERT INTO {quotedSchemaName}.categories (name, description)
-                        SELECT @name, @description
-                        WHERE NOT EXISTS (
-                            SELECT 1
-                            FROM {quotedSchemaName}.categories
-                            WHERE lower(name) = lower(@name)
-                        );
-                        """,
-                        connection,
-                        transaction);
-
-                    insertCommand.Parameters.AddWithValue("name", category.Name);
-                    insertCommand.Parameters.AddWithValue("description", category.Description);
-                    await insertCommand.ExecuteNonQueryAsync();
-                }
-
-                await using var repairProductsCommand = new NpgsqlCommand(
-                    $"""
-                    UPDATE {quotedSchemaName}.products
-                    SET category_id = (
-                        SELECT id
-                        FROM {quotedSchemaName}.categories
-                        WHERE lower(name) = lower(@uncategorized_name)
-                        ORDER BY id
-                        LIMIT 1
-                    )
-                    WHERE category_id IS NULL;
-                    """,
-                    connection,
-                    transaction);
-
-                repairProductsCommand.Parameters.AddWithValue("uncategorized_name", "Uncategorized");
-                await repairProductsCommand.ExecuteNonQueryAsync();
-
-                await transaction.CommitAsync();
-            }
-            catch (Exception exception)
-            {
-                logger.LogError(exception, "Failed to seed default categories for tenant schema {SchemaName}.", schemaName);
+                await using var transaction = await connection.BeginTransactionAsync();
 
                 try
                 {
-                    await transaction.RollbackAsync();
+                    if (createTenantSchemaFunctionExists)
+                    {
+                        await using var createSchemaCommand = new NpgsqlCommand(
+                            "SELECT public.create_tenant_schema(@schema_name);",
+                            connection,
+                            transaction);
+
+                        createSchemaCommand.Parameters.AddWithValue("schema_name", schemaName);
+                        await createSchemaCommand.ExecuteNonQueryAsync();
+                    }
+
+                    var categoriesTableExists = await TenantTableExistsAsync(
+                        connection,
+                        transaction,
+                        schemaName,
+                        "categories");
+
+                    if (!categoriesTableExists)
+                    {
+                        logger.LogWarning(
+                            "Skipping default category seeding for tenant schema {SchemaName} because the categories table is missing.",
+                            schemaName);
+
+                        await transaction.RollbackAsync();
+                        continue;
+                    }
+
+                    var quotedSchemaName = QuoteIdentifier(schemaName);
+
+                    foreach (var category in DefaultCategories)
+                    {
+                        await using var insertCommand = new NpgsqlCommand(
+                            $"""
+                            INSERT INTO {quotedSchemaName}.categories (name, description)
+                            SELECT @name, @description
+                            WHERE NOT EXISTS (
+                                SELECT 1
+                                FROM {quotedSchemaName}.categories
+                                WHERE lower(name) = lower(@name)
+                            );
+                            """,
+                            connection,
+                            transaction);
+
+                        insertCommand.Parameters.AddWithValue("name", category.Name);
+                        insertCommand.Parameters.AddWithValue("description", category.Description);
+                        await insertCommand.ExecuteNonQueryAsync();
+                    }
+
+                    var productsTableExists = await TenantTableExistsAsync(
+                        connection,
+                        transaction,
+                        schemaName,
+                        "products");
+
+                    if (productsTableExists)
+                    {
+                        await using var repairProductsCommand = new NpgsqlCommand(
+                            $"""
+                            UPDATE {quotedSchemaName}.products
+                            SET category_id = (
+                                SELECT id
+                                FROM {quotedSchemaName}.categories
+                                WHERE lower(name) = lower(@uncategorized_name)
+                                ORDER BY id
+                                LIMIT 1
+                            )
+                            WHERE category_id IS NULL;
+                            """,
+                            connection,
+                            transaction);
+
+                        repairProductsCommand.Parameters.AddWithValue("uncategorized_name", "Uncategorized");
+                        await repairProductsCommand.ExecuteNonQueryAsync();
+                    }
+                    else
+                    {
+                        logger.LogWarning(
+                            "Skipped product category repair for tenant schema {SchemaName} because the products table is missing.",
+                            schemaName);
+                    }
+
+                    await transaction.CommitAsync();
                 }
-                catch (Exception rollbackException)
+                catch (Exception exception)
                 {
-                    logger.LogError(
-                        rollbackException,
-                        "Failed to roll back default category seeding for tenant schema {SchemaName}.",
-                        schemaName);
+                    logger.LogError(exception, "Failed to seed default categories for tenant schema {SchemaName}.", schemaName);
+
+                    try
+                    {
+                        await transaction.RollbackAsync();
+                    }
+                    catch (Exception rollbackException)
+                    {
+                        logger.LogError(
+                            rollbackException,
+                            "Failed to roll back default category seeding for tenant schema {SchemaName}.",
+                            schemaName);
+                    }
                 }
             }
         }
+        finally
+        {
+            if (shouldCloseConnection)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
+    private static async Task<bool> CreateTenantSchemaFunctionExistsAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT to_regprocedure('public.create_tenant_schema(text)') IS NOT NULL;",
+            connection);
+
+        var result = await command.ExecuteScalarAsync();
+
+        return result is bool exists && exists;
+    }
+
+    private static async Task<bool> TenantTableExistsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string schemaName,
+        string tableName)
+    {
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_class c
+                INNER JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = @schema_name
+                  AND c.relname = @table_name
+                  AND c.relkind IN ('r', 'p')
+            );
+            """,
+            connection,
+            transaction);
+
+        command.Parameters.AddWithValue("schema_name", schemaName);
+        command.Parameters.AddWithValue("table_name", tableName);
+
+        var result = await command.ExecuteScalarAsync();
+
+        return result is bool exists && exists;
     }
 
     private static string QuoteIdentifier(string identifier)
