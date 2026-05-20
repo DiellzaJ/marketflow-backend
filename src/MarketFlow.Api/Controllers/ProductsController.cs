@@ -20,6 +20,16 @@ public class ProductsController(IProductService productService) : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("{id:int}", Name = nameof(GetByIdAsync))]
+    [Authorize(Policy = AuthorizationPolicies.ReadProducts)]
+    public async Task<ActionResult<ServiceResult<ProductDto>>> GetByIdAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await productService.GetProductAsync(id, cancellationToken);
+        return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
     [HttpPost]
     [Authorize(Policy = AuthorizationPolicies.CreateProducts)]
     public async Task<ActionResult<ServiceResult<ProductDto>>> CreateAsync(
@@ -28,7 +38,12 @@ public class ProductsController(IProductService productService) : ControllerBase
     {
         var result = await productService.CreateProductAsync(request, cancellationToken);
 
-        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
+        if (!result.Succeeded)
+        {
+            return BadRequest(result);
+        }
+
+        return CreatedAtRoute(nameof(GetByIdAsync), new { id = result.Data!.Id }, result);
     }
 
     [HttpPut("{id:int}")]

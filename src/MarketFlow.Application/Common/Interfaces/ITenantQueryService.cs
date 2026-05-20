@@ -1,4 +1,5 @@
 using MarketFlow.Application.Features.Inventory.DTOs;
+using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
@@ -18,6 +19,8 @@ public interface ITenantQueryService
     Task<ProductDto?> PatchProductAsync(int id, PatchProductRequest request, CancellationToken cancellationToken = default);
 
     Task<bool> DeleteProductAsync(int id, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(CancellationToken cancellationToken = default);
 
     Task<IReadOnlyCollection<InventoryItemDto>> GetInventoryAsync(CancellationToken cancellationToken = default);
 

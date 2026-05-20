@@ -21,6 +21,17 @@ public class ProductService : IProductService
         return ServiceResult<IReadOnlyCollection<ProductDto>>.Success(products);
     }
 
+    public async Task<ServiceResult<ProductDto>> GetProductAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var product = await _tenantQueryService.GetProductAsync(id, cancellationToken);
+
+        return product is null
+            ? ServiceResult<ProductDto>.Failure("Product was not found.")
+            : ServiceResult<ProductDto>.Success(product);
+    }
+
     public async Task<ServiceResult<ProductDto>> CreateProductAsync(
         CreateProductRequest request,
         CancellationToken cancellationToken = default)
@@ -28,6 +39,16 @@ public class ProductService : IProductService
         if (string.IsNullOrWhiteSpace(request.Name))
         {
             return ServiceResult<ProductDto>.Failure("Product name is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Barcode))
+        {
+            return ServiceResult<ProductDto>.Failure("Barcode is required.");
+        }
+
+        if (!request.CategoryId.HasValue)
+        {
+            return ServiceResult<ProductDto>.Failure("Category is required.");
         }
 
         var product = await _tenantQueryService.CreateProductAsync(request, cancellationToken);
@@ -42,6 +63,16 @@ public class ProductService : IProductService
         if (string.IsNullOrWhiteSpace(request.Name))
         {
             return ServiceResult<ProductDto>.Failure("Product name is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Barcode))
+        {
+            return ServiceResult<ProductDto>.Failure("Barcode is required.");
+        }
+
+        if (!request.CategoryId.HasValue)
+        {
+            return ServiceResult<ProductDto>.Failure("Category is required.");
         }
 
         var product = await _tenantQueryService.UpdateProductAsync(id, request, cancellationToken);

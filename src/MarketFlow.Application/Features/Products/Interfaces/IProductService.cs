@@ -8,6 +8,10 @@ public interface IProductService
     Task<ServiceResult<IReadOnlyCollection<ProductDto>>> GetProductsAsync(
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<ProductDto>> GetProductAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<ProductDto>> CreateProductAsync(
         CreateProductRequest request,
         CancellationToken cancellationToken = default);

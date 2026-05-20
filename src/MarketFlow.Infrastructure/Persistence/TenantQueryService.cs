@@ -1,5 +1,6 @@
 using System.Data;
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
@@ -30,24 +31,28 @@ public sealed class TenantQueryService : ITenantQueryService
         var products = new List<ProductDto>();
 
         await using var command = await CreateCommandAsync($"""
-            SELECT id, name, description, barcode, unit_price
-            FROM {schemaName}.products
-            WHERE is_active = TRUE
-            ORDER BY name;
+            SELECT p.id,
+                   p.name,
+                   p.description,
+                   p.barcode,
+                   p.category_id,
+                   c.name AS category_name,
+                   p.unit_price,
+                   p.cost_price,
+                   p.tax_rate,
+                   p.min_stock_alert,
+                   p.is_active
+            FROM {schemaName}.products p
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            WHERE p.is_active = TRUE
+            ORDER BY p.name;
             """, cancellationToken);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
         while (await reader.ReadAsync(cancellationToken))
         {
-            products.Add(new ProductDto
-            {
-                Id = reader.GetInt32(0),
-                Name = reader.GetString(1),
-                Description = reader.IsDBNull(2) ? null : reader.GetString(2),
-                Barcode = reader.IsDBNull(3) ? null : reader.GetString(3),
-                UnitPrice = reader.GetDecimal(4)
-            });
+            products.Add(ReadProduct(reader));
         }
 
         return products;
@@ -60,9 +65,20 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
 
         await using var command = await CreateCommandAsync($"""
-            SELECT id, name, description, barcode, unit_price
-            FROM {schemaName}.products
-            WHERE id = @id AND is_active = TRUE;
+            SELECT p.id,
+                   p.name,
+                   p.description,
+                   p.barcode,
+                   p.category_id,
+                   c.name AS category_name,
+                   p.unit_price,
+                   p.cost_price,
+                   p.tax_rate,
+                   p.min_stock_alert,
+                   p.is_active
+            FROM {schemaName}.products p
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            WHERE p.id = @id AND p.is_active = TRUE;
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
 
@@ -96,13 +112,16 @@ public sealed class TenantQueryService : ITenantQueryService
                 @tax_rate,
                 @image_url,
                 @min_stock_alert)
-            RETURNING id, name, description, barcode, unit_price;
+            RETURNING id;
             """, cancellationToken);
 
         AddProductParameters(command, request);
 
-        return await ReadProductAsync(command, cancellationToken)
+        var createdId = (int?)await command.ExecuteScalarAsync(cancellationToken)
             ?? throw new InvalidOperationException("Product was not created.");
+
+        return await GetProductAsync(createdId, cancellationToken)
+            ?? throw new InvalidOperationException("Product was not found after creation.");
     }
 
     public async Task<ProductDto?> UpdateProductAsync(
@@ -125,14 +144,16 @@ public sealed class TenantQueryService : ITenantQueryService
                 min_stock_alert = @min_stock_alert,
                 is_active = @is_active
             WHERE id = @id
-            RETURNING id, name, description, barcode, unit_price;
+            RETURNING id;
             """, cancellationToken);
 
         command.Parameters.AddWithValue("id", id);
         AddProductParameters(command, request);
         command.Parameters.AddWithValue("is_active", request.IsActive);
 
-        return await ReadProductAsync(command, cancellationToken);
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
     }
 
     public async Task<ProductDto?> PatchProductAsync(
@@ -155,7 +176,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 min_stock_alert = COALESCE(@min_stock_alert, min_stock_alert),
                 is_active = COALESCE(@is_active, is_active)
             WHERE id = @id
-            RETURNING id, name, description, barcode, unit_price;
+            RETURNING id;
             """, cancellationToken);
 
         command.Parameters.AddWithValue("id", id);
@@ -170,7 +191,9 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("min_stock_alert", DbValue(request.MinStockAlert));
         command.Parameters.AddWithValue("is_active", DbValue(request.IsActive));
 
-        return await ReadProductAsync(command, cancellationToken);
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
     }
 
     public async Task<bool> DeleteProductAsync(
@@ -187,6 +210,34 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("id", id);
 
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    public async Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var categories = new List<CategoryDto>();
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id, name, description
+            FROM {schemaName}.categories
+            WHERE is_active = TRUE
+            ORDER BY name;
+            """, cancellationToken);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            categories.Add(new CategoryDto
+            {
+                Id = reader.GetInt32(0),
+                Name = reader.GetString(1),
+                Description = reader.IsDBNull(2) ? null : reader.GetString(2)
+            });
+        }
+
+        return categories;
     }
 
     public async Task<IReadOnlyCollection<InventoryItemDto>> GetInventoryAsync(
@@ -668,16 +719,25 @@ public sealed class TenantQueryService : ITenantQueryService
     {
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-        return await reader.ReadAsync(cancellationToken)
-            ? new ProductDto
-            {
-                Id = reader.GetInt32(0),
-                Name = reader.GetString(1),
-                Description = reader.IsDBNull(2) ? null : reader.GetString(2),
-                Barcode = reader.IsDBNull(3) ? null : reader.GetString(3),
-                UnitPrice = reader.GetDecimal(4)
-            }
-            : null;
+        return await reader.ReadAsync(cancellationToken) ? ReadProduct(reader) : null;
+    }
+
+    private static ProductDto ReadProduct(NpgsqlDataReader reader)
+    {
+        return new ProductDto
+        {
+            Id = reader.GetInt32(0),
+            Name = reader.GetString(1),
+            Description = reader.IsDBNull(2) ? null : reader.GetString(2),
+            Barcode = reader.IsDBNull(3) ? null : reader.GetString(3),
+            CategoryId = reader.IsDBNull(4) ? null : reader.GetInt32(4),
+            CategoryName = reader.IsDBNull(5) ? null : reader.GetString(5),
+            UnitPrice = reader.GetDecimal(6),
+            CostPrice = reader.GetDecimal(7),
+            TaxRate = reader.GetDecimal(8),
+            MinStockAlert = reader.GetInt32(9),
+            IsActive = reader.GetBoolean(10)
+        };
     }
 
     private static async Task<SaleDto?> ReadSaleAsync(
