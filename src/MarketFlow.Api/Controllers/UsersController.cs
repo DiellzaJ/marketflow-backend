@@ -13,6 +13,9 @@ public class UsersController(IUserService userService) : ControllerBase
 {
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicies.ReadUsers)]
+    [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<UserDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<ServiceResult<IReadOnlyCollection<UserDto>>>> GetAsync(
         CancellationToken cancellationToken)
     {
@@ -22,6 +25,10 @@ public class UsersController(IUserService userService) : ControllerBase
 
     [HttpPost]
     [Authorize(Policy = AuthorizationPolicies.CreateUsers)]
+    [ProducesResponseType(typeof(ServiceResult<UserDto>), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ServiceResult<UserDto>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     public async Task<ActionResult<ServiceResult<UserDto>>> CreateAsync(
         CreateUserRequest request,
         CancellationToken cancellationToken)
