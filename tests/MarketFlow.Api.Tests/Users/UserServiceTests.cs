@@ -74,6 +74,8 @@ public sealed class UserServiceTests
     [Theory]
     [InlineData("Seller")]
     [InlineData("MainOperator")]
+    [InlineData("DepartmentManager")]
+    [InlineData("InventoryEmployee")]
     public async Task CreateUserAsync_ForMarketRolesWithoutMarket_ReturnsValidationError(string roleName)
     {
         var service = CreateCompanyAdminService();
@@ -81,47 +83,29 @@ public sealed class UserServiceTests
         var result = await service.CreateUserAsync(ValidRequest(roleName));
 
         Assert.False(result.Succeeded);
-        Assert.Equal($"{roleName} requires market assignment.", result.Message);
+        Assert.Equal($"{RoleAssignmentRules.NormalizeRoleName(roleName)} requires market assignment.", result.Message);
     }
 
     [Theory]
     [InlineData("Seller")]
     [InlineData("MainOperator")]
-    public async Task CreateUserAsync_ForMarketRolesWithDepartment_ReturnsValidationError(string roleName)
+    [InlineData("DepartmentManager")]
+    [InlineData("InventoryEmployee")]
+    public async Task CreateUserAsync_ForMarketRolesWithDepartment_CreatesUserSuccessfully(string roleName)
     {
-        var service = CreateCompanyAdminService();
+        var store = new FakeUserStore();
+        var service = CreateCompanyAdminService(store);
         var request = ValidRequest(roleName);
         request.MarketId = 3;
         request.DepartmentId = 4;
 
         var result = await service.CreateUserAsync(request);
 
-        Assert.False(result.Succeeded);
-        Assert.Equal($"{roleName} cannot be assigned to a department.", result.Message);
-    }
-
-    [Fact]
-    public async Task CreateUserAsync_ForDepartmentManagerWithoutMarketAndDepartment_ReturnsValidationError()
-    {
-        var service = CreateCompanyAdminService();
-
-        var result = await service.CreateUserAsync(ValidRequest("DepartmentManager"));
-
-        Assert.False(result.Succeeded);
-        Assert.Equal("DepartmentManager requires market and department assignment.", result.Message);
-    }
-
-    [Fact]
-    public async Task CreateUserAsync_ForDepartmentManagerWithOnlyMarket_ReturnsValidationError()
-    {
-        var service = CreateCompanyAdminService();
-        var request = ValidRequest("DepartmentManager");
-        request.MarketId = 3;
-
-        var result = await service.CreateUserAsync(request);
-
-        Assert.False(result.Succeeded);
-        Assert.Equal("DepartmentManager requires market and department assignment.", result.Message);
+        Assert.True(result.Succeeded);
+        Assert.Equal(3, store.CreatedRequest?.MarketId);
+        Assert.Equal(4, store.CreatedRequest?.DepartmentId);
+        Assert.Equal(3, result.Data?.Assignment?.MarketId);
+        Assert.Equal(4, result.Data?.Assignment?.DepartmentId);
     }
 
     [Fact]
@@ -194,7 +178,39 @@ public sealed class UserServiceTests
         var result = await service.CreateUserAsync(request);
 
         Assert.False(result.Succeeded);
-        Assert.Equal("Department assignment requires market assignment.", result.Message);
+        Assert.Equal("InventoryEmployee requires market assignment.", result.Message);
+    }
+
+    [Fact]
+    public async Task GetUsersAsync_ReturnsAssignmentSummary()
+    {
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 1,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market",
+                DepartmentId = 4,
+                DepartmentName = "Produce"
+            }
+        });
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.GetUsersAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Data);
+        var user = Assert.Single(result.Data);
+        Assert.Equal(3, user.Assignment?.MarketId);
+        Assert.Equal("Central Market", user.Assignment?.MarketName);
+        Assert.Equal(4, user.Assignment?.DepartmentId);
+        Assert.Equal("Produce", user.Assignment?.DepartmentName);
     }
 
     [Fact]
@@ -285,13 +301,14 @@ public sealed class UserServiceTests
             (3, 4)
         };
 
+        public List<UserDto> Users { get; } = [];
+
         public Task<IReadOnlyCollection<UserDto>> GetUsersAsync(
             int? companyId,
             bool includeAllCompanies,
             CancellationToken cancellationToken = default)
         {
-            IReadOnlyCollection<UserDto> users = Array.Empty<UserDto>();
-            return Task.FromResult(users);
+            return Task.FromResult<IReadOnlyCollection<UserDto>>(Users);
         }
 
         public Task<UserDto?> CreateUserAsync(
@@ -308,7 +325,18 @@ public sealed class UserServiceTests
                 FullName = request.FullName,
                 Email = request.Email,
                 RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName),
-                IsActive = request.IsActive
+                IsActive = request.IsActive,
+                Assignment = request.MarketId.HasValue
+                    ? new UserAssignmentSummaryDto
+                    {
+                        MarketId = request.MarketId.Value,
+                        MarketName = $"Market {request.MarketId.Value}",
+                        DepartmentId = request.DepartmentId,
+                        DepartmentName = request.DepartmentId.HasValue
+                            ? $"Department {request.DepartmentId.Value}"
+                            : null
+                    }
+                    : null
             });
         }
 

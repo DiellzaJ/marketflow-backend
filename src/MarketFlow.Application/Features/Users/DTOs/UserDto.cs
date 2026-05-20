@@ -11,4 +11,6 @@ public class UserDto
     public string RoleName { get; set; } = string.Empty;
 
     public bool IsActive { get; set; }
+
+    public UserAssignmentSummaryDto? Assignment { get; set; }
 }
