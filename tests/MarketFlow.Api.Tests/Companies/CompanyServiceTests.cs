@@ -34,6 +34,8 @@ public sealed class CompanyServiceTests
         Assert.Equal(50, result.Data.Company.MaxUsers);
         Assert.True(result.Data.Company.IsActive);
         Assert.NotEqual(default, result.Data.Company.CreatedAt);
+        Assert.Equal("Fresh Admin", result.Data.Company.CompanyAdminFullName);
+        Assert.Equal("admin@freshmarket.test", result.Data.Company.CompanyAdminEmail);
         Assert.Equal("Fresh Admin", result.Data.CompanyAdmin.FullName);
         Assert.Equal("admin@freshmarket.test", result.Data.CompanyAdmin.Email);
         Assert.Equal("CompanyAdmin", result.Data.CompanyAdmin.RoleName);
@@ -203,7 +205,9 @@ public sealed class CompanyServiceTests
                 MaxMarkets = 5,
                 MaxUsers = 50,
                 IsActive = true,
-                CreatedAt = DateTimeOffset.UtcNow
+                CreatedAt = DateTimeOffset.UtcNow,
+                CompanyAdminFullName = request.CompanyAdmin.FullName,
+                CompanyAdminEmail = normalizedAdminEmail
             };
 
             CreatedCompanies.Add(company);
