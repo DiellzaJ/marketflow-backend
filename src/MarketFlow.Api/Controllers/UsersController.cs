@@ -11,6 +11,8 @@ namespace MarketFlow.Api.Controllers;
 [Route("api/[controller]")]
 public class UsersController(IUserService userService) : ControllerBase
 {
+    private const string GetUserByIdRouteName = "GetUserById";
+
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicies.ReadUsers)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<UserDto>>), StatusCodes.Status200OK)]
@@ -21,6 +23,21 @@ public class UsersController(IUserService userService) : ControllerBase
     {
         var result = await userService.GetUsersAsync(cancellationToken);
         return Ok(result);
+    }
+
+    [HttpGet("{id:int}", Name = GetUserByIdRouteName)]
+    [Authorize(Policy = AuthorizationPolicies.ReadUsers)]
+    [ProducesResponseType(typeof(ServiceResult<UserDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ServiceResult<UserDto>), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ServiceResult<UserDto>>> GetByIdAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await userService.GetUserAsync(id, cancellationToken);
+
+        return result.Succeeded ? Ok(result) : NotFound(result);
     }
 
     [HttpPost]
@@ -35,7 +52,9 @@ public class UsersController(IUserService userService) : ControllerBase
     {
         var result = await userService.CreateUserAsync(request, cancellationToken);
 
-        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
+        return result.Succeeded
+            ? CreatedAtRoute(GetUserByIdRouteName, new { id = result.Data!.Id }, result)
+            : BadRequest(result);
     }
 
     [HttpPut("{id:int}")]

@@ -34,6 +34,7 @@ public sealed class EndpointAuthorizationPolicyTests
         { typeof(CompaniesController), nameof(CompaniesController.GetByIdAsync), AuthorizationPolicies.RootAdminOnly },
         { typeof(CompaniesController), nameof(CompaniesController.CreateAsync), AuthorizationPolicies.RootAdminOnly },
         { typeof(UsersController), nameof(UsersController.GetAsync), AuthorizationPolicies.ReadUsers },
+        { typeof(UsersController), nameof(UsersController.GetByIdAsync), AuthorizationPolicies.ReadUsers },
         { typeof(UsersController), nameof(UsersController.CreateAsync), AuthorizationPolicies.CreateUsers },
         { typeof(UsersController), nameof(UsersController.UpdateAsync), AuthorizationPolicies.UpdateUsers },
         { typeof(UsersController), nameof(UsersController.PatchAsync), AuthorizationPolicies.UpdateUsers },

@@ -74,7 +74,6 @@ public sealed class UserServiceTests
     [Theory]
     [InlineData("Seller")]
     [InlineData("MainOperator")]
-    [InlineData("DepartmentManager")]
     [InlineData("InventoryEmployee")]
     public async Task CreateUserAsync_ForMarketRolesWithoutMarket_ReturnsValidationError(string roleName)
     {
@@ -84,6 +83,17 @@ public sealed class UserServiceTests
 
         Assert.False(result.Succeeded);
         Assert.Equal($"{RoleAssignmentRules.NormalizeRoleName(roleName)} requires market assignment.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ForDepartmentManagerWithoutMarket_ReturnsValidationError()
+    {
+        var service = CreateCompanyAdminService();
+
+        var result = await service.CreateUserAsync(ValidRequest("DepartmentManager"));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("DepartmentManager requires market and department assignment.", result.Message);
     }
 
     [Theory]
@@ -128,7 +138,6 @@ public sealed class UserServiceTests
     [Theory]
     [InlineData("Seller")]
     [InlineData("MainOperator")]
-    [InlineData("DepartmentManager")]
     [InlineData("InventoryEmployee")]
     public async Task CreateUserAsync_ForOperationalRoleWithNoDepartment_CreatesMarketAssignment(
         string roleName)
@@ -145,6 +154,19 @@ public sealed class UserServiceTests
         Assert.Null(store.CreatedRequest?.DepartmentId);
         Assert.Equal(3, result.Data?.Assignment?.MarketId);
         Assert.Null(result.Data?.Assignment?.DepartmentId);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ForDepartmentManagerWithoutDepartment_ReturnsValidationError()
+    {
+        var service = CreateCompanyAdminService();
+        var request = ValidRequest("DepartmentManager");
+        request.MarketId = 3;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("DepartmentManager requires department assignment.", result.Message);
     }
 
     [Theory]
@@ -399,6 +421,15 @@ public sealed class UserServiceTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyCollection<UserDto>>(Users);
+        }
+
+        public Task<UserDto?> GetUserAsync(
+            int id,
+            int? companyId,
+            bool includeAllCompanies,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(Users.FirstOrDefault(x => x.Id == id));
         }
 
         public Task<UserDto?> CreateUserAsync(

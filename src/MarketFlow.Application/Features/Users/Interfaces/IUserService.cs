@@ -8,6 +8,10 @@ public interface IUserService
     Task<ServiceResult<IReadOnlyCollection<UserDto>>> GetUsersAsync(
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<UserDto>> GetUserAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<UserDto>> CreateUserAsync(
         CreateUserRequest request,
         CancellationToken cancellationToken = default);
