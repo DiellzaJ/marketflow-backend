@@ -12,6 +12,8 @@ namespace MarketFlow.Api.Controllers;
 [Authorize(Policy = AuthorizationPolicies.RootAdminOnly)]
 public class CompaniesController(ICompanyService companyService) : ControllerBase
 {
+    private const string GetCompanyByIdRouteName = "GetCompanyById";
+
     [HttpGet]
     public async Task<ActionResult<ServiceResult<IReadOnlyCollection<CompanyDto>>>> GetAsync(
         CancellationToken cancellationToken)
@@ -20,7 +22,7 @@ public class CompaniesController(ICompanyService companyService) : ControllerBas
         return Ok(result);
     }
 
-    [HttpGet("{id:int}", Name = nameof(GetByIdAsync))]
+    [HttpGet("{id:int}", Name = GetCompanyByIdRouteName)]
     public async Task<ActionResult<ServiceResult<CompanyDto>>> GetByIdAsync(
         int id,
         CancellationToken cancellationToken)
@@ -42,7 +44,7 @@ public class CompaniesController(ICompanyService companyService) : ControllerBas
         var result = await companyService.CreateCompanyAsync(request, cancellationToken);
 
         return result.Succeeded
-            ? CreatedAtRoute(nameof(GetByIdAsync), new { id = result.Data!.Company.Id }, result)
+            ? CreatedAtRoute(GetCompanyByIdRouteName, new { id = result.Data!.Company.Id }, result)
             : BadRequest(result);
     }
 }
