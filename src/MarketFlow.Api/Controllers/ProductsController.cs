@@ -11,6 +11,8 @@ namespace MarketFlow.Api.Controllers;
 [Route("api/[controller]")]
 public class ProductsController(IProductService productService) : ControllerBase
 {
+    private const string GetProductByIdRouteName = "GetProductById";
+
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicies.ReadProducts)]
     public async Task<ActionResult<ServiceResult<IReadOnlyCollection<ProductDto>>>> GetAsync(
@@ -20,7 +22,7 @@ public class ProductsController(IProductService productService) : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("{id:int}", Name = nameof(GetByIdAsync))]
+    [HttpGet("{id:int}", Name = GetProductByIdRouteName)]
     [Authorize(Policy = AuthorizationPolicies.ReadProducts)]
     public async Task<ActionResult<ServiceResult<ProductDto>>> GetByIdAsync(
         int id,
@@ -43,7 +45,7 @@ public class ProductsController(IProductService productService) : ControllerBase
             return BadRequest(result);
         }
 
-        return CreatedAtRoute(nameof(GetByIdAsync), new { id = result.Data!.Id }, result);
+        return CreatedAtRoute(GetProductByIdRouteName, new { id = result.Data!.Id }, result);
     }
 
     [HttpPut("{id:int}")]

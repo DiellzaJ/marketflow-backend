@@ -29,7 +29,7 @@ public sealed class ProductsControllerTests
             CancellationToken.None);
 
         var created = Assert.IsType<CreatedAtRouteResult>(response.Result);
-        Assert.Equal(nameof(ProductsController.GetByIdAsync), created.RouteName);
+        Assert.Equal("GetProductById", created.RouteName);
         Assert.Equal(product.Id, created.RouteValues?["id"]);
         Assert.Same(product, Assert.IsType<ServiceResult<ProductDto>>(created.Value).Data);
     }

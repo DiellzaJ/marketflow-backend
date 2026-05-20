@@ -41,8 +41,8 @@ public sealed class CompaniesControllerTests
             ValidRequest(),
             CancellationToken.None);
 
-        var created = Assert.IsType<CreatedAtActionResult>(response.Result);
-        Assert.Equal(nameof(CompaniesController.GetByIdAsync), created.ActionName);
+        var created = Assert.IsType<CreatedAtRouteResult>(response.Result);
+        Assert.Equal("GetCompanyById", created.RouteName);
         Assert.Equal(onboarding.Company.Id, created.RouteValues?["id"]);
         var result = Assert.IsType<ServiceResult<CompanyOnboardingDto>>(created.Value);
         Assert.True(result.Succeeded);
