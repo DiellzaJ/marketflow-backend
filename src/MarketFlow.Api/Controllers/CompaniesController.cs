@@ -20,7 +20,7 @@ public class CompaniesController(ICompanyService companyService) : ControllerBas
         return Ok(result);
     }
 
-    [HttpGet("{id:int}")]
+    [HttpGet("{id:int}", Name = nameof(GetByIdAsync))]
     public async Task<ActionResult<ServiceResult<CompanyDto>>> GetByIdAsync(
         int id,
         CancellationToken cancellationToken)
@@ -42,7 +42,7 @@ public class CompaniesController(ICompanyService companyService) : ControllerBas
         var result = await companyService.CreateCompanyAsync(request, cancellationToken);
 
         return result.Succeeded
-            ? CreatedAtAction(nameof(GetByIdAsync), new { id = result.Data!.Company.Id }, result)
+            ? CreatedAtRoute(nameof(GetByIdAsync), new { id = result.Data!.Company.Id }, result)
             : BadRequest(result);
     }
 }
