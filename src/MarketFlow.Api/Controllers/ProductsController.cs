@@ -43,7 +43,7 @@ public class ProductsController(IProductService productService) : ControllerBase
             return BadRequest(result);
         }
 
-        return StatusCode(StatusCodes.Status201Created, result);
+        return CreatedAtAction(nameof(GetByIdAsync), new { id = result.Data!.Id }, result);
     }
 
     [HttpPut("{id:int}")]

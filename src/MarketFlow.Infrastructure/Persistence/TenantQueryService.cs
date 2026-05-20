@@ -731,7 +731,7 @@ public sealed class TenantQueryService : ITenantQueryService
             Description = reader.IsDBNull(2) ? null : reader.GetString(2),
             Barcode = reader.IsDBNull(3) ? null : reader.GetString(3),
             CategoryId = reader.IsDBNull(4) ? null : reader.GetInt32(4),
-            CategoryName = reader.IsDBNull(5) ? "Uncategorized" : reader.GetString(5),
+            CategoryName = reader.IsDBNull(5) ? null : reader.GetString(5),
             UnitPrice = reader.GetDecimal(6),
             CostPrice = reader.GetDecimal(7),
             TaxRate = reader.GetDecimal(8),

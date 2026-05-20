@@ -6,6 +6,7 @@ using MarketFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace MarketFlow.Infrastructure.Seed;
@@ -37,11 +38,12 @@ public static class GlobalDataSeeder
 
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(GlobalDataSeeder));
 
         await SeedRolesAsync(dbContext);
         await SeedRootAdminCompanyAsync(dbContext);
         await SeedRootAdminUserAsync(dbContext, configuration);
-        await SeedDefaultCategoriesAsync(dbContext);
+        await SeedDefaultCategoriesAsync(dbContext, logger);
     }
 
     private static async Task SeedRolesAsync(ApplicationDbContext dbContext)
@@ -176,7 +178,9 @@ public static class GlobalDataSeeder
         await dbContext.SaveChangesAsync();
     }
 
-    private static async Task SeedDefaultCategoriesAsync(ApplicationDbContext dbContext)
+    private static async Task SeedDefaultCategoriesAsync(
+        ApplicationDbContext dbContext,
+        ILogger logger)
     {
         var schemaNames = await dbContext.Companies
             .AsNoTracking()
@@ -198,51 +202,77 @@ public static class GlobalDataSeeder
                 continue;
             }
 
-            await using (var createSchemaCommand = new NpgsqlCommand(
-                "SELECT public.create_tenant_schema(@schema_name);",
-                connection))
-            {
-                createSchemaCommand.Parameters.AddWithValue("schema_name", schemaName);
-                await createSchemaCommand.ExecuteNonQueryAsync();
-            }
+            await using var transaction = await connection.BeginTransactionAsync();
 
-            var quotedSchemaName = QuoteIdentifier(schemaName);
-
-            foreach (var category in DefaultCategories)
+            try
             {
-                await using var insertCommand = new NpgsqlCommand(
+                await using (var createSchemaCommand = new NpgsqlCommand(
+                    "SELECT public.create_tenant_schema(@schema_name);",
+                    connection,
+                    transaction))
+                {
+                    createSchemaCommand.Parameters.AddWithValue("schema_name", schemaName);
+                    await createSchemaCommand.ExecuteNonQueryAsync();
+                }
+
+                var quotedSchemaName = QuoteIdentifier(schemaName);
+
+                foreach (var category in DefaultCategories)
+                {
+                    await using var insertCommand = new NpgsqlCommand(
+                        $"""
+                        INSERT INTO {quotedSchemaName}.categories (name, description)
+                        SELECT @name, @description
+                        WHERE NOT EXISTS (
+                            SELECT 1
+                            FROM {quotedSchemaName}.categories
+                            WHERE lower(name) = lower(@name)
+                        );
+                        """,
+                        connection,
+                        transaction);
+
+                    insertCommand.Parameters.AddWithValue("name", category.Name);
+                    insertCommand.Parameters.AddWithValue("description", category.Description);
+                    await insertCommand.ExecuteNonQueryAsync();
+                }
+
+                await using var repairProductsCommand = new NpgsqlCommand(
                     $"""
-                    INSERT INTO {quotedSchemaName}.categories (name, description)
-                    SELECT @name, @description
-                    WHERE NOT EXISTS (
-                        SELECT 1
+                    UPDATE {quotedSchemaName}.products
+                    SET category_id = (
+                        SELECT id
                         FROM {quotedSchemaName}.categories
-                        WHERE lower(name) = lower(@name)
-                    );
+                        WHERE lower(name) = lower(@uncategorized_name)
+                        ORDER BY id
+                        LIMIT 1
+                    )
+                    WHERE category_id IS NULL;
                     """,
-                    connection);
+                    connection,
+                    transaction);
 
-                insertCommand.Parameters.AddWithValue("name", category.Name);
-                insertCommand.Parameters.AddWithValue("description", category.Description);
-                await insertCommand.ExecuteNonQueryAsync();
+                repairProductsCommand.Parameters.AddWithValue("uncategorized_name", "Uncategorized");
+                await repairProductsCommand.ExecuteNonQueryAsync();
+
+                await transaction.CommitAsync();
             }
+            catch (Exception exception)
+            {
+                logger.LogError(exception, "Failed to seed default categories for tenant schema {SchemaName}.", schemaName);
 
-            await using var repairProductsCommand = new NpgsqlCommand(
-                $"""
-                UPDATE {quotedSchemaName}.products
-                SET category_id = (
-                    SELECT id
-                    FROM {quotedSchemaName}.categories
-                    WHERE lower(name) = lower(@uncategorized_name)
-                    ORDER BY id
-                    LIMIT 1
-                )
-                WHERE category_id IS NULL;
-                """,
-                connection);
-
-            repairProductsCommand.Parameters.AddWithValue("uncategorized_name", "Uncategorized");
-            await repairProductsCommand.ExecuteNonQueryAsync();
+                try
+                {
+                    await transaction.RollbackAsync();
+                }
+                catch (Exception rollbackException)
+                {
+                    logger.LogError(
+                        rollbackException,
+                        "Failed to roll back default category seeding for tenant schema {SchemaName}.",
+                        schemaName);
+                }
+            }
         }
     }
 
