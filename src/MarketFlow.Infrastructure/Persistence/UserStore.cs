@@ -10,6 +10,8 @@ namespace MarketFlow.Infrastructure.Persistence;
 
 public sealed class UserStore : IUserStore
 {
+    private const int StaffAssignmentLookupBatchSize = 1_000;
+
     private readonly ApplicationDbContext _dbContext;
 
     public UserStore(ApplicationDbContext dbContext)
@@ -464,46 +466,50 @@ public sealed class UserStore : IUserStore
 
         try
         {
-            await using var command = connection.CreateCommand();
             var currentTransaction = _dbContext.Database.CurrentTransaction?.GetDbTransaction();
 
-            if (currentTransaction is NpgsqlTransaction npgsqlTransaction)
+            foreach (var userIdBatch in userIdArray.Chunk(StaffAssignmentLookupBatchSize))
             {
-                command.Transaction = npgsqlTransaction;
-            }
+                await using var command = connection.CreateCommand();
 
-            command.CommandText = $"""
-                SELECT DISTINCT ON (sa.user_id)
-                    sa.user_id,
-                    sa.market_id,
-                    m.name AS market_name,
-                    sa.department_id,
-                    d.name AS department_name
-                FROM {quotedSchemaName}.staff_assignments sa
-                INNER JOIN {quotedSchemaName}.markets m ON m.id = sa.market_id
-                LEFT JOIN {quotedSchemaName}.departments d ON d.id = sa.department_id
-                    AND d.market_id = sa.market_id
-                WHERE sa.is_active = TRUE
-                  AND sa.user_id = ANY (@user_ids)
-                ORDER BY sa.user_id, sa.assigned_at DESC, sa.id DESC;
-                """;
-            command.Parameters.Add(new NpgsqlParameter<int[]>("user_ids", NpgsqlDbType.Array | NpgsqlDbType.Integer)
-            {
-                TypedValue = userIdArray
-            });
-
-            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-            while (await reader.ReadAsync(cancellationToken))
-            {
-                var userId = reader.GetInt32(0);
-                assignments[userId] = new UserAssignmentSummaryDto
+                if (currentTransaction is NpgsqlTransaction npgsqlTransaction)
                 {
-                    MarketId = reader.GetInt32(1),
-                    MarketName = reader.GetString(2),
-                    DepartmentId = reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                    DepartmentName = reader.IsDBNull(4) ? null : reader.GetString(4)
-                };
+                    command.Transaction = npgsqlTransaction;
+                }
+
+                command.CommandText = $"""
+                    SELECT DISTINCT ON (sa.user_id)
+                        sa.user_id,
+                        sa.market_id,
+                        m.name AS market_name,
+                        sa.department_id,
+                        d.name AS department_name
+                    FROM {quotedSchemaName}.staff_assignments sa
+                    INNER JOIN {quotedSchemaName}.markets m ON m.id = sa.market_id
+                    LEFT JOIN {quotedSchemaName}.departments d ON d.id = sa.department_id
+                        AND d.market_id = sa.market_id
+                    WHERE sa.is_active = TRUE
+                      AND sa.user_id = ANY (@user_ids)
+                    ORDER BY sa.user_id, sa.assigned_at DESC, sa.id DESC;
+                    """;
+                command.Parameters.Add(new NpgsqlParameter<int[]>("user_ids", NpgsqlDbType.Array | NpgsqlDbType.Integer)
+                {
+                    TypedValue = userIdBatch
+                });
+
+                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+                while (await reader.ReadAsync(cancellationToken))
+                {
+                    var userId = reader.GetInt32(0);
+                    assignments[userId] = new UserAssignmentSummaryDto
+                    {
+                        MarketId = reader.GetInt32(1),
+                        MarketName = reader.GetString(2),
+                        DepartmentId = reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                        DepartmentName = reader.IsDBNull(4) ? null : reader.GetString(4)
+                    };
+                }
             }
         }
         finally

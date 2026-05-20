@@ -121,6 +121,30 @@ public sealed class UserServiceTests
         Assert.True(result.Succeeded);
         Assert.Equal(3, store.CreatedRequest?.MarketId);
         Assert.Null(store.CreatedRequest?.DepartmentId);
+        Assert.Equal(3, result.Data?.Assignment?.MarketId);
+        Assert.Null(result.Data?.Assignment?.DepartmentId);
+    }
+
+    [Theory]
+    [InlineData("Seller")]
+    [InlineData("MainOperator")]
+    [InlineData("DepartmentManager")]
+    [InlineData("InventoryEmployee")]
+    public async Task CreateUserAsync_ForOperationalRoleWithNoDepartment_CreatesMarketAssignment(
+        string roleName)
+    {
+        var store = new FakeUserStore();
+        var service = CreateCompanyAdminService(store);
+        var request = ValidRequest(roleName);
+        request.MarketId = 3;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(3, store.CreatedRequest?.MarketId);
+        Assert.Null(store.CreatedRequest?.DepartmentId);
+        Assert.Equal(3, result.Data?.Assignment?.MarketId);
+        Assert.Null(result.Data?.Assignment?.DepartmentId);
     }
 
     [Theory]
@@ -211,6 +235,72 @@ public sealed class UserServiceTests
         Assert.Equal("Central Market", user.Assignment?.MarketName);
         Assert.Equal(4, user.Assignment?.DepartmentId);
         Assert.Equal("Produce", user.Assignment?.DepartmentName);
+    }
+
+    [Fact]
+    public async Task GetUsersAsync_ReturnsAssignmentSummaryWhenDepartmentIsMissing()
+    {
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 1,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market"
+            }
+        });
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.GetUsersAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Data);
+        var user = Assert.Single(result.Data);
+        Assert.Equal(3, user.Assignment?.MarketId);
+        Assert.Equal("Central Market", user.Assignment?.MarketName);
+        Assert.Null(user.Assignment?.DepartmentId);
+        Assert.Null(user.Assignment?.DepartmentName);
+    }
+
+    [Fact]
+    public async Task GetUsersAsync_ReturnsLargeAssignmentBatch()
+    {
+        var store = new FakeUserStore();
+
+        for (var id = 1; id <= 250; id++)
+        {
+            store.Users.Add(new UserDto
+            {
+                Id = id,
+                FullName = $"Store User {id:D3}",
+                Email = $"user{id:D3}@freshmarket.test",
+                RoleName = "Seller",
+                IsActive = true,
+                Assignment = new UserAssignmentSummaryDto
+                {
+                    MarketId = 3,
+                    MarketName = "Central Market"
+                }
+            });
+        }
+
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.GetUsersAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Data);
+        Assert.Equal(250, result.Data.Count);
+        Assert.All(result.Data, user =>
+        {
+            Assert.Equal(3, user.Assignment?.MarketId);
+            Assert.Null(user.Assignment?.DepartmentId);
+        });
     }
 
     [Fact]
