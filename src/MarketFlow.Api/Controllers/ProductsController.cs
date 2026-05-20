@@ -43,7 +43,7 @@ public class ProductsController(IProductService productService) : ControllerBase
             return BadRequest(result);
         }
 
-        return CreatedAtAction(nameof(GetByIdAsync), new { id = result.Data!.Id }, result);
+        return Created($"/api/Products/{result.Data!.Id}", result);
     }
 
     [HttpPut("{id:int}")]
