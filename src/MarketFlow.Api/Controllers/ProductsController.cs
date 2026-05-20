@@ -20,7 +20,7 @@ public class ProductsController(IProductService productService) : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("{id:int}")]
+    [HttpGet("{id:int}", Name = nameof(GetByIdAsync))]
     [Authorize(Policy = AuthorizationPolicies.ReadProducts)]
     public async Task<ActionResult<ServiceResult<ProductDto>>> GetByIdAsync(
         int id,
@@ -43,7 +43,7 @@ public class ProductsController(IProductService productService) : ControllerBase
             return BadRequest(result);
         }
 
-        return Created($"/api/Products/{result.Data!.Id}", result);
+        return CreatedAtRoute(nameof(GetByIdAsync), new { id = result.Data!.Id }, result);
     }
 
     [HttpPut("{id:int}")]
