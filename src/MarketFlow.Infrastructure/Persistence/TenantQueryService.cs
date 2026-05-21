@@ -27,7 +27,7 @@ public sealed class TenantQueryService : ITenantQueryService
     public async Task<IReadOnlyCollection<ProductDto>> GetProductsAsync(
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var products = new List<ProductDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -62,7 +62,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             SELECT p.id,
@@ -89,7 +89,7 @@ public sealed class TenantQueryService : ITenantQueryService
         CreateProductRequest request,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.products (
@@ -129,7 +129,7 @@ public sealed class TenantQueryService : ITenantQueryService
         UpdateProductRequest request,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.products
@@ -161,7 +161,7 @@ public sealed class TenantQueryService : ITenantQueryService
         PatchProductRequest request,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.products
@@ -200,7 +200,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.products
@@ -215,7 +215,7 @@ public sealed class TenantQueryService : ITenantQueryService
     public async Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var categories = new List<CategoryDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -243,7 +243,7 @@ public sealed class TenantQueryService : ITenantQueryService
     public async Task<IReadOnlyCollection<InventoryItemDto>> GetInventoryAsync(
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var inventory = new List<InventoryItemDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -284,7 +284,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.inventory (
@@ -324,7 +324,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.inventory
@@ -350,7 +350,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             DELETE FROM {schemaName}.inventory
@@ -367,7 +367,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.inventory
@@ -392,7 +392,7 @@ public sealed class TenantQueryService : ITenantQueryService
     public async Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var sales = new List<SaleDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -423,7 +423,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int createdByUserId,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.sales (
@@ -462,7 +462,7 @@ public sealed class TenantQueryService : ITenantQueryService
         UpdateSaleRequest request,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.sales
@@ -492,7 +492,7 @@ public sealed class TenantQueryService : ITenantQueryService
         PatchSaleRequest request,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.sales
@@ -521,7 +521,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             DELETE FROM {schemaName}.sales
@@ -535,7 +535,7 @@ public sealed class TenantQueryService : ITenantQueryService
     public async Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var purchases = new List<PurchaseDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -567,7 +567,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int createdByUserId,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.purchases (
@@ -606,7 +606,7 @@ public sealed class TenantQueryService : ITenantQueryService
         UpdatePurchaseRequest request,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.purchases
@@ -636,7 +636,7 @@ public sealed class TenantQueryService : ITenantQueryService
         PatchPurchaseRequest request,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.purchases
@@ -665,7 +665,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             DELETE FROM {schemaName}.purchases
@@ -680,7 +680,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int id,
         CancellationToken cancellationToken)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             SELECT i.id,
@@ -820,6 +820,11 @@ public sealed class TenantQueryService : ITenantQueryService
         }
 
         return new NpgsqlCommand(commandText, connection);
+    }
+
+    private async Task<string> GetQuotedCurrentSchemaNameAsync(CancellationToken cancellationToken)
+    {
+        return QuoteIdentifier(await _tenantProvider.GetCurrentSchemaNameAsync(cancellationToken));
     }
 
     private static string QuoteIdentifier(string identifier)

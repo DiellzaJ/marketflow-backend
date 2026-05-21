@@ -10,10 +10,16 @@ public class TenantProvider
         RegexOptions.Compiled);
 
     private readonly ICurrentUserService _currentUserService;
+    private readonly ITenantContextStore _tenantContextStore;
+    private readonly SemaphoreSlim _resolutionLock = new(1, 1);
+    private string? _resolvedSchemaName;
 
-    public TenantProvider(ICurrentUserService currentUserService)
+    public TenantProvider(
+        ICurrentUserService currentUserService,
+        ITenantContextStore tenantContextStore)
     {
         _currentUserService = currentUserService;
+        _tenantContextStore = tenantContextStore;
     }
 
     public int? GetCurrentCompanyId()
@@ -21,13 +27,55 @@ public class TenantProvider
         return _currentUserService.CompanyId;
     }
 
-    public string GetCurrentSchemaName()
+    public async Task<string> GetCurrentSchemaNameAsync(CancellationToken cancellationToken = default)
     {
-        var schemaName = _currentUserService.SchemaName;
+        if (!string.IsNullOrWhiteSpace(_resolvedSchemaName))
+        {
+            return _resolvedSchemaName;
+        }
+
+        await _resolutionLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_resolvedSchemaName))
+            {
+                return _resolvedSchemaName;
+            }
+
+            _resolvedSchemaName = await ResolveCurrentSchemaNameAsync(cancellationToken);
+
+            return _resolvedSchemaName;
+        }
+        finally
+        {
+            _resolutionLock.Release();
+        }
+    }
+
+    private async Task<string> ResolveCurrentSchemaNameAsync(CancellationToken cancellationToken)
+    {
+        var userId = _currentUserService.UserId;
+
+        if (userId is null)
+        {
+            throw new UnauthorizedAccessException("Authentication is required.");
+        }
+
+        var tenant = await _tenantContextStore.GetTenantContextAsync(
+            userId.Value,
+            cancellationToken);
+
+        if (tenant is null || !tenant.UserIsActive || !tenant.CompanyIsActive)
+        {
+            throw new UnauthorizedAccessException("Authentication is required.");
+        }
+
+        var schemaName = tenant.SchemaName;
 
         if (string.IsNullOrWhiteSpace(schemaName) || !SchemaNamePattern.IsMatch(schemaName))
         {
-            throw new UnauthorizedAccessException("Tenant schema is missing or invalid.");
+            throw new TenantAccessException();
         }
 
         return schemaName;
