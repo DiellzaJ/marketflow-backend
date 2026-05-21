@@ -44,6 +44,26 @@ public sealed class ProductServiceTests
     }
 
     [Fact]
+    public async Task GetProductsAsync_TrimsSortValuesBeforeValidation()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var query = new ProductListQuery
+        {
+            SortBy = " barcode ",
+            SortDirection = " desc "
+        };
+
+        var result = await service.GetProductsAsync(query);
+
+        Assert.True(result.Succeeded);
+        Assert.True(tenantQueryService.GetProductsWasCalled);
+        Assert.Equal("barcode", tenantQueryService.LastProductListQuery?.SortBy);
+        Assert.Equal("desc", tenantQueryService.LastProductListQuery?.SortDirection);
+    }
+
+    [Fact]
     public async Task GetProductsAsync_PassesValidQueryToTenantQueryService()
     {
         var tenantQueryService = new RecordingTenantQueryService();

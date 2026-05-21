@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Interfaces;
 
@@ -8,20 +9,6 @@ namespace MarketFlow.Application.Features.Products.Services;
 public class ProductService : IProductService
 {
     private const int MaxPageSize = 100;
-
-    private static readonly HashSet<string> AllowedSortFields = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "id",
-        "name",
-        "barcode",
-        "category",
-        "categoryName",
-        "unitPrice",
-        "costPrice",
-        "taxRate",
-        "minStockAlert",
-        "isActive"
-    };
 
     private readonly ITenantQueryService _tenantQueryService;
 
@@ -34,6 +21,9 @@ public class ProductService : IProductService
         ProductListQuery query,
         CancellationToken cancellationToken = default)
     {
+        query.SortBy = query.SortBy?.Trim();
+        query.SortDirection = query.SortDirection?.Trim();
+
         if (query.Page < 1)
         {
             return ServiceResult<PagedResult<ProductDto>>.Failure("Page must be greater than zero.");
@@ -44,7 +34,7 @@ public class ProductService : IProductService
             return ServiceResult<PagedResult<ProductDto>>.Failure($"Page size must be between 1 and {MaxPageSize}.");
         }
 
-        if (!string.IsNullOrWhiteSpace(query.SortBy) && !AllowedSortFields.Contains(query.SortBy))
+        if (!ProductSortFields.IsAllowed(query.SortBy))
         {
             return ServiceResult<PagedResult<ProductDto>>.Failure("Sort field is not supported.");
         }

@@ -3,6 +3,7 @@ using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
+using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
@@ -36,7 +37,7 @@ public sealed class TenantQueryService : ITenantQueryService
         var sortDirection = string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase)
             ? "DESC"
             : "ASC";
-        var offset = (query.Page - 1) * query.PageSize;
+        var offset = ((long)query.Page - 1L) * query.PageSize;
 
         await using var countCommand = await CreateCommandAsync($"""
             SELECT COUNT(*)
@@ -832,15 +833,15 @@ public sealed class TenantQueryService : ITenantQueryService
     {
         return sortBy?.Trim() switch
         {
-            { } value when string.Equals(value, "id", StringComparison.OrdinalIgnoreCase) => "p.id",
-            { } value when string.Equals(value, "barcode", StringComparison.OrdinalIgnoreCase) => "p.barcode",
-            { } value when string.Equals(value, "category", StringComparison.OrdinalIgnoreCase) => "c.name",
-            { } value when string.Equals(value, "categoryName", StringComparison.OrdinalIgnoreCase) => "c.name",
-            { } value when string.Equals(value, "unitPrice", StringComparison.OrdinalIgnoreCase) => "p.unit_price",
-            { } value when string.Equals(value, "costPrice", StringComparison.OrdinalIgnoreCase) => "p.cost_price",
-            { } value when string.Equals(value, "taxRate", StringComparison.OrdinalIgnoreCase) => "p.tax_rate",
-            { } value when string.Equals(value, "minStockAlert", StringComparison.OrdinalIgnoreCase) => "p.min_stock_alert",
-            { } value when string.Equals(value, "isActive", StringComparison.OrdinalIgnoreCase) => "p.is_active",
+            { } value when string.Equals(value, ProductSortFields.Id, StringComparison.OrdinalIgnoreCase) => "p.id",
+            { } value when string.Equals(value, ProductSortFields.Barcode, StringComparison.OrdinalIgnoreCase) => "p.barcode",
+            { } value when string.Equals(value, ProductSortFields.Category, StringComparison.OrdinalIgnoreCase) => "c.name",
+            { } value when string.Equals(value, ProductSortFields.CategoryName, StringComparison.OrdinalIgnoreCase) => "c.name",
+            { } value when string.Equals(value, ProductSortFields.UnitPrice, StringComparison.OrdinalIgnoreCase) => "p.unit_price",
+            { } value when string.Equals(value, ProductSortFields.CostPrice, StringComparison.OrdinalIgnoreCase) => "p.cost_price",
+            { } value when string.Equals(value, ProductSortFields.TaxRate, StringComparison.OrdinalIgnoreCase) => "p.tax_rate",
+            { } value when string.Equals(value, ProductSortFields.MinStockAlert, StringComparison.OrdinalIgnoreCase) => "p.min_stock_alert",
+            { } value when string.Equals(value, ProductSortFields.IsActive, StringComparison.OrdinalIgnoreCase) => "p.is_active",
             _ => "p.name"
         };
     }
