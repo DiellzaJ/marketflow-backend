@@ -79,7 +79,7 @@ public sealed class UserStore : IUserStore
         bool includeAllCompanies,
         CancellationToken cancellationToken = default)
     {
-        var user = await FindEditableUserAsync(id, companyId, includeAllCompanies, cancellationToken);
+        var user = await FindReadableUserAsync(id, companyId, includeAllCompanies, cancellationToken);
 
         return user is null
             ? null
@@ -366,10 +366,45 @@ public sealed class UserStore : IUserStore
         bool includeAllCompanies,
         CancellationToken cancellationToken)
     {
-        var query = _dbContext.Users
+        return await FindUserAsync(
+            id,
+            companyId,
+            includeAllCompanies,
+            asNoTracking: false,
+            cancellationToken);
+    }
+
+    private async Task<Domain.Entities.User?> FindReadableUserAsync(
+        int id,
+        int? companyId,
+        bool includeAllCompanies,
+        CancellationToken cancellationToken)
+    {
+        return await FindUserAsync(
+            id,
+            companyId,
+            includeAllCompanies,
+            asNoTracking: true,
+            cancellationToken);
+    }
+
+    private async Task<Domain.Entities.User?> FindUserAsync(
+        int id,
+        int? companyId,
+        bool includeAllCompanies,
+        bool asNoTracking,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<Domain.Entities.User> query = _dbContext.Users;
+
+        if (asNoTracking)
+        {
+            query = query.AsNoTracking();
+        }
+
+        query = query
             .Include(x => x.Role)
-            .Include(x => x.Company)
-            .AsQueryable();
+            .Include(x => x.Company);
 
         if (!includeAllCompanies)
         {
