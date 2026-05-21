@@ -167,7 +167,10 @@ public sealed class ProductLiveSmokeTests
                 .Options;
             await using var dbContext = new ApplicationDbContext(dbContextOptions);
             var currentUser = new TestCurrentUserService(schemaName);
-            var tenantQueryService = new TenantQueryService(dbContext, new TenantProvider(currentUser));
+            var tenantContextStore = new TestTenantContextStore(schemaName);
+            var tenantQueryService = new TenantQueryService(
+                dbContext,
+                new TenantProvider(currentUser, tenantContextStore));
             var productService = new ProductService(tenantQueryService);
 
             var result = await productService.DeactivateProductAsync(productId);
@@ -235,5 +238,18 @@ public sealed class ProductLiveSmokeTests
         public string? Role => "CompanyAdmin";
 
         public string? SchemaName => schemaName;
+    }
+
+    private sealed class TestTenantContextStore(string schemaName) : ITenantContextStore
+    {
+        public Task<TenantContext?> GetTenantContextAsync(
+            int userId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<TenantContext?>(new TenantContext(
+                schemaName,
+                UserIsActive: true,
+                CompanyIsActive: true));
+        }
     }
 }
