@@ -4,6 +4,7 @@ using System.Text;
 using BCrypt.Net;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace MarketFlow.Api.Tests.Integration;
 
@@ -12,6 +13,9 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
     private const int MaxPostgresIdentifierLength = 63;
     private const int SchemaSuffixLength = 16;
     private const int SchemaSeparatorLength = 1;
+
+    private static readonly SemaphoreSlim RequiredRolesLock = new(1, 1);
+    private static readonly HashSet<string> RequiredRolesEnsuredConnectionStrings = new(StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<string, (string Description, string Permissions)> RequiredRoles =
         new Dictionary<string, (string Description, string Permissions)>
@@ -78,23 +82,44 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
 
     public async Task EnsureRequiredRolesAsync(CancellationToken cancellationToken = default)
     {
-        await using var connection = await OpenConnectionAsync(cancellationToken);
-
-        foreach (var role in RequiredRoles)
+        if (RequiredRolesEnsuredConnectionStrings.Contains(_options.ConnectionString))
         {
-            await ExecuteAsync(
-                connection,
-                """
-                INSERT INTO public.roles (name, description, permissions)
-                VALUES (@name, @description, @permissions::jsonb)
-                ON CONFLICT (name) DO UPDATE
-                SET description = EXCLUDED.description,
-                    permissions = EXCLUDED.permissions;
-                """,
-                cancellationToken,
-                new NpgsqlParameter("name", role.Key),
-                new NpgsqlParameter("description", role.Value.Description),
-                new NpgsqlParameter("permissions", role.Value.Permissions));
+            return;
+        }
+
+        await RequiredRolesLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            if (RequiredRolesEnsuredConnectionStrings.Contains(_options.ConnectionString))
+            {
+                return;
+            }
+
+            await using var connection = await OpenConnectionAsync(cancellationToken);
+
+            foreach (var role in RequiredRoles)
+            {
+                await ExecuteAsync(
+                    connection,
+                    """
+                    INSERT INTO public.roles (name, description, permissions)
+                    VALUES (@name, @description, @permissions::jsonb)
+                    ON CONFLICT (name) DO UPDATE
+                    SET description = EXCLUDED.description,
+                        permissions = EXCLUDED.permissions;
+                    """,
+                    cancellationToken,
+                    new NpgsqlParameter("name", role.Key),
+                    new NpgsqlParameter("description", role.Value.Description),
+                    new NpgsqlParameter("permissions", role.Value.Permissions));
+            }
+
+            RequiredRolesEnsuredConnectionStrings.Add(_options.ConnectionString);
+        }
+        finally
+        {
+            RequiredRolesLock.Release();
         }
     }
 
@@ -370,6 +395,66 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             connection,
             $"SELECT COUNT(*)::int FROM {QuoteIdentifier(schemaName)}.{QuoteIdentifier(tableName)};",
             cancellationToken);
+    }
+
+    public async Task<int> CountProductsByBarcodeAsync(
+        string schemaName,
+        string barcode,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        return await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            SELECT COUNT(*)::int
+            FROM {QuoteIdentifier(schemaName)}.products
+            WHERE barcode = @barcode;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("barcode", barcode));
+    }
+
+    public async Task<TenantTestProductDetails?> GetProductDetailsAsync(
+        string schemaName,
+        int productId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"""
+            SELECT id,
+                   name,
+                   barcode,
+                   category_id,
+                   unit_price,
+                   cost_price,
+                   tax_rate,
+                   min_stock_alert,
+                   is_active
+            FROM {QuoteIdentifier(schemaName)}.products
+            WHERE id = @product_id;
+            """,
+            connection);
+        command.Parameters.Add(new NpgsqlParameter("product_id", NpgsqlDbType.Integer)
+        {
+            Value = productId
+        });
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken)
+            ? new TenantTestProductDetails(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt32(3),
+                reader.GetDecimal(4),
+                reader.GetDecimal(5),
+                reader.GetDecimal(6),
+                reader.GetInt32(7),
+                reader.GetBoolean(8))
+            : null;
     }
 
     public async Task<int> CountCompaniesBySchemaNameAsync(

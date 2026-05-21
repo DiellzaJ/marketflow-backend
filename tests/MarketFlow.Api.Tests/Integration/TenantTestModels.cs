@@ -27,3 +27,14 @@ public sealed record TenantTestProduct(
     string Name,
     string Barcode,
     int CategoryId);
+
+public sealed record TenantTestProductDetails(
+    int Id,
+    string Name,
+    string Barcode,
+    int CategoryId,
+    decimal UnitPrice,
+    decimal CostPrice,
+    decimal TaxRate,
+    int MinStockAlert,
+    bool IsActive);
