@@ -322,15 +322,122 @@ public sealed class ProductServiceTests
         Assert.False(tenantQueryService.UpdateProductWasCalled);
     }
 
+    [Fact]
+    public async Task PatchProductAsync_WhenProductDoesNotExist_ReturnsNotFound()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            CurrentProduct = null
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            Name = "Milk"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Product was not found.", result.Message);
+        Assert.False(tenantQueryService.PatchProductWasCalled);
+    }
+
+    [Fact]
+    public async Task PatchProductAsync_RejectsNegativeUnitPrice()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            UnitPrice = -0.01m
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Unit price cannot be negative.", result.Message);
+        Assert.False(tenantQueryService.PatchProductWasCalled);
+    }
+
+    [Fact]
+    public async Task PatchProductAsync_RejectsDuplicateBarcodeFromAnotherProduct()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        tenantQueryService.ExistingBarcodes.Add("987654321");
+        tenantQueryService.BarcodeOwnerIds["987654321"] = 11;
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            Barcode = " 987654321 "
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Barcode is already used by another product.", result.Message);
+        Assert.False(tenantQueryService.PatchProductWasCalled);
+    }
+
+    [Fact]
+    public async Task PatchProductAsync_RejectsUnknownCategory()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        tenantQueryService.ExistingCategoryIds.Clear();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            CategoryId = 2
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal("Category was not found.", result.Message);
+        Assert.False(tenantQueryService.PatchProductWasCalled);
+    }
+
+    [Fact]
+    public async Task PatchProductAsync_AcceptsValidPatchAndTrimsValues()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            Name = " Oat Milk ",
+            Barcode = " 987654321 ",
+            UnitPrice = 1.50m
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Product updated.", result.Message);
+        Assert.True(tenantQueryService.PatchProductWasCalled);
+        Assert.Equal("Oat Milk", result.Data?.Name);
+        Assert.Equal("987654321", result.Data?.Barcode);
+        Assert.Equal(1.50m, result.Data?.UnitPrice);
+    }
+
     private sealed class RecordingTenantQueryService : ITenantQueryService
     {
         public bool CreateProductWasCalled { get; private set; }
 
         public bool UpdateProductWasCalled { get; private set; }
 
+        public bool PatchProductWasCalled { get; private set; }
+
         public bool GetProductsWasCalled { get; private set; }
 
         public ProductListQuery? LastProductListQuery { get; private set; }
+
+        public ProductDto? CurrentProduct { get; set; } = new()
+        {
+            Id = 10,
+            Name = "Milk",
+            Barcode = "123456789",
+            CategoryId = 1,
+            UnitPrice = 1.25m,
+            CostPrice = 0.75m,
+            IsActive = true
+        };
 
         public HashSet<int> ExistingCategoryIds { get; } = [1];
 
@@ -367,7 +474,7 @@ public sealed class ProductServiceTests
 
         public Task<ProductDto?> GetProductAsync(int id, CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            return Task.FromResult(CurrentProduct?.Id == id ? CurrentProduct : null);
         }
 
         public Task<bool> CategoryExistsAsync(int categoryId, CancellationToken cancellationToken = default)
@@ -429,7 +536,25 @@ public sealed class ProductServiceTests
             PatchProductRequest request,
             CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            PatchProductWasCalled = true;
+
+            if (CurrentProduct is null || CurrentProduct.Id != id)
+            {
+                return Task.FromResult<ProductDto?>(null);
+            }
+
+            return Task.FromResult<ProductDto?>(new ProductDto
+            {
+                Id = id,
+                Name = request.Name ?? CurrentProduct.Name,
+                Barcode = request.Barcode ?? CurrentProduct.Barcode,
+                CategoryId = request.CategoryId ?? CurrentProduct.CategoryId,
+                UnitPrice = request.UnitPrice ?? CurrentProduct.UnitPrice,
+                CostPrice = request.CostPrice ?? CurrentProduct.CostPrice,
+                TaxRate = request.TaxRate ?? CurrentProduct.TaxRate,
+                MinStockAlert = request.MinStockAlert ?? CurrentProduct.MinStockAlert,
+                IsActive = request.IsActive ?? CurrentProduct.IsActive
+            });
         }
 
         public Task<bool> DeleteProductAsync(int id, CancellationToken cancellationToken = default)

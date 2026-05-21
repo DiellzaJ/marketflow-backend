@@ -121,6 +121,30 @@ public class ProductService : IProductService
         PatchProductRequest request,
         CancellationToken cancellationToken = default)
     {
+        var currentProduct = await _tenantQueryService.GetProductAsync(id, cancellationToken);
+
+        if (currentProduct is null)
+        {
+            return ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        var validationError = await ValidateProductAsync(
+            request.Name ?? currentProduct.Name,
+            request.Barcode ?? currentProduct.Barcode,
+            request.CategoryId ?? currentProduct.CategoryId,
+            request.UnitPrice ?? currentProduct.UnitPrice,
+            request.CostPrice ?? currentProduct.CostPrice,
+            id,
+            cancellationToken);
+
+        if (validationError is not null)
+        {
+            return validationError;
+        }
+
+        request.Name = request.Name?.Trim();
+        request.Barcode = request.Barcode?.Trim();
+
         var product = await _tenantQueryService.PatchProductAsync(id, request, cancellationToken);
 
         return product is null
