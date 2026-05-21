@@ -15,6 +15,13 @@ public interface ITenantQueryService
 
     Task<ProductDto?> GetProductAsync(int id, CancellationToken cancellationToken = default);
 
+    Task<bool> CategoryExistsAsync(int categoryId, CancellationToken cancellationToken = default);
+
+    Task<bool> ProductBarcodeExistsAsync(
+        string barcode,
+        int? excludedProductId = null,
+        CancellationToken cancellationToken = default);
+
     Task<ProductDto> CreateProductAsync(CreateProductRequest request, CancellationToken cancellationToken = default);
 
     Task<ProductDto?> UpdateProductAsync(int id, UpdateProductRequest request, CancellationToken cancellationToken = default);

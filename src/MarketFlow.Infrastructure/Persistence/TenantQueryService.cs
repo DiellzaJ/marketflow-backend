@@ -5,6 +5,7 @@ using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
+using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
 using MarketFlow.Infrastructure.MultiTenancy;
@@ -116,6 +117,45 @@ public sealed class TenantQueryService : ITenantQueryService
         return await ReadProductAsync(command, cancellationToken);
     }
 
+    public async Task<bool> CategoryExistsAsync(
+        int categoryId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.categories
+                WHERE id = @category_id AND is_active = TRUE
+            );
+            """, cancellationToken);
+        command.Parameters.AddWithValue("category_id", categoryId);
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    public async Task<bool> ProductBarcodeExistsAsync(
+        string barcode,
+        int? excludedProductId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.products
+                WHERE barcode = @barcode
+                  AND (@excluded_product_id IS NULL OR id <> @excluded_product_id)
+            );
+            """, cancellationToken);
+        command.Parameters.AddWithValue("barcode", barcode.Trim());
+        command.Parameters.AddWithValue("excluded_product_id", DbValue(excludedProductId));
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
     public async Task<ProductDto> CreateProductAsync(
         CreateProductRequest request,
         CancellationToken cancellationToken = default)
@@ -148,8 +188,20 @@ public sealed class TenantQueryService : ITenantQueryService
 
         AddProductParameters(command, request);
 
-        var createdId = (int?)await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Product was not created.");
+        object? createdIdValue;
+
+        try
+        {
+            createdIdValue = await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsUniqueViolation(exception))
+        {
+            throw new ProductBarcodeConflictException();
+        }
+
+        var createdId = createdIdValue is int value
+            ? value
+            : throw new InvalidOperationException("Product was not created.");
 
         return await GetProductAsync(createdId, cancellationToken)
             ?? throw new InvalidOperationException("Product was not found after creation.");
@@ -182,7 +234,16 @@ public sealed class TenantQueryService : ITenantQueryService
         AddProductParameters(command, request);
         command.Parameters.AddWithValue("is_active", request.IsActive);
 
-        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        object? updatedId;
+
+        try
+        {
+            updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsUniqueViolation(exception))
+        {
+            throw new ProductBarcodeConflictException();
+        }
 
         return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
     }
@@ -222,7 +283,16 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("min_stock_alert", DbValue(request.MinStockAlert));
         command.Parameters.AddWithValue("is_active", DbValue(request.IsActive));
 
-        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        object? updatedId;
+
+        try
+        {
+            updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsUniqueViolation(exception))
+        {
+            throw new ProductBarcodeConflictException();
+        }
 
         return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
     }
@@ -940,6 +1010,11 @@ public sealed class TenantQueryService : ITenantQueryService
     private static object DbValue<T>(T? value)
     {
         return value is null ? DBNull.Value : value;
+    }
+
+    private static bool IsUniqueViolation(PostgresException exception)
+    {
+        return exception.SqlState == PostgresErrorCodes.UniqueViolation;
     }
 
     private async Task<NpgsqlCommand> CreateCommandAsync(

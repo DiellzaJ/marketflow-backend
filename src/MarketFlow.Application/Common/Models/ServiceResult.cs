@@ -1,5 +1,13 @@
 namespace MarketFlow.Application.Common.Models;
 
+public enum ServiceResultFailureType
+{
+    None,
+    Validation,
+    NotFound,
+    Conflict
+}
+
 public class ServiceResult<T>
 {
     public bool Succeeded { get; init; }
@@ -8,22 +16,28 @@ public class ServiceResult<T>
 
     public T? Data { get; init; }
 
+    public ServiceResultFailureType FailureType { get; init; }
+
     public static ServiceResult<T> Success(T? data, string message = "Operation completed.")
     {
         return new ServiceResult<T>
         {
             Succeeded = true,
             Message = message,
-            Data = data
+            Data = data,
+            FailureType = ServiceResultFailureType.None
         };
     }
 
-    public static ServiceResult<T> Failure(string message)
+    public static ServiceResult<T> Failure(
+        string message,
+        ServiceResultFailureType failureType = ServiceResultFailureType.Validation)
     {
         return new ServiceResult<T>
         {
             Succeeded = false,
-            Message = message
+            Message = message,
+            FailureType = failureType
         };
     }
 }
