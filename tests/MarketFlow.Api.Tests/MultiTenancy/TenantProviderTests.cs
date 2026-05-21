@@ -42,12 +42,7 @@ public sealed class TenantProviderTests
     [InlineData(null, true, true)]
     [InlineData("tenant_valid", false, true)]
     [InlineData("tenant_valid", true, false)]
-    [InlineData("", true, true)]
-    [InlineData("tenant-name", true, true)]
-    [InlineData("tenant.name", true, true)]
-    [InlineData("tenant name", true, true)]
-    [InlineData("tenant;drop_schema", true, true)]
-    public async Task GetCurrentSchemaNameAsync_WhenTenantContextIsUnsafe_FailsAsForbidden(
+    public async Task GetCurrentSchemaNameAsync_WhenUserOrCompanyIsInvalid_FailsAsUnauthorized(
         string? schemaName,
         bool userIsActive,
         bool companyIsActive)
@@ -59,6 +54,26 @@ public sealed class TenantProviderTests
                 TenantContext = schemaName is null
                     ? null
                     : new TenantContext(schemaName, userIsActive, companyIsActive)
+            });
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            provider.GetCurrentSchemaNameAsync());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("tenant-name")]
+    [InlineData("tenant.name")]
+    [InlineData("tenant name")]
+    [InlineData("tenant;drop_schema")]
+    public async Task GetCurrentSchemaNameAsync_WhenSchemaNameIsUnsafe_FailsAsForbidden(
+        string schemaName)
+    {
+        var provider = new TenantProvider(
+            new FakeCurrentUserService { UserId = 10 },
+            new FakeTenantContextStore
+            {
+                TenantContext = new TenantContext(schemaName, true, true)
             });
 
         await Assert.ThrowsAsync<TenantAccessException>(() =>

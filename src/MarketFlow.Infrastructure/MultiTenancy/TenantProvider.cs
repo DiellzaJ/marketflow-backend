@@ -68,7 +68,7 @@ public class TenantProvider
 
         if (tenant is null || !tenant.UserIsActive || !tenant.CompanyIsActive)
         {
-            throw new TenantAccessException();
+            throw new UnauthorizedAccessException("Authentication is required.");
         }
 
         var schemaName = tenant.SchemaName;

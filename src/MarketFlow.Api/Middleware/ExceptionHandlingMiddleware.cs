@@ -16,9 +16,11 @@ public class ExceptionHandlingMiddleware(
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Unhandled exception while processing request.");
+            var statusCode = GetStatusCode(exception);
 
-            context.Response.StatusCode = GetStatusCode(exception);
+            LogException(exception, statusCode);
+
+            context.Response.StatusCode = statusCode;
             context.Response.ContentType = "application/json";
 
             var payload = JsonSerializer.Serialize(CreateErrorResponse(exception));
@@ -43,6 +45,20 @@ public class ExceptionHandlingMiddleware(
             TenantAccessException => StatusCodes.Status403Forbidden,
             _ => StatusCodes.Status500InternalServerError
         };
+    }
+
+    private void LogException(Exception exception, int statusCode)
+    {
+        if (statusCode >= StatusCodes.Status500InternalServerError)
+        {
+            logger.LogError(exception, "Unhandled exception while processing request.");
+            return;
+        }
+
+        logger.LogWarning(
+            "Request rejected with status code {StatusCode}: {Message}",
+            statusCode,
+            exception.Message);
     }
 
     private static string GetSafeMessage(Exception exception)
