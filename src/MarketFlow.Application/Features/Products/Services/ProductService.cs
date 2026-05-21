@@ -2,6 +2,7 @@ using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
+using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Products.Interfaces;
 
 namespace MarketFlow.Application.Features.Products.Services;
@@ -83,8 +84,15 @@ public class ProductService : IProductService
         request.Name = request.Name.Trim();
         request.Barcode = request.Barcode?.Trim();
 
-        var product = await _tenantQueryService.CreateProductAsync(request, cancellationToken);
-        return ServiceResult<ProductDto>.Success(product, "Product created.");
+        try
+        {
+            var product = await _tenantQueryService.CreateProductAsync(request, cancellationToken);
+            return ServiceResult<ProductDto>.Success(product, "Product created.");
+        }
+        catch (ProductBarcodeConflictException)
+        {
+            return BarcodeConflict();
+        }
     }
 
     public async Task<ServiceResult<ProductDto>> UpdateProductAsync(
@@ -109,7 +117,16 @@ public class ProductService : IProductService
         request.Name = request.Name.Trim();
         request.Barcode = request.Barcode?.Trim();
 
-        var product = await _tenantQueryService.UpdateProductAsync(id, request, cancellationToken);
+        ProductDto? product;
+
+        try
+        {
+            product = await _tenantQueryService.UpdateProductAsync(id, request, cancellationToken);
+        }
+        catch (ProductBarcodeConflictException)
+        {
+            return BarcodeConflict();
+        }
 
         return product is null
             ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
@@ -145,7 +162,16 @@ public class ProductService : IProductService
         request.Name = request.Name?.Trim();
         request.Barcode = request.Barcode?.Trim();
 
-        var product = await _tenantQueryService.PatchProductAsync(id, request, cancellationToken);
+        ProductDto? product;
+
+        try
+        {
+            product = await _tenantQueryService.PatchProductAsync(id, request, cancellationToken);
+        }
+        catch (ProductBarcodeConflictException)
+        {
+            return BarcodeConflict();
+        }
 
         return product is null
             ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
@@ -207,9 +233,16 @@ public class ProductService : IProductService
         if (categoryId.HasValue &&
             !await _tenantQueryService.CategoryExistsAsync(categoryId.Value, cancellationToken))
         {
-            return ServiceResult<ProductDto>.Failure("Category was not found.");
+            return ServiceResult<ProductDto>.Failure("Category was not found.", ServiceResultFailureType.NotFound);
         }
 
         return null;
+    }
+
+    private static ServiceResult<ProductDto> BarcodeConflict()
+    {
+        return ServiceResult<ProductDto>.Failure(
+            "Barcode is already used by another product.",
+            ServiceResultFailureType.Conflict);
     }
 }

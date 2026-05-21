@@ -3,6 +3,7 @@ using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
+using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Products.Services;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
@@ -217,8 +218,31 @@ public sealed class ProductServiceTests
         });
 
         Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
         Assert.Equal("Category was not found.", result.Message);
         Assert.False(tenantQueryService.CreateProductWasCalled);
+    }
+
+    [Fact]
+    public async Task CreateProductAsync_WhenDatabaseReportsDuplicateBarcode_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            ThrowBarcodeConflictOnCreate = true
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.CreateProductAsync(new CreateProductRequest
+        {
+            Name = "Milk",
+            Barcode = "123456789",
+            CategoryId = 1
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Barcode is already used by another product.", result.Message);
+        Assert.True(tenantQueryService.CreateProductWasCalled);
     }
 
     [Fact]
@@ -258,6 +282,7 @@ public sealed class ProductServiceTests
         });
 
         Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
         Assert.Equal("Category was not found.", result.Message);
         Assert.False(tenantQueryService.UpdateProductWasCalled);
     }
@@ -320,6 +345,28 @@ public sealed class ProductServiceTests
         Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
         Assert.Equal("Barcode is already used by another product.", result.Message);
         Assert.False(tenantQueryService.UpdateProductWasCalled);
+    }
+
+    [Fact]
+    public async Task UpdateProductAsync_WhenDatabaseReportsDuplicateBarcode_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            ThrowBarcodeConflictOnUpdate = true
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.UpdateProductAsync(10, new UpdateProductRequest
+        {
+            Name = "Milk",
+            Barcode = "123456789",
+            CategoryId = 1
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Barcode is already used by another product.", result.Message);
+        Assert.True(tenantQueryService.UpdateProductWasCalled);
     }
 
     [Fact]
@@ -390,9 +437,29 @@ public sealed class ProductServiceTests
         });
 
         Assert.False(result.Succeeded);
-        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
         Assert.Equal("Category was not found.", result.Message);
         Assert.False(tenantQueryService.PatchProductWasCalled);
+    }
+
+    [Fact]
+    public async Task PatchProductAsync_WhenDatabaseReportsDuplicateBarcode_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            ThrowBarcodeConflictOnPatch = true
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            Barcode = "123456789"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Barcode is already used by another product.", result.Message);
+        Assert.True(tenantQueryService.PatchProductWasCalled);
     }
 
     [Fact]
@@ -427,6 +494,12 @@ public sealed class ProductServiceTests
         public bool GetProductsWasCalled { get; private set; }
 
         public ProductListQuery? LastProductListQuery { get; private set; }
+
+        public bool ThrowBarcodeConflictOnCreate { get; init; }
+
+        public bool ThrowBarcodeConflictOnUpdate { get; init; }
+
+        public bool ThrowBarcodeConflictOnPatch { get; init; }
 
         public ProductDto? CurrentProduct { get; set; } = new()
         {
@@ -506,6 +579,11 @@ public sealed class ProductServiceTests
         {
             CreateProductWasCalled = true;
 
+            if (ThrowBarcodeConflictOnCreate)
+            {
+                throw new ProductBarcodeConflictException();
+            }
+
             return Task.FromResult(new ProductDto
             {
                 Id = 10,
@@ -522,6 +600,11 @@ public sealed class ProductServiceTests
         {
             UpdateProductWasCalled = true;
 
+            if (ThrowBarcodeConflictOnUpdate)
+            {
+                throw new ProductBarcodeConflictException();
+            }
+
             return Task.FromResult<ProductDto?>(new ProductDto
             {
                 Id = id,
@@ -537,6 +620,11 @@ public sealed class ProductServiceTests
             CancellationToken cancellationToken = default)
         {
             PatchProductWasCalled = true;
+
+            if (ThrowBarcodeConflictOnPatch)
+            {
+                throw new ProductBarcodeConflictException();
+            }
 
             if (CurrentProduct is null || CurrentProduct.Id != id)
             {
