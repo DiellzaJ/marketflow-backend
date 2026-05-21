@@ -9,6 +9,12 @@ public interface IUserStore
         bool includeAllCompanies,
         CancellationToken cancellationToken = default);
 
+    Task<UserDto?> GetUserAsync(
+        int id,
+        int? companyId,
+        bool includeAllCompanies,
+        CancellationToken cancellationToken = default);
+
     Task<UserDto?> CreateUserAsync(
         int companyId,
         CreateUserRequest request,

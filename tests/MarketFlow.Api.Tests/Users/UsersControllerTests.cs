@@ -79,10 +79,11 @@ public sealed class UsersControllerTests
             },
             CancellationToken.None);
 
-        var created = Assert.IsType<CreatedAtActionResult>(response.Result);
+        var created = Assert.IsType<CreatedAtRouteResult>(response.Result);
         var result = Assert.IsType<ServiceResult<UserDto>>(created.Value);
         Assert.True(result.Succeeded);
-        Assert.Equal(nameof(UsersController.GetAsync), created.ActionName);
+        Assert.Equal("GetUserById", created.RouteName);
+        Assert.Equal(createdUser.Id, created.RouteValues?["id"]);
         Assert.Equal(3, result.Data?.Assignment?.MarketId);
         Assert.Null(result.Data?.Assignment?.DepartmentId);
     }
@@ -99,6 +100,13 @@ public sealed class UsersControllerTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(GetUsersResult);
+        }
+
+        public Task<ServiceResult<UserDto>> GetUserAsync(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(ServiceResult<UserDto>.Failure("Not configured."));
         }
 
         public Task<ServiceResult<UserDto>> CreateUserAsync(

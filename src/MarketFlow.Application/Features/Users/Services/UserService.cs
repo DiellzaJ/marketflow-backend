@@ -33,6 +33,21 @@ public class UserService : IUserService
         return ServiceResult<IReadOnlyCollection<UserDto>>.Success(users);
     }
 
+    public async Task<ServiceResult<UserDto>> GetUserAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await _userStore.GetUserAsync(
+            id,
+            _currentUserService.CompanyId,
+            IsRootAdmin(),
+            cancellationToken);
+
+        return user is null
+            ? ServiceResult<UserDto>.Failure("User was not found.")
+            : ServiceResult<UserDto>.Success(user);
+    }
+
     public async Task<ServiceResult<UserDto>> CreateUserAsync(
         CreateUserRequest request,
         CancellationToken cancellationToken = default)

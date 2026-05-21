@@ -73,6 +73,19 @@ public sealed class UserStore : IUserStore
         return users.Select(x => x.User).ToList();
     }
 
+    public async Task<UserDto?> GetUserAsync(
+        int id,
+        int? companyId,
+        bool includeAllCompanies,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await FindReadableUserAsync(id, companyId, includeAllCompanies, cancellationToken);
+
+        return user is null
+            ? null
+            : await MapUserWithAssignmentAsync(user, user.Role.Name, cancellationToken);
+    }
+
     public async Task<UserDto?> CreateUserAsync(
         int companyId,
         CreateUserRequest request,
@@ -173,7 +186,13 @@ public sealed class UserStore : IUserStore
         // Tenant schema names are persisted validated identifiers; values remain parameterized.
         return await _dbContext.Database
             .SqlQueryRaw<bool>(
-                $"SELECT EXISTS (SELECT 1 FROM {quotedSchemaName}.markets WHERE id = @market_id);",
+                $"""
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM {quotedSchemaName}.markets
+                    WHERE id = @market_id
+                ) AS "Value"
+                """,
                 new NpgsqlParameter("market_id", marketId))
             .FirstOrDefaultAsync(cancellationToken);
 #pragma warning restore EF1002
@@ -204,7 +223,7 @@ public sealed class UserStore : IUserStore
                     FROM {quotedSchemaName}.departments
                     WHERE id = @department_id
                       AND market_id = @market_id
-                );
+                ) AS "Value"
                 """,
                 new NpgsqlParameter("department_id", departmentId),
                 new NpgsqlParameter("market_id", marketId))
@@ -347,10 +366,45 @@ public sealed class UserStore : IUserStore
         bool includeAllCompanies,
         CancellationToken cancellationToken)
     {
-        var query = _dbContext.Users
+        return await FindUserAsync(
+            id,
+            companyId,
+            includeAllCompanies,
+            asNoTracking: false,
+            cancellationToken);
+    }
+
+    private async Task<Domain.Entities.User?> FindReadableUserAsync(
+        int id,
+        int? companyId,
+        bool includeAllCompanies,
+        CancellationToken cancellationToken)
+    {
+        return await FindUserAsync(
+            id,
+            companyId,
+            includeAllCompanies,
+            asNoTracking: true,
+            cancellationToken);
+    }
+
+    private async Task<Domain.Entities.User?> FindUserAsync(
+        int id,
+        int? companyId,
+        bool includeAllCompanies,
+        bool asNoTracking,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<Domain.Entities.User> query = _dbContext.Users;
+
+        if (asNoTracking)
+        {
+            query = query.AsNoTracking();
+        }
+
+        query = query
             .Include(x => x.Role)
-            .Include(x => x.Company)
-            .AsQueryable();
+            .Include(x => x.Company);
 
         if (!includeAllCompanies)
         {

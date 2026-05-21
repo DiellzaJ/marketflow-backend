@@ -13,7 +13,7 @@ public static class RoleAssignmentRules
     {
         [Seller] = new RoleRequirements(RequiresMarket: true),
         [MainOperator] = new RoleRequirements(RequiresMarket: true),
-        [DepartmentManager] = new RoleRequirements(RequiresMarket: true),
+        [DepartmentManager] = new RoleRequirements(RequiresMarket: true, RequiresDepartment: true),
         [InventoryEmployee] = new RoleRequirements(RequiresMarket: true),
         [CompanyAdmin] = new RoleRequirements(AllowsMarket: false, AllowsDepartment: false)
     };
@@ -72,7 +72,7 @@ public static class RoleAssignmentRules
 
             if (RequiresDepartment && !hasDepartment)
             {
-                return $"{roleName} requires market and department assignment.";
+                return $"{roleName} requires department assignment.";
             }
 
             if (!AllowsMarket && hasMarket)
