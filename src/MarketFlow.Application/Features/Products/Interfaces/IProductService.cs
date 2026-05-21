@@ -5,7 +5,8 @@ namespace MarketFlow.Application.Features.Products.Interfaces;
 
 public interface IProductService
 {
-    Task<ServiceResult<IReadOnlyCollection<ProductDto>>> GetProductsAsync(
+    Task<ServiceResult<PagedResult<ProductDto>>> GetProductsAsync(
+        ProductListQuery query,
         CancellationToken cancellationToken = default);
 
     Task<ServiceResult<ProductDto>> GetProductAsync(

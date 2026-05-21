@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Interfaces;
 
@@ -7,6 +8,8 @@ namespace MarketFlow.Application.Features.Products.Services;
 
 public class ProductService : IProductService
 {
+    private const int MaxPageSize = 100;
+
     private readonly ITenantQueryService _tenantQueryService;
 
     public ProductService(ITenantQueryService tenantQueryService)
@@ -14,11 +17,37 @@ public class ProductService : IProductService
         _tenantQueryService = tenantQueryService;
     }
 
-    public async Task<ServiceResult<IReadOnlyCollection<ProductDto>>> GetProductsAsync(
+    public async Task<ServiceResult<PagedResult<ProductDto>>> GetProductsAsync(
+        ProductListQuery query,
         CancellationToken cancellationToken = default)
     {
-        var products = await _tenantQueryService.GetProductsAsync(cancellationToken);
-        return ServiceResult<IReadOnlyCollection<ProductDto>>.Success(products);
+        query.SortBy = query.SortBy?.Trim();
+        query.SortDirection = query.SortDirection?.Trim();
+
+        if (query.Page < 1)
+        {
+            return ServiceResult<PagedResult<ProductDto>>.Failure("Page must be greater than zero.");
+        }
+
+        if (query.PageSize is < 1 or > MaxPageSize)
+        {
+            return ServiceResult<PagedResult<ProductDto>>.Failure($"Page size must be between 1 and {MaxPageSize}.");
+        }
+
+        if (!ProductSortFields.IsAllowed(query.SortBy))
+        {
+            return ServiceResult<PagedResult<ProductDto>>.Failure("Sort field is not supported.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SortDirection) &&
+            !string.Equals(query.SortDirection, "asc", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase))
+        {
+            return ServiceResult<PagedResult<ProductDto>>.Failure("Sort direction must be asc or desc.");
+        }
+
+        var products = await _tenantQueryService.GetProductsAsync(query, cancellationToken);
+        return ServiceResult<PagedResult<ProductDto>>.Success(products);
     }
 
     public async Task<ServiceResult<ProductDto>> GetProductAsync(

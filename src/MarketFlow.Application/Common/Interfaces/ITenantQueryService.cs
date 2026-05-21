@@ -1,5 +1,6 @@
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
@@ -8,7 +9,9 @@ namespace MarketFlow.Application.Common.Interfaces;
 
 public interface ITenantQueryService
 {
-    Task<IReadOnlyCollection<ProductDto>> GetProductsAsync(CancellationToken cancellationToken = default);
+    Task<PagedResult<ProductDto>> GetProductsAsync(
+        ProductListQuery query,
+        CancellationToken cancellationToken = default);
 
     Task<ProductDto?> GetProductAsync(int id, CancellationToken cancellationToken = default);
 

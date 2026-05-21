@@ -15,11 +15,12 @@ public class ProductsController(IProductService productService) : ControllerBase
 
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicies.ReadProducts)]
-    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<ProductDto>>>> GetAsync(
+    public async Task<ActionResult<ServiceResult<PagedResult<ProductDto>>>> GetAsync(
+        [FromQuery] ProductListQuery query,
         CancellationToken cancellationToken)
     {
-        var result = await productService.GetProductsAsync(cancellationToken);
-        return Ok(result);
+        var result = await productService.GetProductsAsync(query, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 
     [HttpGet("{id:int}", Name = GetProductByIdRouteName)]

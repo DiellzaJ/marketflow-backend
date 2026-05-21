@@ -1,4 +1,5 @@
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
@@ -10,6 +11,85 @@ namespace MarketFlow.Api.Tests.Products;
 
 public sealed class ProductServiceTests
 {
+    [Fact]
+    public async Task GetProductsAsync_RejectsInvalidPage()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.GetProductsAsync(new ProductListQuery
+        {
+            Page = 0
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Page must be greater than zero.", result.Message);
+        Assert.False(tenantQueryService.GetProductsWasCalled);
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_RejectsUnsupportedSortField()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.GetProductsAsync(new ProductListQuery
+        {
+            SortBy = "drop table products"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Sort field is not supported.", result.Message);
+        Assert.False(tenantQueryService.GetProductsWasCalled);
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_TrimsSortValuesBeforeValidation()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var query = new ProductListQuery
+        {
+            SortBy = " barcode ",
+            SortDirection = " desc "
+        };
+
+        var result = await service.GetProductsAsync(query);
+
+        Assert.True(result.Succeeded);
+        Assert.True(tenantQueryService.GetProductsWasCalled);
+        Assert.Equal("barcode", tenantQueryService.LastProductListQuery?.SortBy);
+        Assert.Equal("desc", tenantQueryService.LastProductListQuery?.SortDirection);
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_PassesValidQueryToTenantQueryService()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var query = new ProductListQuery
+        {
+            Search = "milk",
+            CategoryId = 2,
+            IsActive = true,
+            Page = 2,
+            PageSize = 10,
+            SortBy = "barcode",
+            SortDirection = "desc"
+        };
+
+        var result = await service.GetProductsAsync(query);
+
+        Assert.True(result.Succeeded);
+        Assert.True(tenantQueryService.GetProductsWasCalled);
+        Assert.Same(query, tenantQueryService.LastProductListQuery);
+        Assert.Equal(2, result.Data?.Page);
+        Assert.Equal(10, result.Data?.PageSize);
+        Assert.Equal(1, result.Data?.TotalCount);
+    }
+
     [Fact]
     public async Task CreateProductAsync_RejectsMissingCategoryId()
     {
@@ -124,9 +204,35 @@ public sealed class ProductServiceTests
 
         public bool UpdateProductWasCalled { get; private set; }
 
-        public Task<IReadOnlyCollection<ProductDto>> GetProductsAsync(CancellationToken cancellationToken = default)
+        public bool GetProductsWasCalled { get; private set; }
+
+        public ProductListQuery? LastProductListQuery { get; private set; }
+
+        public Task<PagedResult<ProductDto>> GetProductsAsync(
+            ProductListQuery query,
+            CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            GetProductsWasCalled = true;
+            LastProductListQuery = query;
+
+            return Task.FromResult(new PagedResult<ProductDto>
+            {
+                Items =
+                [
+                    new ProductDto
+                    {
+                        Id = 10,
+                        Name = "Milk",
+                        Barcode = "123456789",
+                        CategoryId = 2,
+                        IsActive = true
+                    }
+                ],
+                Page = query.Page,
+                PageSize = query.PageSize,
+                TotalCount = 1,
+                TotalPages = 1
+            });
         }
 
         public Task<ProductDto?> GetProductAsync(int id, CancellationToken cancellationToken = default)
