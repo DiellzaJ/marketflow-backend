@@ -2,14 +2,9 @@ namespace MarketFlow.Api.Tests.Integration;
 
 public sealed class TenantResolutionIntegrationTests
 {
-    [Fact]
+    [PostgresIntegrationFact]
     public async Task ProductsEndpoint_WithStaleSchemaClaim_UsesDatabaseResolvedTenantSchema()
     {
-        if (!TenantIntegrationTestDatabase.HasConfiguredConnectionString)
-        {
-            return;
-        }
-
         var options = TenantIntegrationTestOptions.FromEnvironment();
 
         await using var database = new TenantIntegrationTestDatabase(options);

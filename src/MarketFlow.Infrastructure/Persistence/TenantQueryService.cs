@@ -121,7 +121,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int categoryId,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             SELECT EXISTS (
@@ -140,7 +140,7 @@ public sealed class TenantQueryService : ITenantQueryService
         int? excludedProductId = null,
         CancellationToken cancellationToken = default)
     {
-        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             SELECT EXISTS (
