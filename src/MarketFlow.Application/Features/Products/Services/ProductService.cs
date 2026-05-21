@@ -228,9 +228,24 @@ public class ProductService : IProductService
             isActive: false,
             cancellationToken: cancellationToken);
 
-        return product is null
-            ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<ProductDto>.Success(product, "Product deactivated.");
+        if (product is not null)
+        {
+            return ServiceResult<ProductDto>.Success(product, "Product deactivated.");
+        }
+
+        currentProduct = await _tenantQueryService.GetProductAsync(
+            id,
+            includeInactive: true,
+            cancellationToken);
+
+        if (currentProduct is null)
+        {
+            return ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        return !currentProduct.IsActive
+            ? ServiceResult<ProductDto>.Failure("Product is already inactive.", ServiceResultFailureType.Conflict)
+            : ServiceResult<ProductDto>.Failure("Product active state could not be changed.");
     }
 
     public async Task<ServiceResult<ProductDto>> ReactivateProductAsync(
@@ -257,9 +272,24 @@ public class ProductService : IProductService
             isActive: true,
             cancellationToken: cancellationToken);
 
-        return product is null
-            ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<ProductDto>.Success(product, "Product reactivated.");
+        if (product is not null)
+        {
+            return ServiceResult<ProductDto>.Success(product, "Product reactivated.");
+        }
+
+        currentProduct = await _tenantQueryService.GetProductAsync(
+            id,
+            includeInactive: true,
+            cancellationToken);
+
+        if (currentProduct is null)
+        {
+            return ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        return currentProduct.IsActive
+            ? ServiceResult<ProductDto>.Failure("Product is already active.", ServiceResultFailureType.Conflict)
+            : ServiceResult<ProductDto>.Failure("Product active state could not be changed.");
     }
 
     private async Task<ServiceResult<ProductDto>?> ValidateProductAsync(

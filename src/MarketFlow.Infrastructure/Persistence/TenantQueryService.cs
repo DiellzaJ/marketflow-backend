@@ -310,6 +310,7 @@ public sealed class TenantQueryService : ITenantQueryService
             UPDATE {schemaName}.products
             SET is_active = @is_active
             WHERE id = @id
+              AND is_active <> @is_active
             RETURNING id;
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);

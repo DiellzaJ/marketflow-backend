@@ -617,6 +617,23 @@ public sealed class ProductServiceTests
     }
 
     [Fact]
+    public async Task DeactivateProductAsync_WhenProductBecomesInactiveBeforeUpdate_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            SimulateConcurrentActiveStateChange = true
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.DeactivateProductAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Product is already inactive.", result.Message);
+        Assert.True(tenantQueryService.SetProductActiveStateWasCalled);
+    }
+
+    [Fact]
     public async Task ReactivateProductAsync_WhenProductIsInactive_ReactivatesProduct()
     {
         var tenantQueryService = new RecordingTenantQueryService
@@ -657,6 +674,33 @@ public sealed class ProductServiceTests
         Assert.False(tenantQueryService.SetProductActiveStateWasCalled);
     }
 
+    [Fact]
+    public async Task ReactivateProductAsync_WhenProductBecomesActiveBeforeUpdate_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            CurrentProduct = new ProductDto
+            {
+                Id = 10,
+                Name = "Milk",
+                Barcode = "123456789",
+                CategoryId = 1,
+                UnitPrice = 1.25m,
+                CostPrice = 0.75m,
+                IsActive = false
+            },
+            SimulateConcurrentActiveStateChange = true
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.ReactivateProductAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Product is already active.", result.Message);
+        Assert.True(tenantQueryService.SetProductActiveStateWasCalled);
+    }
+
     private sealed class RecordingTenantQueryService : ITenantQueryService
     {
         public bool CreateProductWasCalled { get; private set; }
@@ -678,6 +722,8 @@ public sealed class ProductServiceTests
         public bool ThrowBarcodeConflictOnUpdate { get; init; }
 
         public bool ThrowBarcodeConflictOnPatch { get; init; }
+
+        public bool SimulateConcurrentActiveStateChange { get; init; }
 
         public ProductDto? CurrentProduct { get; set; } = new()
         {
@@ -847,6 +893,12 @@ public sealed class ProductServiceTests
 
             if (CurrentProduct is null || CurrentProduct.Id != id)
             {
+                return Task.FromResult<ProductDto?>(null);
+            }
+
+            if (SimulateConcurrentActiveStateChange)
+            {
+                CurrentProduct.IsActive = isActive;
                 return Task.FromResult<ProductDto?>(null);
             }
 
