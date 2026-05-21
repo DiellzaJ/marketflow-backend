@@ -170,7 +170,8 @@ public sealed class ProductLiveSmokeTests
             var tenantContextStore = new TestTenantContextStore(schemaName);
             var tenantQueryService = new TenantQueryService(
                 dbContext,
-                new TenantProvider(currentUser, tenantContextStore));
+                new TenantProvider(currentUser, tenantContextStore),
+                currentUser);
             var productService = new ProductService(tenantQueryService);
 
             var result = await productService.DeactivateProductAsync(productId);

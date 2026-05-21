@@ -40,7 +40,7 @@ public interface ITenantQueryService
 
     Task<IReadOnlyCollection<InventoryItemDto>> GetInventoryAsync(CancellationToken cancellationToken = default);
 
-    Task<InventoryItemDto> CreateInventoryItemAsync(
+    Task<InventoryItemDto?> CreateInventoryItemAsync(
         CreateInventoryItemRequest request,
         int? updatedByUserId,
         CancellationToken cancellationToken = default);

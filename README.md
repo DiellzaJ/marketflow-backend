@@ -49,6 +49,31 @@ Product removal uses soft-deactivation. `DELETE /api/products/{id}` remains supp
 
 Default product list and detail responses only return active products. Product list callers can opt into inactive data with `includeInactive=true`, or request only inactive products with `isActive=false`. Generic product `PUT` and `PATCH` requests do not change `IsActive`; use the explicit deactivate/reactivate endpoints for state transitions.
 
+## Inventory Authorization
+
+The backend inventory matrix is defined in `InventoryPermissionMatrix` and uses these permission keys for API policies, seeded role permissions, and frontend sidebar/route guard parity:
+
+| Role | Scope | View inventory | Create records | Update stock | Adjust stock | Delete records | View movements | Transfer stock |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| RootAdmin | No tenant inventory access | No | No | No | No | No | No | No |
+| CompanyAdmin | All company inventory | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| MainOperator | Assigned market inventory | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| DepartmentManager | Assigned department inventory | Yes | No | Yes | Yes | No | Yes | Yes |
+| InventoryEmployee | Assigned market or department inventory | Yes | No | Yes | Yes | No | Yes | No |
+| Seller | Assigned POS market availability only | Yes | No | No | No | No | No | No |
+
+Permission keys:
+
+- `inventory:read` gates inventory visibility and POS availability reads.
+- `inventory:create` gates creating inventory records.
+- `stock:update` gates full stock updates, including `PUT /api/inventory/{id}`.
+- `stock:adjust` gates stock adjustments, including `PATCH /api/inventory/{id}`.
+- `inventory:delete` gates deleting inventory records.
+- `inventory-movements:read` gates inventory movement history.
+- `stock:transfer` gates transfers between allowed inventory scopes.
+
+Scope rules are enforced from the user's tenant assignment: `CompanyAdmin` has company-wide scope, `MainOperator` is limited to the assigned market, `DepartmentManager` is limited to the assigned department, `InventoryEmployee` is limited to the assigned market or department when present, and `Seller` only reads availability for POS flows. `RootAdmin` is a platform role and has no tenant inventory access by default.
+
 ## Product Persistence Notes
 
 Tenant product rows use `is_active` as soft-delete state. This preserves existing foreign-key references from inventory, purchase items, and sale items, so historical operational data remains valid after a product is deactivated.

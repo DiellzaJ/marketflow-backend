@@ -4,7 +4,19 @@ namespace MarketFlow.Api.Tests.Authorization;
 
 public sealed class PermissionEvaluatorTests
 {
-    private const string RootAdminPermissions = """{"all": true}""";
+    private const string RootAdminPermissions = """
+        {
+            "company": true,
+            "companies:read": true,
+            "companies:create": true,
+            "companies:update": true,
+            "companies:delete": true,
+            "users:read": true,
+            "users:create": true,
+            "users:update": true,
+            "users:delete": true
+        }
+        """;
 
     private const string CompanyAdminPermissions = """
         {
@@ -22,8 +34,11 @@ public sealed class PermissionEvaluatorTests
             "sales:delete": true,
             "inventory:create": true,
             "inventory:read": true,
-            "inventory:update": true,
+            "stock:update": true,
+            "stock:adjust": true,
             "inventory:delete": true,
+            "inventory-movements:read": true,
+            "stock:transfer": true,
             "purchases:read": true,
             "purchases:create": true,
             "purchases:update": true,
@@ -43,8 +58,11 @@ public sealed class PermissionEvaluatorTests
             "sales:delete": true,
             "inventory:create": true,
             "inventory:read": true,
-            "inventory:update": true,
+            "stock:update": true,
+            "stock:adjust": true,
             "inventory:delete": true,
+            "inventory-movements:read": true,
+            "stock:transfer": true,
             "purchases:read": true,
             "purchases:create": true,
             "purchases:update": true,
@@ -56,15 +74,15 @@ public sealed class PermissionEvaluatorTests
         {
             "products:read": true,
             "sales:create": true,
-            "inventory:read": true,
-            "inventory:update": true
+            "inventory:read": true
         }
         """;
 
     public static TheoryData<string, string, string?> AllowedPermissions => new()
     {
-        { RootAdminPermissions, "users", "delete" },
+        { """{"all": true}""", "users", "delete" },
         { RootAdminPermissions, "companies", "delete" },
+        { RootAdminPermissions, "users", "delete" },
         { CompanyAdminPermissions, "users", "create" },
         { CompanyAdminPermissions, "products", "delete" },
         { MainOperatorPermissions, "products", "update" },
@@ -72,9 +90,12 @@ public sealed class PermissionEvaluatorTests
         { MainOperatorPermissions, "purchases", "delete" },
         { MainOperatorPermissions, "sales", "delete" },
         { MainOperatorPermissions, "inventory", "create" },
+        { MainOperatorPermissions, "stock", "update" },
+        { MainOperatorPermissions, "stock", "adjust" },
+        { MainOperatorPermissions, "inventory-movements", "read" },
+        { MainOperatorPermissions, "stock", "transfer" },
         { SellerPermissions, "products", "read" },
         { SellerPermissions, "sales", "create" },
-        { SellerPermissions, "inventory", "update" },
         { SellerPermissions, "sales:create", null }
     };
 
@@ -82,6 +103,11 @@ public sealed class PermissionEvaluatorTests
     {
         { MainOperatorPermissions, "users", "read" },
         { MainOperatorPermissions, "users", "create" },
+        { RootAdminPermissions, "inventory", "read" },
+        { RootAdminPermissions, "stock", "update" },
+        { RootAdminPermissions, "stock", "adjust" },
+        { RootAdminPermissions, "inventory-movements", "read" },
+        { RootAdminPermissions, "stock", "transfer" },
         { SellerPermissions, "users", "read" },
         { SellerPermissions, "sales", "read" },
         { SellerPermissions, "sales", "delete" },
@@ -91,7 +117,11 @@ public sealed class PermissionEvaluatorTests
         { SellerPermissions, "purchases", "create" },
         { SellerPermissions, "purchases", "delete" },
         { SellerPermissions, "inventory", "create" },
-        { SellerPermissions, "inventory", "delete" }
+        { SellerPermissions, "inventory", "delete" },
+        { SellerPermissions, "stock", "update" },
+        { SellerPermissions, "stock", "adjust" },
+        { SellerPermissions, "inventory-movements", "read" },
+        { SellerPermissions, "stock", "transfer" }
     };
 
     [Theory]

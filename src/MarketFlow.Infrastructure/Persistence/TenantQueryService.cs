@@ -8,6 +8,7 @@ using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
+using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Infrastructure.MultiTenancy;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -18,13 +19,16 @@ public sealed class TenantQueryService : ITenantQueryService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly TenantProvider _tenantProvider;
+    private readonly ICurrentUserService _currentUserService;
 
     public TenantQueryService(
         ApplicationDbContext dbContext,
-        TenantProvider tenantProvider)
+        TenantProvider tenantProvider,
+        ICurrentUserService currentUserService)
     {
         _dbContext = dbContext;
         _tenantProvider = tenantProvider;
+        _currentUserService = currentUserService;
     }
 
     public async Task<PagedResult<ProductDto>> GetProductsAsync(
@@ -355,7 +359,9 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var inventory = new List<InventoryItemDto>();
+        var scopeCondition = BuildInventoryScopeCondition(scope);
 
         await using var command = await CreateCommandAsync($"""
             SELECT i.id,
@@ -363,13 +369,16 @@ public sealed class TenantQueryService : ITenantQueryService
                    p.name,
                    i.market_id,
                    m.name,
+                   i.department_id,
                    i.quantity,
                    i.reserved_quantity
             FROM {schemaName}.inventory i
             INNER JOIN {schemaName}.products p ON p.id = i.product_id
             INNER JOIN {schemaName}.markets m ON m.id = i.market_id
+            {scopeCondition}
             ORDER BY m.name, p.name;
             """, cancellationToken);
+        AddInventoryScopeParameters(command, scope);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -382,20 +391,27 @@ public sealed class TenantQueryService : ITenantQueryService
                 ProductName = reader.GetString(2),
                 MarketId = reader.GetInt32(3),
                 MarketName = reader.GetString(4),
-                Quantity = reader.GetInt32(5),
-                ReservedQuantity = reader.GetInt32(6)
+                DepartmentId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                Quantity = reader.GetInt32(6),
+                ReservedQuantity = reader.GetInt32(7)
             });
         }
 
         return inventory;
     }
 
-    public async Task<InventoryItemDto> CreateInventoryItemAsync(
+    public async Task<InventoryItemDto?> CreateInventoryItemAsync(
         CreateInventoryItemRequest request,
         int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+        if (!CanAccessInventoryTarget(scope, request.MarketId, request.DepartmentId))
+        {
+            return null;
+        }
 
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.inventory (
@@ -436,6 +452,8 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.inventory
@@ -444,6 +462,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 last_updated_by = @last_updated_by,
                 updated_at = NOW()
             WHERE id = @id
+              {scopeCondition}
             RETURNING id;
             """, cancellationToken);
 
@@ -451,6 +470,7 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("quantity", request.Quantity);
         command.Parameters.AddWithValue("reserved_quantity", request.ReservedQuantity);
         command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
+        AddInventoryScopeParameters(command, scope);
 
         var updatedId = await command.ExecuteScalarAsync(cancellationToken);
 
@@ -462,12 +482,16 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
         await using var command = await CreateCommandAsync($"""
             DELETE FROM {schemaName}.inventory
-            WHERE id = @id;
+            WHERE id = @id
+              {scopeCondition};
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
+        AddInventoryScopeParameters(command, scope);
 
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
@@ -479,6 +503,8 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.inventory
@@ -487,6 +513,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 last_updated_by = @last_updated_by,
                 updated_at = NOW()
             WHERE id = @id
+              {scopeCondition}
             RETURNING id;
             """, cancellationToken);
 
@@ -494,6 +521,7 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("quantity", DbValue(request.Quantity));
         command.Parameters.AddWithValue("reserved_quantity", DbValue(request.ReservedQuantity));
         command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
+        AddInventoryScopeParameters(command, scope);
 
         var updatedId = await command.ExecuteScalarAsync(cancellationToken);
 
@@ -792,6 +820,8 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND");
 
         await using var command = await CreateCommandAsync($"""
             SELECT i.id,
@@ -799,14 +829,17 @@ public sealed class TenantQueryService : ITenantQueryService
                    p.name,
                    i.market_id,
                    m.name,
+                   i.department_id,
                    i.quantity,
                    i.reserved_quantity
             FROM {schemaName}.inventory i
             INNER JOIN {schemaName}.products p ON p.id = i.product_id
             INNER JOIN {schemaName}.markets m ON m.id = i.market_id
-            WHERE i.id = @id;
+            WHERE i.id = @id
+              {scopeCondition};
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
+        AddInventoryScopeParameters(command, scope);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -818,10 +851,140 @@ public sealed class TenantQueryService : ITenantQueryService
                 ProductName = reader.GetString(2),
                 MarketId = reader.GetInt32(3),
                 MarketName = reader.GetString(4),
-                Quantity = reader.GetInt32(5),
-                ReservedQuantity = reader.GetInt32(6)
+                DepartmentId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                Quantity = reader.GetInt32(6),
+                ReservedQuantity = reader.GetInt32(7)
             }
             : null;
+    }
+
+    private async Task<InventoryScope> GetCurrentInventoryScopeAsync(
+        string quotedSchemaName,
+        CancellationToken cancellationToken)
+    {
+        if (_currentUserService.UserId is not { } userId)
+        {
+            return InventoryScope.None;
+        }
+
+        var role = RoleAssignmentRules.NormalizeRoleName(
+            await GetCurrentPersistedRoleNameAsync(userId, cancellationToken) ?? string.Empty);
+
+        if (string.Equals(role, RoleAssignmentRules.CompanyAdmin, StringComparison.OrdinalIgnoreCase))
+        {
+            return InventoryScope.Company;
+        }
+
+        if (string.Equals(role, RoleAssignmentRules.RootAdmin, StringComparison.OrdinalIgnoreCase))
+        {
+            return InventoryScope.None;
+        }
+
+        var assignment = await GetCurrentStaffAssignmentAsync(quotedSchemaName, userId, cancellationToken);
+
+        if (assignment is null)
+        {
+            return InventoryScope.None;
+        }
+
+        if (string.Equals(role, RoleAssignmentRules.DepartmentManager, StringComparison.OrdinalIgnoreCase))
+        {
+            return assignment.DepartmentId.HasValue
+                ? InventoryScope.Department(assignment.MarketId, assignment.DepartmentId.Value)
+                : InventoryScope.None;
+        }
+
+        if (string.Equals(role, RoleAssignmentRules.MainOperator, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(role, RoleAssignmentRules.Seller, StringComparison.OrdinalIgnoreCase))
+        {
+            return InventoryScope.Market(assignment.MarketId);
+        }
+
+        if (string.Equals(role, RoleAssignmentRules.InventoryEmployee, StringComparison.OrdinalIgnoreCase))
+        {
+            return assignment.DepartmentId.HasValue
+                ? InventoryScope.Department(assignment.MarketId, assignment.DepartmentId.Value)
+                : InventoryScope.Market(assignment.MarketId);
+        }
+
+        return InventoryScope.None;
+    }
+
+    private async Task<string?> GetCurrentPersistedRoleNameAsync(
+        int userId,
+        CancellationToken cancellationToken)
+    {
+        return await _dbContext.Users
+            .AsNoTracking()
+            .Where(x => x.Id == userId && x.IsActive && x.Company.IsActive)
+            .Select(x => x.Role.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<StaffAssignmentScope?> GetCurrentStaffAssignmentAsync(
+        string quotedSchemaName,
+        int userId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT sa.market_id,
+                   sa.department_id
+            FROM {quotedSchemaName}.staff_assignments sa
+            WHERE sa.is_active = TRUE
+              AND sa.user_id = @user_id
+            ORDER BY sa.assigned_at DESC, sa.id DESC
+            LIMIT 1;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("user_id", userId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken)
+            ? new StaffAssignmentScope(
+                reader.GetInt32(0),
+                reader.IsDBNull(1) ? null : reader.GetInt32(1))
+            : null;
+    }
+
+    private static string BuildInventoryScopeCondition(
+        InventoryScope scope,
+        string prefix = "WHERE",
+        string columnQualifier = "i.")
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => string.Empty,
+            InventoryScopeKind.Market => $"{prefix} {columnQualifier}market_id = @scope_market_id",
+            InventoryScopeKind.Department => $"{prefix} {columnQualifier}market_id = @scope_market_id AND {columnQualifier}department_id = @scope_department_id",
+            _ => $"{prefix} FALSE"
+        };
+    }
+
+    private static void AddInventoryScopeParameters(NpgsqlCommand command, InventoryScope scope)
+    {
+        if (scope.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("scope_market_id", scope.MarketId.Value);
+        }
+
+        if (scope.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("scope_department_id", scope.DepartmentId.Value);
+        }
+    }
+
+    private static bool CanAccessInventoryTarget(
+        InventoryScope scope,
+        int marketId,
+        int? departmentId)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => true,
+            InventoryScopeKind.Market => scope.MarketId == marketId,
+            InventoryScopeKind.Department => scope.MarketId == marketId && scope.DepartmentId == departmentId,
+            _ => false
+        };
     }
 
     private static async Task<ProductDto?> ReadProductAsync(
@@ -1049,5 +1212,35 @@ public sealed class TenantQueryService : ITenantQueryService
     private static string QuoteIdentifier(string identifier)
     {
         return "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+    }
+
+    private sealed record StaffAssignmentScope(int MarketId, int? DepartmentId);
+
+    private sealed record InventoryScope(
+        InventoryScopeKind Kind,
+        int? MarketId = null,
+        int? DepartmentId = null)
+    {
+        public static InventoryScope None { get; } = new(InventoryScopeKind.None);
+
+        public static InventoryScope Company { get; } = new(InventoryScopeKind.Company);
+
+        public static InventoryScope Market(int marketId)
+        {
+            return new InventoryScope(InventoryScopeKind.Market, marketId);
+        }
+
+        public static InventoryScope Department(int marketId, int departmentId)
+        {
+            return new InventoryScope(InventoryScopeKind.Department, marketId, departmentId);
+        }
+    }
+
+    private enum InventoryScopeKind
+    {
+        None,
+        Company,
+        Market,
+        Department
     }
 }

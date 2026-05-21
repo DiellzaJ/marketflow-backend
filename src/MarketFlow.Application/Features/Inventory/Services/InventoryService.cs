@@ -44,7 +44,9 @@ public class InventoryService : IInventoryService
             _currentUserService.UserId,
             cancellationToken);
 
-        return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item created.");
+        return inventoryItem is null
+            ? ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.")
+            : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item created.");
     }
 
     public async Task<ServiceResult<InventoryItemDto>> UpdateInventoryItemAsync(
