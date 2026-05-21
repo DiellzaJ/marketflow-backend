@@ -66,14 +66,9 @@ public sealed class TenantIntegrationTestUtilitiesTests
             client.DefaultRequestHeaders.Authorization);
     }
 
-    [Fact]
+    [PostgresIntegrationFact]
     public async Task TenantDatabaseUtilities_WhenConfigured_CreateTenantDataAndCleanUp()
     {
-        if (!TenantIntegrationTestDatabase.HasConfiguredConnectionString)
-        {
-            return;
-        }
-
         var options = TenantIntegrationTestOptions.FromEnvironment();
         var schemaName = string.Empty;
 

@@ -43,6 +43,9 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
             TenantIntegrationTestOptions.DefaultConnectionStringEnvironmentVariable));
 
+    public static string MissingConnectionStringSkipReason =>
+        $"{TenantIntegrationTestOptions.DefaultConnectionStringEnvironmentVariable} is not configured.";
+
     public string CreateUniqueSchemaName(string prefix = "mf_test")
     {
         var sanitizedPrefix = new string(prefix
@@ -143,6 +146,19 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         }
 
         return new TenantTestCompany(companyId, name, schemaName);
+    }
+
+    public void TrackCompanyForCleanup(
+        int companyId,
+        string schemaName,
+        bool dropSchemaOnDispose = true)
+    {
+        _createdCompanyIds.Add(companyId);
+
+        if (dropSchemaOnDispose)
+        {
+            _createdSchemaNames.Add(schemaName);
+        }
     }
 
     public async Task<TenantTestUser> CreateUserAsync(
@@ -356,6 +372,40 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             cancellationToken);
     }
 
+    public async Task<int> CountCompaniesBySchemaNameAsync(
+        string schemaName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        return await ExecuteScalarAsync<int>(
+            connection,
+            """
+            SELECT COUNT(*)::int
+            FROM public.companies
+            WHERE schema_name = @schema_name;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("schema_name", schemaName));
+    }
+
+    public async Task<int> CountUsersByEmailAsync(
+        string email,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        return await ExecuteScalarAsync<int>(
+            connection,
+            """
+            SELECT COUNT(*)::int
+            FROM public.users
+            WHERE email = @email;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("email", email.Trim().ToLowerInvariant()));
+    }
+
     public string GenerateAccessToken(TenantTestUser user)
     {
         var claims = new List<Claim>
@@ -391,6 +441,14 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
 
         await using var connection = await OpenConnectionAsync(CancellationToken.None);
 
+        foreach (var schemaName in _createdSchemaNames)
+        {
+            await ExecuteAsync(
+                connection,
+                $"DROP SCHEMA IF EXISTS {QuoteIdentifier(schemaName)} CASCADE;",
+                CancellationToken.None);
+        }
+
         if (_createdUserIds.Count > 0)
         {
             await ExecuteAsync(
@@ -407,14 +465,6 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 "DELETE FROM public.companies WHERE id = ANY (@company_ids);",
                 CancellationToken.None,
                 new NpgsqlParameter<int[]>("company_ids", _createdCompanyIds.Distinct().ToArray()));
-        }
-
-        foreach (var schemaName in _createdSchemaNames)
-        {
-            await ExecuteAsync(
-                connection,
-                $"DROP SCHEMA IF EXISTS {QuoteIdentifier(schemaName)} CASCADE;",
-                CancellationToken.None);
         }
     }
 

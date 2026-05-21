@@ -1,8 +1,11 @@
 using System.Data;
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
+using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
+using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
 using MarketFlow.Infrastructure.MultiTenancy;
@@ -24,11 +27,28 @@ public sealed class TenantQueryService : ITenantQueryService
         _tenantProvider = tenantProvider;
     }
 
-    public async Task<IReadOnlyCollection<ProductDto>> GetProductsAsync(
+    public async Task<PagedResult<ProductDto>> GetProductsAsync(
+        ProductListQuery query,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var products = new List<ProductDto>();
+        var whereClause = BuildProductWhereClause(query);
+        var sortColumn = GetProductSortColumn(query.SortBy);
+        var sortDirection = string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase)
+            ? "DESC"
+            : "ASC";
+        var offset = ((long)query.Page - 1L) * query.PageSize;
+
+        await using var countCommand = await CreateCommandAsync($"""
+            SELECT COUNT(*)
+            FROM {schemaName}.products p
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            {whereClause};
+            """, cancellationToken);
+
+        AddProductListParameters(countCommand, query);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
 
         await using var command = await CreateCommandAsync($"""
             SELECT p.id,
@@ -44,9 +64,14 @@ public sealed class TenantQueryService : ITenantQueryService
                    p.is_active
             FROM {schemaName}.products p
             LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
-            WHERE p.is_active = TRUE
-            ORDER BY p.name;
+            {whereClause}
+            ORDER BY {sortColumn} {sortDirection}, p.id ASC
+            LIMIT @page_size OFFSET @offset;
             """, cancellationToken);
+
+        AddProductListParameters(command, query);
+        command.Parameters.AddWithValue("page_size", query.PageSize);
+        command.Parameters.AddWithValue("offset", offset);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -55,7 +80,14 @@ public sealed class TenantQueryService : ITenantQueryService
             products.Add(ReadProduct(reader));
         }
 
-        return products;
+        return new PagedResult<ProductDto>
+        {
+            Items = products,
+            Page = query.Page,
+            PageSize = query.PageSize,
+            TotalCount = totalCount,
+            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
+        };
     }
 
     public async Task<ProductDto?> GetProductAsync(
@@ -83,6 +115,45 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("id", id);
 
         return await ReadProductAsync(command, cancellationToken);
+    }
+
+    public async Task<bool> CategoryExistsAsync(
+        int categoryId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.categories
+                WHERE id = @category_id AND is_active = TRUE
+            );
+            """, cancellationToken);
+        command.Parameters.AddWithValue("category_id", categoryId);
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    public async Task<bool> ProductBarcodeExistsAsync(
+        string barcode,
+        int? excludedProductId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.products
+                WHERE barcode = @barcode
+                  AND (@excluded_product_id IS NULL OR id <> @excluded_product_id)
+            );
+            """, cancellationToken);
+        command.Parameters.AddWithValue("barcode", barcode.Trim());
+        command.Parameters.AddWithValue("excluded_product_id", DbValue(excludedProductId));
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
     public async Task<ProductDto> CreateProductAsync(
@@ -117,8 +188,20 @@ public sealed class TenantQueryService : ITenantQueryService
 
         AddProductParameters(command, request);
 
-        var createdId = (int?)await command.ExecuteScalarAsync(cancellationToken)
-            ?? throw new InvalidOperationException("Product was not created.");
+        object? createdIdValue;
+
+        try
+        {
+            createdIdValue = await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsUniqueViolation(exception))
+        {
+            throw new ProductBarcodeConflictException();
+        }
+
+        var createdId = createdIdValue is int value
+            ? value
+            : throw new InvalidOperationException("Product was not created.");
 
         return await GetProductAsync(createdId, cancellationToken)
             ?? throw new InvalidOperationException("Product was not found after creation.");
@@ -151,7 +234,16 @@ public sealed class TenantQueryService : ITenantQueryService
         AddProductParameters(command, request);
         command.Parameters.AddWithValue("is_active", request.IsActive);
 
-        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        object? updatedId;
+
+        try
+        {
+            updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsUniqueViolation(exception))
+        {
+            throw new ProductBarcodeConflictException();
+        }
 
         return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
     }
@@ -191,7 +283,16 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("min_stock_alert", DbValue(request.MinStockAlert));
         command.Parameters.AddWithValue("is_active", DbValue(request.IsActive));
 
-        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        object? updatedId;
+
+        try
+        {
+            updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsUniqueViolation(exception))
+        {
+            throw new ProductBarcodeConflictException();
+        }
 
         return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
     }
@@ -722,6 +823,109 @@ public sealed class TenantQueryService : ITenantQueryService
         return await reader.ReadAsync(cancellationToken) ? ReadProduct(reader) : null;
     }
 
+    private static string BuildProductWhereClause(ProductListQuery query)
+    {
+        var conditions = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            conditions.Add("(p.name ILIKE @search ESCAPE '\\' OR p.barcode ILIKE @search ESCAPE '\\')");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Name))
+        {
+            conditions.Add("p.name ILIKE @name ESCAPE '\\'");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Barcode))
+        {
+            conditions.Add("p.barcode ILIKE @barcode ESCAPE '\\'");
+        }
+
+        if (query.CategoryId.HasValue)
+        {
+            conditions.Add("p.category_id = @category_id");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Category))
+        {
+            conditions.Add("c.name ILIKE @category ESCAPE '\\'");
+        }
+
+        if (query.IsActive.HasValue)
+        {
+            conditions.Add("p.is_active = @is_active");
+        }
+        else
+        {
+            conditions.Add("p.is_active = TRUE");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static void AddProductListParameters(NpgsqlCommand command, ProductListQuery query)
+    {
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            command.Parameters.AddWithValue("search", LikePattern(query.Search));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Name))
+        {
+            command.Parameters.AddWithValue("name", LikePattern(query.Name));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Barcode))
+        {
+            command.Parameters.AddWithValue("barcode", LikePattern(query.Barcode));
+        }
+
+        if (query.CategoryId.HasValue)
+        {
+            command.Parameters.AddWithValue("category_id", query.CategoryId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Category))
+        {
+            command.Parameters.AddWithValue("category", LikePattern(query.Category));
+        }
+
+        if (query.IsActive.HasValue)
+        {
+            command.Parameters.AddWithValue("is_active", query.IsActive.Value);
+        }
+    }
+
+    private static string GetProductSortColumn(string? sortBy)
+    {
+        return sortBy?.Trim() switch
+        {
+            { } value when string.Equals(value, ProductSortFields.Id, StringComparison.OrdinalIgnoreCase) => "p.id",
+            { } value when string.Equals(value, ProductSortFields.Barcode, StringComparison.OrdinalIgnoreCase) => "p.barcode",
+            { } value when string.Equals(value, ProductSortFields.Category, StringComparison.OrdinalIgnoreCase) => "c.name",
+            { } value when string.Equals(value, ProductSortFields.CategoryName, StringComparison.OrdinalIgnoreCase) => "c.name",
+            { } value when string.Equals(value, ProductSortFields.UnitPrice, StringComparison.OrdinalIgnoreCase) => "p.unit_price",
+            { } value when string.Equals(value, ProductSortFields.CostPrice, StringComparison.OrdinalIgnoreCase) => "p.cost_price",
+            { } value when string.Equals(value, ProductSortFields.TaxRate, StringComparison.OrdinalIgnoreCase) => "p.tax_rate",
+            { } value when string.Equals(value, ProductSortFields.MinStockAlert, StringComparison.OrdinalIgnoreCase) => "p.min_stock_alert",
+            { } value when string.Equals(value, ProductSortFields.IsActive, StringComparison.OrdinalIgnoreCase) => "p.is_active",
+            _ => "p.name"
+        };
+    }
+
+    private static string LikePattern(string value)
+    {
+        var escaped = value.Trim()
+            .Replace(@"\", @"\\", StringComparison.Ordinal)
+            .Replace("%", @"\%", StringComparison.Ordinal)
+            .Replace("_", @"\_", StringComparison.Ordinal);
+
+        return $"%{escaped}%";
+    }
+
     private static ProductDto ReadProduct(NpgsqlDataReader reader)
     {
         return new ProductDto
@@ -806,6 +1010,11 @@ public sealed class TenantQueryService : ITenantQueryService
     private static object DbValue<T>(T? value)
     {
         return value is null ? DBNull.Value : value;
+    }
+
+    private static bool IsUniqueViolation(PostgresException exception)
+    {
+        return exception.SqlState == PostgresErrorCodes.UniqueViolation;
     }
 
     private async Task<NpgsqlCommand> CreateCommandAsync(

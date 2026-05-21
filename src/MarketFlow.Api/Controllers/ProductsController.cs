@@ -15,11 +15,12 @@ public class ProductsController(IProductService productService) : ControllerBase
 
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicies.ReadProducts)]
-    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<ProductDto>>>> GetAsync(
+    public async Task<ActionResult<ServiceResult<PagedResult<ProductDto>>>> GetAsync(
+        [FromQuery] ProductListQuery query,
         CancellationToken cancellationToken)
     {
-        var result = await productService.GetProductsAsync(cancellationToken);
-        return Ok(result);
+        var result = await productService.GetProductsAsync(query, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 
     [HttpGet("{id:int}", Name = GetProductByIdRouteName)]
@@ -42,7 +43,7 @@ public class ProductsController(IProductService productService) : ControllerBase
 
         if (!result.Succeeded)
         {
-            return BadRequest(result);
+            return ProductFailure(result);
         }
 
         return CreatedAtRoute(GetProductByIdRouteName, new { id = result.Data!.Id }, result);
@@ -57,7 +58,7 @@ public class ProductsController(IProductService productService) : ControllerBase
     {
         var result = await productService.UpdateProductAsync(id, request, cancellationToken);
 
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return result.Succeeded ? Ok(result) : ProductFailure(result);
     }
 
     [HttpPatch("{id:int}")]
@@ -69,7 +70,7 @@ public class ProductsController(IProductService productService) : ControllerBase
     {
         var result = await productService.PatchProductAsync(id, request, cancellationToken);
 
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return result.Succeeded ? Ok(result) : ProductFailure(result);
     }
 
     [HttpDelete("{id:int}")]
@@ -81,5 +82,15 @@ public class ProductsController(IProductService productService) : ControllerBase
         var result = await productService.DeleteProductAsync(id, cancellationToken);
 
         return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
+    private ActionResult<ServiceResult<ProductDto>> ProductFailure(ServiceResult<ProductDto> result)
+    {
+        return result.FailureType switch
+        {
+            ServiceResultFailureType.NotFound => NotFound(result),
+            ServiceResultFailureType.Conflict => Conflict(result),
+            _ => BadRequest(result)
+        };
     }
 }
