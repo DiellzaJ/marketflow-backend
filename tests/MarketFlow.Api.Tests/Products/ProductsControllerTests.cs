@@ -125,18 +125,103 @@ public sealed class ProductsControllerTests
         Assert.Same(result, notFound.Value);
     }
 
+    [Fact]
+    public async Task DeleteAsync_WhenProductIsDeactivated_ReturnsOk()
+    {
+        var result = ServiceResult<bool>.Success(true, "Product deactivated.");
+        var controller = new ProductsController(new StubProductService(result));
+
+        var response = await controller.DeleteAsync(42, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        Assert.Same(result, ok.Value);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenProductIsMissing_ReturnsNotFound()
+    {
+        var result = ServiceResult<bool>.Failure(
+            "Product was not found.",
+            ServiceResultFailureType.NotFound);
+        var controller = new ProductsController(new StubProductService(result));
+
+        var response = await controller.DeleteAsync(42, CancellationToken.None);
+
+        var notFound = Assert.IsType<NotFoundObjectResult>(response.Result);
+        Assert.Same(result, notFound.Value);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenProductIsAlreadyInactive_ReturnsConflict()
+    {
+        var result = ServiceResult<bool>.Failure(
+            "Product is already inactive.",
+            ServiceResultFailureType.Conflict);
+        var controller = new ProductsController(new StubProductService(result));
+
+        var response = await controller.DeleteAsync(42, CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(response.Result);
+        Assert.Same(result, conflict.Value);
+    }
+
+    [Fact]
+    public async Task DeactivateAsync_WhenProductIsDeactivated_ReturnsOk()
+    {
+        var product = new ProductDto
+        {
+            Id = 42,
+            Name = "Milk",
+            IsActive = false
+        };
+        var result = ServiceResult<ProductDto>.Success(product, "Product deactivated.");
+        var controller = new ProductsController(new StubProductService(result));
+
+        var response = await controller.DeactivateAsync(42, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        Assert.Same(result, ok.Value);
+    }
+
+    [Fact]
+    public async Task ReactivateAsync_WhenProductIsReactivated_ReturnsOk()
+    {
+        var product = new ProductDto
+        {
+            Id = 42,
+            Name = "Milk",
+            IsActive = true
+        };
+        var result = ServiceResult<ProductDto>.Success(product, "Product reactivated.");
+        var controller = new ProductsController(new StubProductService(result));
+
+        var response = await controller.ReactivateAsync(42, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        Assert.Same(result, ok.Value);
+    }
+
     private sealed class StubProductService : IProductService
     {
         private readonly ServiceResult<ProductDto> _result;
+        private readonly ServiceResult<bool> _deleteResult;
 
         public StubProductService(ProductDto product)
         {
             _result = ServiceResult<ProductDto>.Success(product, "Product created.");
+            _deleteResult = ServiceResult<bool>.Success(true, "Product deactivated.");
         }
 
         public StubProductService(ServiceResult<ProductDto> result)
         {
             _result = result;
+            _deleteResult = ServiceResult<bool>.Success(true, "Product deactivated.");
+        }
+
+        public StubProductService(ServiceResult<bool> deleteResult)
+        {
+            _result = ServiceResult<ProductDto>.Failure("Not configured.");
+            _deleteResult = deleteResult;
         }
 
         public Task<ServiceResult<PagedResult<ProductDto>>> GetProductsAsync(
@@ -183,9 +268,23 @@ public sealed class ProductsControllerTests
             throw new NotSupportedException();
         }
 
+        public Task<ServiceResult<ProductDto>> DeactivateProductAsync(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_result);
+        }
+
+        public Task<ServiceResult<ProductDto>> ReactivateProductAsync(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(_result);
+        }
+
         public Task<ServiceResult<bool>> DeleteProductAsync(int id, CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            return Task.FromResult(_deleteResult);
         }
     }
 }

@@ -20,5 +20,5 @@ public class UpdateProductRequest
 
     public int MinStockAlert { get; set; }
 
-    public bool IsActive { get; set; } = true;
+    public bool? IsActive { get; set; }
 }
