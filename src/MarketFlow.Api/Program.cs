@@ -32,3 +32,5 @@ if (app.Environment.IsDevelopment())
 app.UseApiPipeline();
 
 app.Run();
+
+public partial class Program;
