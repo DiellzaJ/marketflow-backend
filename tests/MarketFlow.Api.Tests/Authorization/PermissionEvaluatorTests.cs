@@ -86,6 +86,8 @@ public sealed class PermissionEvaluatorTests
         { SellerPermissions, "sales", "read" },
         { SellerPermissions, "sales", "delete" },
         { SellerPermissions, "products", "create" },
+        { SellerPermissions, "products", "update" },
+        { SellerPermissions, "products", "delete" },
         { SellerPermissions, "purchases", "create" },
         { SellerPermissions, "purchases", "delete" },
         { SellerPermissions, "inventory", "create" },

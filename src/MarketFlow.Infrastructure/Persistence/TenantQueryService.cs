@@ -92,9 +92,11 @@ public sealed class TenantQueryService : ITenantQueryService
 
     public async Task<ProductDto?> GetProductAsync(
         int id,
+        bool includeInactive = false,
         CancellationToken cancellationToken = default)
     {
         var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+        var activeCondition = includeInactive ? string.Empty : " AND p.is_active = TRUE";
 
         await using var command = await CreateCommandAsync($"""
             SELECT p.id,
@@ -110,7 +112,7 @@ public sealed class TenantQueryService : ITenantQueryService
                    p.is_active
             FROM {schemaName}.products p
             LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
-            WHERE p.id = @id AND p.is_active = TRUE;
+            WHERE p.id = @id{activeCondition};
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
 
@@ -203,7 +205,7 @@ public sealed class TenantQueryService : ITenantQueryService
             ? value
             : throw new InvalidOperationException("Product was not created.");
 
-        return await GetProductAsync(createdId, cancellationToken)
+        return await GetProductAsync(createdId, cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException("Product was not found after creation.");
     }
 
@@ -224,15 +226,13 @@ public sealed class TenantQueryService : ITenantQueryService
                 cost_price = @cost_price,
                 tax_rate = @tax_rate,
                 image_url = @image_url,
-                min_stock_alert = @min_stock_alert,
-                is_active = @is_active
+                min_stock_alert = @min_stock_alert
             WHERE id = @id
             RETURNING id;
             """, cancellationToken);
 
         command.Parameters.AddWithValue("id", id);
         AddProductParameters(command, request);
-        command.Parameters.AddWithValue("is_active", request.IsActive);
 
         object? updatedId;
 
@@ -245,7 +245,9 @@ public sealed class TenantQueryService : ITenantQueryService
             throw new ProductBarcodeConflictException();
         }
 
-        return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
+        return updatedId is null
+            ? null
+            : await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
     }
 
     public async Task<ProductDto?> PatchProductAsync(
@@ -265,8 +267,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 cost_price = COALESCE(@cost_price, cost_price),
                 tax_rate = COALESCE(@tax_rate, tax_rate),
                 image_url = COALESCE(@image_url, image_url),
-                min_stock_alert = COALESCE(@min_stock_alert, min_stock_alert),
-                is_active = COALESCE(@is_active, is_active)
+                min_stock_alert = COALESCE(@min_stock_alert, min_stock_alert)
             WHERE id = @id
             RETURNING id;
             """, cancellationToken);
@@ -281,7 +282,6 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("tax_rate", DbValue(request.TaxRate));
         command.Parameters.AddWithValue("image_url", DbValue(request.ImageUrl));
         command.Parameters.AddWithValue("min_stock_alert", DbValue(request.MinStockAlert));
-        command.Parameters.AddWithValue("is_active", DbValue(request.IsActive));
 
         object? updatedId;
 
@@ -294,23 +294,32 @@ public sealed class TenantQueryService : ITenantQueryService
             throw new ProductBarcodeConflictException();
         }
 
-        return updatedId is null ? null : await GetProductAsync(id, cancellationToken);
+        return updatedId is null
+            ? null
+            : await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
     }
 
-    public async Task<bool> DeleteProductAsync(
+    public async Task<ProductDto?> SetProductActiveStateAsync(
         int id,
+        bool isActive,
         CancellationToken cancellationToken = default)
     {
         var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.products
-            SET is_active = FALSE
-            WHERE id = @id AND is_active = TRUE;
+            SET is_active = @is_active
+            WHERE id = @id
+            RETURNING id;
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("is_active", isActive);
 
-        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return updatedId is null
+            ? null
+            : await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(
@@ -856,7 +865,7 @@ public sealed class TenantQueryService : ITenantQueryService
         {
             conditions.Add("p.is_active = @is_active");
         }
-        else
+        else if (!query.IncludeInactive)
         {
             conditions.Add("p.is_active = TRUE");
         }

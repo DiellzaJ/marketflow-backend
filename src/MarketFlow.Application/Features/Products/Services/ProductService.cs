@@ -11,6 +11,8 @@ public class ProductService : IProductService
 {
     private const int MaxPageSize = 100;
     private const int MaxNameLength = 200;
+    private const string ActiveStateChangeMessage =
+        "Use the product deactivate or reactivate endpoint to change active state.";
 
     private readonly ITenantQueryService _tenantQueryService;
 
@@ -56,7 +58,7 @@ public class ProductService : IProductService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var product = await _tenantQueryService.GetProductAsync(id, cancellationToken);
+        var product = await _tenantQueryService.GetProductAsync(id, cancellationToken: cancellationToken);
 
         return product is null
             ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
@@ -100,6 +102,11 @@ public class ProductService : IProductService
         UpdateProductRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (request.IsActive.HasValue)
+        {
+            return ServiceResult<ProductDto>.Failure(ActiveStateChangeMessage);
+        }
+
         var validationError = await ValidateProductAsync(
             request.Name,
             request.Barcode,
@@ -138,7 +145,15 @@ public class ProductService : IProductService
         PatchProductRequest request,
         CancellationToken cancellationToken = default)
     {
-        var currentProduct = await _tenantQueryService.GetProductAsync(id, cancellationToken);
+        if (request.IsActive.HasValue)
+        {
+            return ServiceResult<ProductDto>.Failure(ActiveStateChangeMessage);
+        }
+
+        var currentProduct = await _tenantQueryService.GetProductAsync(
+            id,
+            includeInactive: true,
+            cancellationToken);
 
         if (currentProduct is null)
         {
@@ -182,11 +197,69 @@ public class ProductService : IProductService
         int id,
         CancellationToken cancellationToken = default)
     {
-        var deleted = await _tenantQueryService.DeleteProductAsync(id, cancellationToken);
+        var result = await DeactivateProductAsync(id, cancellationToken);
 
-        return deleted
-            ? ServiceResult<bool>.Success(true, "Product deleted.")
-            : ServiceResult<bool>.Failure("Product was not found.", ServiceResultFailureType.NotFound);
+        return result.Succeeded
+            ? ServiceResult<bool>.Success(true, result.Message)
+            : ServiceResult<bool>.Failure(result.Message, result.FailureType);
+    }
+
+    public async Task<ServiceResult<ProductDto>> DeactivateProductAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var currentProduct = await _tenantQueryService.GetProductAsync(
+            id,
+            includeInactive: true,
+            cancellationToken);
+
+        if (currentProduct is null)
+        {
+            return ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        if (!currentProduct.IsActive)
+        {
+            return ServiceResult<ProductDto>.Failure("Product is already inactive.", ServiceResultFailureType.Conflict);
+        }
+
+        var product = await _tenantQueryService.SetProductActiveStateAsync(
+            id,
+            isActive: false,
+            cancellationToken: cancellationToken);
+
+        return product is null
+            ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
+            : ServiceResult<ProductDto>.Success(product, "Product deactivated.");
+    }
+
+    public async Task<ServiceResult<ProductDto>> ReactivateProductAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var currentProduct = await _tenantQueryService.GetProductAsync(
+            id,
+            includeInactive: true,
+            cancellationToken);
+
+        if (currentProduct is null)
+        {
+            return ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        if (currentProduct.IsActive)
+        {
+            return ServiceResult<ProductDto>.Failure("Product is already active.", ServiceResultFailureType.Conflict);
+        }
+
+        var product = await _tenantQueryService.SetProductActiveStateAsync(
+            id,
+            isActive: true,
+            cancellationToken: cancellationToken);
+
+        return product is null
+            ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
+            : ServiceResult<ProductDto>.Success(product, "Product reactivated.");
     }
 
     private async Task<ServiceResult<ProductDto>?> ValidateProductAsync(

@@ -13,7 +13,10 @@ public interface ITenantQueryService
         ProductListQuery query,
         CancellationToken cancellationToken = default);
 
-    Task<ProductDto?> GetProductAsync(int id, CancellationToken cancellationToken = default);
+    Task<ProductDto?> GetProductAsync(
+        int id,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default);
 
     Task<bool> CategoryExistsAsync(int categoryId, CancellationToken cancellationToken = default);
 
@@ -28,7 +31,10 @@ public interface ITenantQueryService
 
     Task<ProductDto?> PatchProductAsync(int id, PatchProductRequest request, CancellationToken cancellationToken = default);
 
-    Task<bool> DeleteProductAsync(int id, CancellationToken cancellationToken = default);
+    Task<ProductDto?> SetProductActiveStateAsync(
+        int id,
+        bool isActive,
+        CancellationToken cancellationToken = default);
 
     Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(CancellationToken cancellationToken = default);
 

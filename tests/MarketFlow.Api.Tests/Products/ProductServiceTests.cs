@@ -74,7 +74,8 @@ public sealed class ProductServiceTests
         {
             Search = "milk",
             CategoryId = 2,
-            IsActive = true,
+            IsActive = false,
+            IncludeInactive = true,
             Page = 2,
             PageSize = 10,
             SortBy = "barcode",
@@ -86,6 +87,8 @@ public sealed class ProductServiceTests
         Assert.True(result.Succeeded);
         Assert.True(tenantQueryService.GetProductsWasCalled);
         Assert.Same(query, tenantQueryService.LastProductListQuery);
+        Assert.False(tenantQueryService.LastProductListQuery?.IsActive);
+        Assert.True(tenantQueryService.LastProductListQuery?.IncludeInactive);
         Assert.Equal(2, result.Data?.Page);
         Assert.Equal(10, result.Data?.PageSize);
         Assert.Equal(1, result.Data?.TotalCount);
@@ -265,6 +268,31 @@ public sealed class ProductServiceTests
         Assert.Null(result.Data?.CategoryId);
         Assert.Equal("Milk", result.Data?.Name);
         Assert.Equal("123456789", result.Data?.Barcode);
+    }
+
+    [Fact]
+    public async Task GetProductAsync_WhenProductIsInactive_ReturnsNotFoundByDefault()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            CurrentProduct = new ProductDto
+            {
+                Id = 10,
+                Name = "Milk",
+                Barcode = "123456789",
+                CategoryId = 1,
+                UnitPrice = 1.25m,
+                CostPrice = 0.75m,
+                IsActive = false
+            }
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.GetProductAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Product was not found.", result.Message);
     }
 
     [Fact]
@@ -483,6 +511,152 @@ public sealed class ProductServiceTests
         Assert.Equal(1.50m, result.Data?.UnitPrice);
     }
 
+    [Fact]
+    public async Task PatchProductAsync_RejectsActiveStateChange()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            CurrentProduct = new ProductDto
+            {
+                Id = 10,
+                Name = "Milk",
+                Barcode = "123456789",
+                CategoryId = 1,
+                UnitPrice = 1.25m,
+                CostPrice = 0.75m,
+                IsActive = false
+            }
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            IsActive = true
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Use the product deactivate or reactivate endpoint to change active state.", result.Message);
+        Assert.False(tenantQueryService.PatchProductWasCalled);
+    }
+
+    [Fact]
+    public async Task UpdateProductAsync_RejectsActiveStateChange()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.UpdateProductAsync(10, new UpdateProductRequest
+        {
+            Name = "Milk",
+            Barcode = "123456789",
+            CategoryId = 1,
+            IsActive = false
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Use the product deactivate or reactivate endpoint to change active state.", result.Message);
+        Assert.False(tenantQueryService.UpdateProductWasCalled);
+    }
+
+    [Fact]
+    public async Task DeleteProductAsync_DeactivatesProduct()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.DeleteProductAsync(10);
+
+        Assert.True(result.Succeeded);
+        Assert.True(result.Data);
+        Assert.Equal("Product deactivated.", result.Message);
+        Assert.True(tenantQueryService.SetProductActiveStateWasCalled);
+        Assert.False(tenantQueryService.LastActiveState);
+    }
+
+    [Fact]
+    public async Task DeleteProductAsync_WhenProductDoesNotExist_ReturnsNotFound()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            CurrentProduct = null
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.DeleteProductAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Product was not found.", result.Message);
+        Assert.False(tenantQueryService.SetProductActiveStateWasCalled);
+    }
+
+    [Fact]
+    public async Task DeactivateProductAsync_WhenProductIsAlreadyInactive_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            CurrentProduct = new ProductDto
+            {
+                Id = 10,
+                Name = "Milk",
+                Barcode = "123456789",
+                CategoryId = 1,
+                UnitPrice = 1.25m,
+                CostPrice = 0.75m,
+                IsActive = false
+            }
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.DeactivateProductAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Product is already inactive.", result.Message);
+        Assert.False(tenantQueryService.SetProductActiveStateWasCalled);
+    }
+
+    [Fact]
+    public async Task ReactivateProductAsync_WhenProductIsInactive_ReactivatesProduct()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            CurrentProduct = new ProductDto
+            {
+                Id = 10,
+                Name = "Milk",
+                Barcode = "123456789",
+                CategoryId = 1,
+                UnitPrice = 1.25m,
+                CostPrice = 0.75m,
+                IsActive = false
+            }
+        };
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.ReactivateProductAsync(10);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Product reactivated.", result.Message);
+        Assert.True(result.Data?.IsActive);
+        Assert.True(tenantQueryService.SetProductActiveStateWasCalled);
+        Assert.True(tenantQueryService.LastActiveState);
+    }
+
+    [Fact]
+    public async Task ReactivateProductAsync_WhenProductIsAlreadyActive_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new ProductService(tenantQueryService);
+
+        var result = await service.ReactivateProductAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+        Assert.Equal("Product is already active.", result.Message);
+        Assert.False(tenantQueryService.SetProductActiveStateWasCalled);
+    }
+
     private sealed class RecordingTenantQueryService : ITenantQueryService
     {
         public bool CreateProductWasCalled { get; private set; }
@@ -491,9 +665,13 @@ public sealed class ProductServiceTests
 
         public bool PatchProductWasCalled { get; private set; }
 
+        public bool SetProductActiveStateWasCalled { get; private set; }
+
         public bool GetProductsWasCalled { get; private set; }
 
         public ProductListQuery? LastProductListQuery { get; private set; }
+
+        public bool? LastActiveState { get; private set; }
 
         public bool ThrowBarcodeConflictOnCreate { get; init; }
 
@@ -545,9 +723,22 @@ public sealed class ProductServiceTests
             });
         }
 
-        public Task<ProductDto?> GetProductAsync(int id, CancellationToken cancellationToken = default)
+        public Task<ProductDto?> GetProductAsync(
+            int id,
+            bool includeInactive = false,
+            CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(CurrentProduct?.Id == id ? CurrentProduct : null);
+            if (CurrentProduct?.Id != id)
+            {
+                return Task.FromResult<ProductDto?>(null);
+            }
+
+            if (!includeInactive && !CurrentProduct.IsActive)
+            {
+                return Task.FromResult<ProductDto?>(null);
+            }
+
+            return Task.FromResult<ProductDto?>(CurrentProduct);
         }
 
         public Task<bool> CategoryExistsAsync(int categoryId, CancellationToken cancellationToken = default)
@@ -610,7 +801,8 @@ public sealed class ProductServiceTests
                 Id = id,
                 Name = request.Name,
                 Barcode = request.Barcode,
-                CategoryId = request.CategoryId
+                CategoryId = request.CategoryId,
+                IsActive = CurrentProduct?.IsActive ?? true
             });
         }
 
@@ -645,9 +837,21 @@ public sealed class ProductServiceTests
             });
         }
 
-        public Task<bool> DeleteProductAsync(int id, CancellationToken cancellationToken = default)
+        public Task<ProductDto?> SetProductActiveStateAsync(
+            int id,
+            bool isActive,
+            CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            SetProductActiveStateWasCalled = true;
+            LastActiveState = isActive;
+
+            if (CurrentProduct is null || CurrentProduct.Id != id)
+            {
+                return Task.FromResult<ProductDto?>(null);
+            }
+
+            CurrentProduct.IsActive = isActive;
+            return Task.FromResult<ProductDto?>(CurrentProduct);
         }
 
         public Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(CancellationToken cancellationToken = default)

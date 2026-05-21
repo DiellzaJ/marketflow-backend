@@ -81,10 +81,42 @@ public class ProductsController(IProductService productService) : ControllerBase
     {
         var result = await productService.DeleteProductAsync(id, cancellationToken);
 
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return result.Succeeded ? Ok(result) : ProductStateFailure(result);
+    }
+
+    [HttpPost("{id:int}/deactivate")]
+    [Authorize(Policy = AuthorizationPolicies.DeleteProducts)]
+    public async Task<ActionResult<ServiceResult<ProductDto>>> DeactivateAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await productService.DeactivateProductAsync(id, cancellationToken);
+
+        return result.Succeeded ? Ok(result) : ProductFailure(result);
+    }
+
+    [HttpPost("{id:int}/reactivate")]
+    [Authorize(Policy = AuthorizationPolicies.UpdateProducts)]
+    public async Task<ActionResult<ServiceResult<ProductDto>>> ReactivateAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await productService.ReactivateProductAsync(id, cancellationToken);
+
+        return result.Succeeded ? Ok(result) : ProductFailure(result);
     }
 
     private ActionResult<ServiceResult<ProductDto>> ProductFailure(ServiceResult<ProductDto> result)
+    {
+        return result.FailureType switch
+        {
+            ServiceResultFailureType.NotFound => NotFound(result),
+            ServiceResultFailureType.Conflict => Conflict(result),
+            _ => BadRequest(result)
+        };
+    }
+
+    private ActionResult<ServiceResult<bool>> ProductStateFailure(ServiceResult<bool> result)
     {
         return result.FailureType switch
         {
