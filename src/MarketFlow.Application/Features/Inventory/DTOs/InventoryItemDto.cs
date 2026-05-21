@@ -12,6 +12,8 @@ public class InventoryItemDto
 
     public string MarketName { get; set; } = string.Empty;
 
+    public int? DepartmentId { get; set; }
+
     public int Quantity { get; set; }
 
     public int ReservedQuantity { get; set; }

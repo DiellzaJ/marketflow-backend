@@ -917,7 +917,7 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
-        public Task<InventoryItemDto> CreateInventoryItemAsync(
+        public Task<InventoryItemDto?> CreateInventoryItemAsync(
             CreateInventoryItemRequest request,
             int? updatedByUserId,
             CancellationToken cancellationToken = default)

@@ -54,37 +54,37 @@ public static class GlobalDataSeeder
             {
                 Name = "RootAdmin",
                 Description = "Platform administrator",
-                Permissions = "{\"all\": true}"
+                Permissions = "{\"company\": true, \"companies:read\": true, \"companies:create\": true, \"companies:update\": true, \"companies:delete\": true}"
             },
             new Role
             {
                 Name = "CompanyAdmin",
                 Description = "Company-level administrator",
-                Permissions = "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"inventory:delete\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"
+                Permissions = "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"
             },
             new Role
             {
                 Name = "MainOperator",
                 Description = "Market-level manager",
-                Permissions = "{\"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"inventory:delete\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"
+                Permissions = "{\"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"
             },
             new Role
             {
                 Name = "DepartmentManager",
                 Description = "Department-level manager",
-                Permissions = "{\"products:read\": true, \"inventory:create\": true, \"inventory:read\": true, \"inventory:update\": true, \"inventory:delete\": true}"
+                Permissions = "{\"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"
             },
             new Role
             {
                 Name = "InventoryEmployee",
                 Description = "Stock and inventory employee",
-                Permissions = "{\"products:read\": true, \"inventory:read\": true, \"inventory:update\": true}"
+                Permissions = "{\"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true}"
             },
             new Role
             {
                 Name = "Seller",
                 Description = "Creates sales and handles POS operations",
-                Permissions = "{\"products:read\": true, \"sales:create\": true, \"inventory:read\": true, \"inventory:update\": true}"
+                Permissions = "{\"products:read\": true, \"sales:create\": true, \"inventory:read\": true}"
             }
         };
 
