@@ -40,6 +40,21 @@ For companies with large user counts, monitor the user list assignment lookup qu
 
 Controller tests cover the user API response shape for assignment summaries. Add database-backed integration or E2E coverage when a test Postgres tenant schema is available in CI.
 
+## Products API
+
+Product removal uses soft-deactivation. `DELETE /api/products/{id}` remains supported for existing clients, but it marks the product inactive instead of deleting the row. New clients should prefer the explicit state endpoints:
+
+- `POST /api/products/{id}/deactivate`
+- `POST /api/products/{id}/reactivate`
+
+Default product list and detail responses only return active products. Product list callers can opt into inactive data with `includeInactive=true`, or request only inactive products with `isActive=false`. Generic product `PUT` and `PATCH` requests do not change `IsActive`; use the explicit deactivate/reactivate endpoints for state transitions.
+
+## Product Persistence Notes
+
+Tenant product rows use `is_active` as soft-delete state. This preserves existing foreign-key references from inventory, purchase items, and sale items, so historical operational data remains valid after a product is deactivated.
+
+Product active-state updates are conditional (`is_active <> target_state`) so concurrent deactivate/reactivate requests can distinguish an actual state transition from an already-active or already-inactive conflict.
+
 An opt-in live smoke test covers the graceful fallback path for a tenant schema that is present but missing `staff_assignments`. To run it, point `MARKETFLOW_TEST_DB_CONNECTION_STRING` at a disposable Postgres database that has the global MarketFlow migrations applied, then run the normal test command:
 
 ```bash

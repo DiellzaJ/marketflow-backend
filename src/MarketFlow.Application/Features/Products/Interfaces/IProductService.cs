@@ -27,6 +27,14 @@ public interface IProductService
         PatchProductRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<ProductDto>> DeactivateProductAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<ProductDto>> ReactivateProductAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<bool>> DeleteProductAsync(
         int id,
         CancellationToken cancellationToken = default);
