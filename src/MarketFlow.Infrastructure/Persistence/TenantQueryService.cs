@@ -453,7 +453,7 @@ public sealed class TenantQueryService : ITenantQueryService
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
-        var scopeCondition = BuildInventoryScopeCondition(scope, "AND");
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.inventory
@@ -483,7 +483,7 @@ public sealed class TenantQueryService : ITenantQueryService
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
-        var scopeCondition = BuildInventoryScopeCondition(scope, "AND");
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
         await using var command = await CreateCommandAsync($"""
             DELETE FROM {schemaName}.inventory
@@ -504,7 +504,7 @@ public sealed class TenantQueryService : ITenantQueryService
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
-        var scopeCondition = BuildInventoryScopeCondition(scope, "AND");
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.inventory
@@ -930,13 +930,16 @@ public sealed class TenantQueryService : ITenantQueryService
             : null;
     }
 
-    private static string BuildInventoryScopeCondition(InventoryScope scope, string prefix = "WHERE")
+    private static string BuildInventoryScopeCondition(
+        InventoryScope scope,
+        string prefix = "WHERE",
+        string columnQualifier = "i.")
     {
         return scope.Kind switch
         {
             InventoryScopeKind.Company => string.Empty,
-            InventoryScopeKind.Market => $"{prefix} i.market_id = @scope_market_id",
-            InventoryScopeKind.Department => $"{prefix} i.market_id = @scope_market_id AND i.department_id = @scope_department_id",
+            InventoryScopeKind.Market => $"{prefix} {columnQualifier}market_id = @scope_market_id",
+            InventoryScopeKind.Department => $"{prefix} {columnQualifier}market_id = @scope_market_id AND {columnQualifier}department_id = @scope_department_id",
             _ => $"{prefix} FALSE"
         };
     }
