@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -15,7 +16,8 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
     private const int SchemaSeparatorLength = 1;
 
     private static readonly SemaphoreSlim RequiredRolesLock = new(1, 1);
-    private static readonly HashSet<string> RequiredRolesEnsuredConnectionStrings = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, byte> RequiredRolesEnsuredConnectionStrings =
+        new(StringComparer.Ordinal);
 
     private static readonly IReadOnlyDictionary<string, (string Description, string Permissions)> RequiredRoles =
         new Dictionary<string, (string Description, string Permissions)>
@@ -82,7 +84,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
 
     public async Task EnsureRequiredRolesAsync(CancellationToken cancellationToken = default)
     {
-        if (RequiredRolesEnsuredConnectionStrings.Contains(_options.ConnectionString))
+        if (RequiredRolesEnsuredConnectionStrings.ContainsKey(_options.ConnectionString))
         {
             return;
         }
@@ -91,7 +93,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
 
         try
         {
-            if (RequiredRolesEnsuredConnectionStrings.Contains(_options.ConnectionString))
+            if (RequiredRolesEnsuredConnectionStrings.ContainsKey(_options.ConnectionString))
             {
                 return;
             }
@@ -115,7 +117,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                     new NpgsqlParameter("permissions", role.Value.Permissions));
             }
 
-            RequiredRolesEnsuredConnectionStrings.Add(_options.ConnectionString);
+            RequiredRolesEnsuredConnectionStrings.TryAdd(_options.ConnectionString, 0);
         }
         finally
         {
