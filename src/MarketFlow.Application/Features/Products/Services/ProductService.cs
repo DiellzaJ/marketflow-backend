@@ -9,6 +9,7 @@ namespace MarketFlow.Application.Features.Products.Services;
 public class ProductService : IProductService
 {
     private const int MaxPageSize = 100;
+    private const int MaxNameLength = 200;
 
     private readonly ITenantQueryService _tenantQueryService;
 
@@ -57,7 +58,7 @@ public class ProductService : IProductService
         var product = await _tenantQueryService.GetProductAsync(id, cancellationToken);
 
         return product is null
-            ? ServiceResult<ProductDto>.Failure("Product was not found.")
+            ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
             : ServiceResult<ProductDto>.Success(product);
     }
 
@@ -65,20 +66,22 @@ public class ProductService : IProductService
         CreateProductRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Name))
+        var validationError = await ValidateProductAsync(
+            request.Name,
+            request.Barcode,
+            request.CategoryId,
+            request.UnitPrice,
+            request.CostPrice,
+            excludedProductId: null,
+            cancellationToken);
+
+        if (validationError is not null)
         {
-            return ServiceResult<ProductDto>.Failure("Product name is required.");
+            return validationError;
         }
 
-        if (string.IsNullOrWhiteSpace(request.Barcode))
-        {
-            return ServiceResult<ProductDto>.Failure("Barcode is required.");
-        }
-
-        if (!request.CategoryId.HasValue)
-        {
-            return ServiceResult<ProductDto>.Failure("Category is required.");
-        }
+        request.Name = request.Name.Trim();
+        request.Barcode = request.Barcode?.Trim();
 
         var product = await _tenantQueryService.CreateProductAsync(request, cancellationToken);
         return ServiceResult<ProductDto>.Success(product, "Product created.");
@@ -89,25 +92,27 @@ public class ProductService : IProductService
         UpdateProductRequest request,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Name))
+        var validationError = await ValidateProductAsync(
+            request.Name,
+            request.Barcode,
+            request.CategoryId,
+            request.UnitPrice,
+            request.CostPrice,
+            id,
+            cancellationToken);
+
+        if (validationError is not null)
         {
-            return ServiceResult<ProductDto>.Failure("Product name is required.");
+            return validationError;
         }
 
-        if (string.IsNullOrWhiteSpace(request.Barcode))
-        {
-            return ServiceResult<ProductDto>.Failure("Barcode is required.");
-        }
-
-        if (!request.CategoryId.HasValue)
-        {
-            return ServiceResult<ProductDto>.Failure("Category is required.");
-        }
+        request.Name = request.Name.Trim();
+        request.Barcode = request.Barcode?.Trim();
 
         var product = await _tenantQueryService.UpdateProductAsync(id, request, cancellationToken);
 
         return product is null
-            ? ServiceResult<ProductDto>.Failure("Product was not found.")
+            ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
             : ServiceResult<ProductDto>.Success(product, "Product updated.");
     }
 
@@ -119,7 +124,7 @@ public class ProductService : IProductService
         var product = await _tenantQueryService.PatchProductAsync(id, request, cancellationToken);
 
         return product is null
-            ? ServiceResult<ProductDto>.Failure("Product was not found.")
+            ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
             : ServiceResult<ProductDto>.Success(product, "Product updated.");
     }
 
@@ -131,6 +136,56 @@ public class ProductService : IProductService
 
         return deleted
             ? ServiceResult<bool>.Success(true, "Product deleted.")
-            : ServiceResult<bool>.Failure("Product was not found.");
+            : ServiceResult<bool>.Failure("Product was not found.", ServiceResultFailureType.NotFound);
+    }
+
+    private async Task<ServiceResult<ProductDto>?> ValidateProductAsync(
+        string name,
+        string? barcode,
+        int? categoryId,
+        decimal unitPrice,
+        decimal costPrice,
+        int? excludedProductId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return ServiceResult<ProductDto>.Failure("Product name is required.");
+        }
+
+        if (name.Trim().Length > MaxNameLength)
+        {
+            return ServiceResult<ProductDto>.Failure($"Product name cannot exceed {MaxNameLength} characters.");
+        }
+
+        if (unitPrice < 0)
+        {
+            return ServiceResult<ProductDto>.Failure("Unit price cannot be negative.");
+        }
+
+        if (costPrice < 0)
+        {
+            return ServiceResult<ProductDto>.Failure("Cost price cannot be negative.");
+        }
+
+        if (string.IsNullOrWhiteSpace(barcode))
+        {
+            return ServiceResult<ProductDto>.Failure("Barcode is required.");
+        }
+
+        if (await _tenantQueryService.ProductBarcodeExistsAsync(barcode.Trim(), excludedProductId, cancellationToken))
+        {
+            return ServiceResult<ProductDto>.Failure(
+                "Barcode is already used by another product.",
+                ServiceResultFailureType.Conflict);
+        }
+
+        if (categoryId.HasValue &&
+            !await _tenantQueryService.CategoryExistsAsync(categoryId.Value, cancellationToken))
+        {
+            return ServiceResult<ProductDto>.Failure("Category was not found.");
+        }
+
+        return null;
     }
 }

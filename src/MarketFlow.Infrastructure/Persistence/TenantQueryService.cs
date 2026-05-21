@@ -116,6 +116,45 @@ public sealed class TenantQueryService : ITenantQueryService
         return await ReadProductAsync(command, cancellationToken);
     }
 
+    public async Task<bool> CategoryExistsAsync(
+        int categoryId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.categories
+                WHERE id = @category_id AND is_active = TRUE
+            );
+            """, cancellationToken);
+        command.Parameters.AddWithValue("category_id", categoryId);
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    public async Task<bool> ProductBarcodeExistsAsync(
+        string barcode,
+        int? excludedProductId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.products
+                WHERE barcode = @barcode
+                  AND (@excluded_product_id IS NULL OR id <> @excluded_product_id)
+            );
+            """, cancellationToken);
+        command.Parameters.AddWithValue("barcode", barcode.Trim());
+        command.Parameters.AddWithValue("excluded_product_id", DbValue(excludedProductId));
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
     public async Task<ProductDto> CreateProductAsync(
         CreateProductRequest request,
         CancellationToken cancellationToken = default)

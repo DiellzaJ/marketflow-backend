@@ -43,7 +43,7 @@ public class ProductsController(IProductService productService) : ControllerBase
 
         if (!result.Succeeded)
         {
-            return BadRequest(result);
+            return ProductFailure(result);
         }
 
         return CreatedAtRoute(GetProductByIdRouteName, new { id = result.Data!.Id }, result);
@@ -58,7 +58,7 @@ public class ProductsController(IProductService productService) : ControllerBase
     {
         var result = await productService.UpdateProductAsync(id, request, cancellationToken);
 
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return result.Succeeded ? Ok(result) : ProductFailure(result);
     }
 
     [HttpPatch("{id:int}")]
@@ -70,7 +70,7 @@ public class ProductsController(IProductService productService) : ControllerBase
     {
         var result = await productService.PatchProductAsync(id, request, cancellationToken);
 
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return result.Succeeded ? Ok(result) : ProductFailure(result);
     }
 
     [HttpDelete("{id:int}")]
@@ -82,5 +82,15 @@ public class ProductsController(IProductService productService) : ControllerBase
         var result = await productService.DeleteProductAsync(id, cancellationToken);
 
         return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
+    private ActionResult<ServiceResult<ProductDto>> ProductFailure(ServiceResult<ProductDto> result)
+    {
+        return result.FailureType switch
+        {
+            ServiceResultFailureType.NotFound => NotFound(result),
+            ServiceResultFailureType.Conflict => Conflict(result),
+            _ => BadRequest(result)
+        };
     }
 }
