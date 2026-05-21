@@ -9,6 +9,35 @@ namespace MarketFlow.Api.Tests.Products;
 public sealed class ProductsControllerTests
 {
     [Fact]
+    public async Task GetAsync_ReturnsOkWithPagedProducts()
+    {
+        var product = new ProductDto
+        {
+            Id = 42,
+            Name = "Milk",
+            CategoryId = 1
+        };
+
+        var query = new ProductListQuery
+        {
+            Search = "milk",
+            Page = 2,
+            PageSize = 10
+        };
+
+        var controller = new ProductsController(new StubProductService(product));
+
+        var response = await controller.GetAsync(query, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var result = Assert.IsType<ServiceResult<PagedResult<ProductDto>>>(ok.Value);
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, result.Data?.Page);
+        Assert.Equal(10, result.Data?.PageSize);
+        Assert.Same(product, Assert.Single(result.Data!.Items));
+    }
+
+    [Fact]
     public async Task CreateAsync_ReturnsCreatedAtNamedProductRoute()
     {
         var product = new ProductDto
@@ -43,10 +72,18 @@ public sealed class ProductsControllerTests
             _product = product;
         }
 
-        public Task<ServiceResult<IReadOnlyCollection<ProductDto>>> GetProductsAsync(
+        public Task<ServiceResult<PagedResult<ProductDto>>> GetProductsAsync(
+            ProductListQuery query,
             CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            return Task.FromResult(ServiceResult<PagedResult<ProductDto>>.Success(new PagedResult<ProductDto>
+            {
+                Items = [_product],
+                Page = query.Page,
+                PageSize = query.PageSize,
+                TotalCount = 1,
+                TotalPages = 1
+            }));
         }
 
         public Task<ServiceResult<ProductDto>> GetProductAsync(

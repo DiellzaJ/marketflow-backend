@@ -1,5 +1,6 @@
 using System.Data;
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
@@ -24,11 +25,28 @@ public sealed class TenantQueryService : ITenantQueryService
         _tenantProvider = tenantProvider;
     }
 
-    public async Task<IReadOnlyCollection<ProductDto>> GetProductsAsync(
+    public async Task<PagedResult<ProductDto>> GetProductsAsync(
+        ProductListQuery query,
         CancellationToken cancellationToken = default)
     {
         var schemaName = QuoteIdentifier(_tenantProvider.GetCurrentSchemaName());
         var products = new List<ProductDto>();
+        var whereClause = BuildProductWhereClause(query);
+        var sortColumn = GetProductSortColumn(query.SortBy);
+        var sortDirection = string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase)
+            ? "DESC"
+            : "ASC";
+        var offset = (query.Page - 1) * query.PageSize;
+
+        await using var countCommand = await CreateCommandAsync($"""
+            SELECT COUNT(*)
+            FROM {schemaName}.products p
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            {whereClause};
+            """, cancellationToken);
+
+        AddProductListParameters(countCommand, query);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
 
         await using var command = await CreateCommandAsync($"""
             SELECT p.id,
@@ -44,9 +62,14 @@ public sealed class TenantQueryService : ITenantQueryService
                    p.is_active
             FROM {schemaName}.products p
             LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
-            WHERE p.is_active = TRUE
-            ORDER BY p.name;
+            {whereClause}
+            ORDER BY {sortColumn} {sortDirection}, p.id ASC
+            LIMIT @page_size OFFSET @offset;
             """, cancellationToken);
+
+        AddProductListParameters(command, query);
+        command.Parameters.AddWithValue("page_size", query.PageSize);
+        command.Parameters.AddWithValue("offset", offset);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -55,7 +78,14 @@ public sealed class TenantQueryService : ITenantQueryService
             products.Add(ReadProduct(reader));
         }
 
-        return products;
+        return new PagedResult<ProductDto>
+        {
+            Items = products,
+            Page = query.Page,
+            PageSize = query.PageSize,
+            TotalCount = totalCount,
+            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
+        };
     }
 
     public async Task<ProductDto?> GetProductAsync(
@@ -720,6 +750,109 @@ public sealed class TenantQueryService : ITenantQueryService
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
         return await reader.ReadAsync(cancellationToken) ? ReadProduct(reader) : null;
+    }
+
+    private static string BuildProductWhereClause(ProductListQuery query)
+    {
+        var conditions = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            conditions.Add("(p.name ILIKE @search ESCAPE '\\' OR p.barcode ILIKE @search ESCAPE '\\')");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Name))
+        {
+            conditions.Add("p.name ILIKE @name ESCAPE '\\'");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Barcode))
+        {
+            conditions.Add("p.barcode ILIKE @barcode ESCAPE '\\'");
+        }
+
+        if (query.CategoryId.HasValue)
+        {
+            conditions.Add("p.category_id = @category_id");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Category))
+        {
+            conditions.Add("c.name ILIKE @category ESCAPE '\\'");
+        }
+
+        if (query.IsActive.HasValue)
+        {
+            conditions.Add("p.is_active = @is_active");
+        }
+        else
+        {
+            conditions.Add("p.is_active = TRUE");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static void AddProductListParameters(NpgsqlCommand command, ProductListQuery query)
+    {
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            command.Parameters.AddWithValue("search", LikePattern(query.Search));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Name))
+        {
+            command.Parameters.AddWithValue("name", LikePattern(query.Name));
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Barcode))
+        {
+            command.Parameters.AddWithValue("barcode", LikePattern(query.Barcode));
+        }
+
+        if (query.CategoryId.HasValue)
+        {
+            command.Parameters.AddWithValue("category_id", query.CategoryId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Category))
+        {
+            command.Parameters.AddWithValue("category", LikePattern(query.Category));
+        }
+
+        if (query.IsActive.HasValue)
+        {
+            command.Parameters.AddWithValue("is_active", query.IsActive.Value);
+        }
+    }
+
+    private static string GetProductSortColumn(string? sortBy)
+    {
+        return sortBy?.Trim() switch
+        {
+            { } value when string.Equals(value, "id", StringComparison.OrdinalIgnoreCase) => "p.id",
+            { } value when string.Equals(value, "barcode", StringComparison.OrdinalIgnoreCase) => "p.barcode",
+            { } value when string.Equals(value, "category", StringComparison.OrdinalIgnoreCase) => "c.name",
+            { } value when string.Equals(value, "categoryName", StringComparison.OrdinalIgnoreCase) => "c.name",
+            { } value when string.Equals(value, "unitPrice", StringComparison.OrdinalIgnoreCase) => "p.unit_price",
+            { } value when string.Equals(value, "costPrice", StringComparison.OrdinalIgnoreCase) => "p.cost_price",
+            { } value when string.Equals(value, "taxRate", StringComparison.OrdinalIgnoreCase) => "p.tax_rate",
+            { } value when string.Equals(value, "minStockAlert", StringComparison.OrdinalIgnoreCase) => "p.min_stock_alert",
+            { } value when string.Equals(value, "isActive", StringComparison.OrdinalIgnoreCase) => "p.is_active",
+            _ => "p.name"
+        };
+    }
+
+    private static string LikePattern(string value)
+    {
+        var escaped = value.Trim()
+            .Replace(@"\", @"\\", StringComparison.Ordinal)
+            .Replace("%", @"\%", StringComparison.Ordinal)
+            .Replace("_", @"\_", StringComparison.Ordinal);
+
+        return $"%{escaped}%";
     }
 
     private static ProductDto ReadProduct(NpgsqlDataReader reader)
