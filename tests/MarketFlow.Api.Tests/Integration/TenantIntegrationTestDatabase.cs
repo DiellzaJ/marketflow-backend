@@ -9,6 +9,10 @@ namespace MarketFlow.Api.Tests.Integration;
 
 public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
 {
+    private const int MaxPostgresIdentifierLength = 63;
+    private const int SchemaSuffixLength = 16;
+    private const int SchemaSeparatorLength = 1;
+
     private static readonly IReadOnlyDictionary<string, (string Description, string Permissions)> RequiredRoles =
         new Dictionary<string, (string Description, string Permissions)>
     {
@@ -52,10 +56,21 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             sanitizedPrefix = "mf_test";
         }
 
-        var suffix = Guid.NewGuid().ToString("N")[..16];
-        var schemaName = $"{sanitizedPrefix}_{suffix}";
+        var maxPrefixLength = MaxPostgresIdentifierLength - SchemaSeparatorLength - SchemaSuffixLength;
 
-        return schemaName.Length <= 63 ? schemaName : schemaName[..63].TrimEnd('_');
+        if (sanitizedPrefix.Length > maxPrefixLength)
+        {
+            sanitizedPrefix = sanitizedPrefix[..maxPrefixLength].TrimEnd('_');
+        }
+
+        if (string.IsNullOrWhiteSpace(sanitizedPrefix))
+        {
+            sanitizedPrefix = "mf_test";
+        }
+
+        var suffix = Guid.NewGuid().ToString("N")[..SchemaSuffixLength];
+
+        return $"{sanitizedPrefix}_{suffix}";
     }
 
     public async Task EnsureRequiredRolesAsync(CancellationToken cancellationToken = default)
@@ -84,8 +99,10 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         string? schemaName = null,
         string? name = null,
         bool isActive = true,
+        bool dropSchemaOnDispose = false,
         CancellationToken cancellationToken = default)
     {
+        var generatedSchemaName = string.IsNullOrWhiteSpace(schemaName);
         schemaName ??= CreateUniqueSchemaName();
         name ??= $"Tenant Test {schemaName}";
 
@@ -119,7 +136,11 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             new NpgsqlParameter("is_active", isActive));
 
         _createdCompanyIds.Add(companyId);
-        _createdSchemaNames.Add(schemaName);
+
+        if (generatedSchemaName || dropSchemaOnDispose)
+        {
+            _createdSchemaNames.Add(schemaName);
+        }
 
         return new TenantTestCompany(companyId, name, schemaName);
     }

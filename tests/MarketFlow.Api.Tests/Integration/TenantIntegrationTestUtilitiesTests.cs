@@ -11,15 +11,19 @@ public sealed class TenantIntegrationTestUtilitiesTests
     {
         var database = new TenantIntegrationTestDatabase(new TenantIntegrationTestOptions
         {
-            ConnectionString = "Host=localhost;Database=marketflow_tests;Username=postgres;Password=postgres"
+            ConnectionString = "Host=test-host;Database=test-db;Username=test-user"
         });
 
         var firstSchemaName = database.CreateUniqueSchemaName("Tenant-Isolation");
         var secondSchemaName = database.CreateUniqueSchemaName("Tenant-Isolation");
+        var longPrefixSchemaName = database.CreateUniqueSchemaName(
+            "tenant_isolation_schema_name_with_a_very_long_prefix_that_must_be_truncated");
 
         Assert.NotEqual(firstSchemaName, secondSchemaName);
         Assert.Matches("^[a-z][a-z0-9_]{0,62}$", firstSchemaName);
         Assert.Matches("^[a-z][a-z0-9_]{0,62}$", secondSchemaName);
+        Assert.Matches("^[a-z][a-z0-9_]*_[a-f0-9]{16}$", longPrefixSchemaName);
+        Assert.True(longPrefixSchemaName.Length <= 63);
     }
 
     [Fact]
@@ -27,7 +31,7 @@ public sealed class TenantIntegrationTestUtilitiesTests
     {
         var database = new TenantIntegrationTestDatabase(new TenantIntegrationTestOptions
         {
-            ConnectionString = "Host=localhost;Database=marketflow_tests;Username=postgres;Password=postgres",
+            ConnectionString = "Host=test-host;Database=test-db;Username=test-user",
             JwtIssuer = "MarketFlow.Tests",
             JwtAudience = "MarketFlow.Tests",
             JwtSecret = "MarketFlow integration tests use this deterministic signing key."
@@ -78,7 +82,9 @@ public sealed class TenantIntegrationTestUtilitiesTests
             await database.EnsureRequiredRolesAsync();
             schemaName = database.CreateUniqueSchemaName("tenant_utilities");
 
-            var company = await database.CreateCompanyAsync(schemaName);
+            var company = await database.CreateCompanyAsync(
+                schemaName,
+                dropSchemaOnDispose: true);
             var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
             var category = await database.InsertCategoryAsync(company.SchemaName, "Utilities Category");
             var product = await database.InsertProductAsync(
