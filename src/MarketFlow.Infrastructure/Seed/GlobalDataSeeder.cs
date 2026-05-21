@@ -54,7 +54,7 @@ public static class GlobalDataSeeder
             {
                 Name = "RootAdmin",
                 Description = "Platform administrator",
-                Permissions = "{\"company\": true, \"companies:read\": true, \"companies:create\": true, \"companies:update\": true, \"companies:delete\": true}"
+                Permissions = "{\"company\": true, \"companies:read\": true, \"companies:create\": true, \"companies:update\": true, \"companies:delete\": true, \"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true}"
             },
             new Role
             {

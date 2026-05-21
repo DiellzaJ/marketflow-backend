@@ -10,7 +10,11 @@ public sealed class PermissionEvaluatorTests
             "companies:read": true,
             "companies:create": true,
             "companies:update": true,
-            "companies:delete": true
+            "companies:delete": true,
+            "users:read": true,
+            "users:create": true,
+            "users:update": true,
+            "users:delete": true
         }
         """;
 
@@ -78,6 +82,7 @@ public sealed class PermissionEvaluatorTests
     {
         { """{"all": true}""", "users", "delete" },
         { RootAdminPermissions, "companies", "delete" },
+        { RootAdminPermissions, "users", "delete" },
         { CompanyAdminPermissions, "users", "create" },
         { CompanyAdminPermissions, "products", "delete" },
         { MainOperatorPermissions, "products", "update" },

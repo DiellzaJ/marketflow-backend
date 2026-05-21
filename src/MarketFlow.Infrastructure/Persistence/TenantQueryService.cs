@@ -862,15 +862,20 @@ public sealed class TenantQueryService : ITenantQueryService
         string quotedSchemaName,
         CancellationToken cancellationToken)
     {
-        var role = RoleAssignmentRules.NormalizeRoleName(_currentUserService.Role ?? string.Empty);
+        if (_currentUserService.UserId is not { } userId)
+        {
+            return InventoryScope.None;
+        }
+
+        var role = RoleAssignmentRules.NormalizeRoleName(
+            await GetCurrentPersistedRoleNameAsync(userId, cancellationToken) ?? string.Empty);
 
         if (string.Equals(role, RoleAssignmentRules.CompanyAdmin, StringComparison.OrdinalIgnoreCase))
         {
             return InventoryScope.Company;
         }
 
-        if (string.Equals(role, RoleAssignmentRules.RootAdmin, StringComparison.OrdinalIgnoreCase) ||
-            _currentUserService.UserId is not { } userId)
+        if (string.Equals(role, RoleAssignmentRules.RootAdmin, StringComparison.OrdinalIgnoreCase))
         {
             return InventoryScope.None;
         }
@@ -903,6 +908,17 @@ public sealed class TenantQueryService : ITenantQueryService
         }
 
         return InventoryScope.None;
+    }
+
+    private async Task<string?> GetCurrentPersistedRoleNameAsync(
+        int userId,
+        CancellationToken cancellationToken)
+    {
+        return await _dbContext.Users
+            .AsNoTracking()
+            .Where(x => x.Id == userId && x.IsActive && x.Company.IsActive)
+            .Select(x => x.Role.Name)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<StaffAssignmentScope?> GetCurrentStaffAssignmentAsync(

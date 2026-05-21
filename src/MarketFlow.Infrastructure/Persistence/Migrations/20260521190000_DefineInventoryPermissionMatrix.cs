@@ -20,7 +20,11 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                     "companies:read": true,
                     "companies:create": true,
                     "companies:update": true,
-                    "companies:delete": true
+                    "companies:delete": true,
+                    "users:read": true,
+                    "users:create": true,
+                    "users:update": true,
+                    "users:delete": true
                 }'::jsonb
                 WHERE name = 'RootAdmin';
 
