@@ -1,11 +1,12 @@
 using System.Text.Json;
+using MarketFlow.Infrastructure.MultiTenancy;
+using Npgsql;
 
 namespace MarketFlow.Api.Middleware;
 
 public class ExceptionHandlingMiddleware(
     RequestDelegate next,
-    ILogger<ExceptionHandlingMiddleware> logger,
-    IHostEnvironment environment)
+    ILogger<ExceptionHandlingMiddleware> logger)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -15,9 +16,11 @@ public class ExceptionHandlingMiddleware(
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Unhandled exception while processing request.");
+            var statusCode = GetStatusCode(exception);
 
-            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+            LogException(exception, statusCode);
+
+            context.Response.StatusCode = statusCode;
             context.Response.ContentType = "application/json";
 
             var payload = JsonSerializer.Serialize(CreateErrorResponse(exception));
@@ -28,18 +31,44 @@ public class ExceptionHandlingMiddleware(
 
     private object CreateErrorResponse(Exception exception)
     {
-        if (environment.IsDevelopment())
-        {
-            return new
-            {
-                message = "An unexpected error occurred.",
-                detail = exception.Message
-            };
-        }
-
         return new
         {
-            message = "An unexpected error occurred."
+            message = GetSafeMessage(exception)
+        };
+    }
+
+    private static int GetStatusCode(Exception exception)
+    {
+        return exception switch
+        {
+            UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
+            TenantAccessException => StatusCodes.Status403Forbidden,
+            _ => StatusCodes.Status500InternalServerError
+        };
+    }
+
+    private void LogException(Exception exception, int statusCode)
+    {
+        if (statusCode >= StatusCodes.Status500InternalServerError)
+        {
+            logger.LogError(exception, "Unhandled exception while processing request.");
+            return;
+        }
+
+        logger.LogWarning(
+            "Request rejected with status code {StatusCode}: {Message}",
+            statusCode,
+            exception.Message);
+    }
+
+    private static string GetSafeMessage(Exception exception)
+    {
+        return exception switch
+        {
+            UnauthorizedAccessException => "Unauthorized.",
+            TenantAccessException => "Forbidden.",
+            PostgresException => "An unexpected error occurred.",
+            _ => "An unexpected error occurred."
         };
     }
 }
