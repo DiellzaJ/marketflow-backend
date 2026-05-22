@@ -250,14 +250,15 @@ public class InventoryService : IInventoryService
     {
         request.Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
 
-        if (request.FromInventoryId <= 0 || request.ToInventoryId <= 0)
+        if (request.ProductId <= 0 || request.FromMarketId <= 0 || request.ToMarketId <= 0)
         {
-            return ServiceResult<bool>.Failure("Source and destination inventory are required.");
+            return ServiceResult<bool>.Failure("Product, source market, and destination market are required.");
         }
 
-        if (request.FromInventoryId == request.ToInventoryId)
+        if (request.FromMarketId == request.ToMarketId &&
+            request.FromDepartmentId == request.ToDepartmentId)
         {
-            return ServiceResult<bool>.Failure("Source and destination inventory must be different.");
+            return ServiceResult<bool>.Failure("Source and destination must be different.");
         }
 
         if (request.Quantity <= 0)

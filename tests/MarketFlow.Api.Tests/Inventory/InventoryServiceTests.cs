@@ -223,6 +223,54 @@ public sealed class InventoryServiceTests
         Assert.True(tenantQueryService.AdjustInventoryWasCalled);
     }
 
+    [Fact]
+    public async Task TransferInventoryAsync_PassesLocationTransferToTenantQueryService()
+    {
+        var tenantQueryService = new RecordingTenantQueryService { TransferResult = true };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.TransferInventoryAsync(new TransferInventoryRequest
+        {
+            ProductId = 10,
+            FromMarketId = 1,
+            FromDepartmentId = 2,
+            ToMarketId = 3,
+            ToDepartmentId = null,
+            Quantity = 4,
+            Note = " Restock transfer "
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.True(tenantQueryService.TransferInventoryWasCalled);
+        Assert.Equal(10, tenantQueryService.LastTransferRequest?.ProductId);
+        Assert.Equal(1, tenantQueryService.LastTransferRequest?.FromMarketId);
+        Assert.Equal(2, tenantQueryService.LastTransferRequest?.FromDepartmentId);
+        Assert.Equal(3, tenantQueryService.LastTransferRequest?.ToMarketId);
+        Assert.Null(tenantQueryService.LastTransferRequest?.ToDepartmentId);
+        Assert.Equal(4, tenantQueryService.LastTransferRequest?.Quantity);
+        Assert.Equal("Restock transfer", tenantQueryService.LastTransferRequest?.Note);
+        Assert.Equal(1, tenantQueryService.LastTransferUpdatedByUserId);
+    }
+
+    [Fact]
+    public async Task TransferInventoryAsync_RejectsInvalidTransfer()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.TransferInventoryAsync(new TransferInventoryRequest
+        {
+            ProductId = 10,
+            FromMarketId = 1,
+            ToMarketId = 1,
+            Quantity = 0
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Source and destination must be different.", result.Message);
+        Assert.False(tenantQueryService.TransferInventoryWasCalled);
+    }
+
     private sealed class RecordingTenantQueryService : ITenantQueryService
     {
         public bool GetInventoryWasCalled { get; private set; }
@@ -230,6 +278,8 @@ public sealed class InventoryServiceTests
         public bool GetLowStockInventoryWasCalled { get; private set; }
 
         public bool AdjustInventoryWasCalled { get; private set; }
+
+        public bool TransferInventoryWasCalled { get; private set; }
 
         public InventoryListQuery? LastInventoryListQuery { get; private set; }
 
@@ -239,11 +289,17 @@ public sealed class InventoryServiceTests
 
         public int? LastAdjustmentUpdatedByUserId { get; private set; }
 
+        public TransferInventoryRequest? LastTransferRequest { get; private set; }
+
+        public int? LastTransferUpdatedByUserId { get; private set; }
+
         public InventoryItemDto? InventoryItem { get; init; }
 
         public bool ReturnNullFromAdjustment { get; init; }
 
         public bool ReturnNullFromSecondInventoryRead { get; init; }
+
+        public bool TransferResult { get; init; }
 
         private int _inventoryReadCount;
 
@@ -327,7 +383,17 @@ public sealed class InventoryServiceTests
                     : new InventoryItemDto { Id = InventoryItem.Id, Quantity = InventoryItem.Quantity + request.QuantityChange });
         }
 
-        public Task<bool> TransferInventoryAsync(TransferInventoryRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<bool> TransferInventoryAsync(
+            TransferInventoryRequest request,
+            int? updatedByUserId,
+            CancellationToken cancellationToken = default)
+        {
+            TransferInventoryWasCalled = true;
+            LastTransferRequest = request;
+            LastTransferUpdatedByUserId = updatedByUserId;
+
+            return Task.FromResult(TransferResult);
+        }
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto?> CreateSaleAsync(CreateSaleRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();

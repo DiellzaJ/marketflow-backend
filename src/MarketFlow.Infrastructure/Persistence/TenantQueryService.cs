@@ -780,14 +780,18 @@ public sealed class TenantQueryService : ITenantQueryService
             WITH source AS (
                 SELECT id, product_id, quantity
                 FROM {schemaName}.inventory
-                WHERE id = @from_inventory_id
+                WHERE product_id = @product_id
+                  AND market_id = @from_market_id
+                  AND department_id IS NOT DISTINCT FROM @from_department_id
                   {scopeCondition}
                 FOR UPDATE
             ),
             destination AS (
                 SELECT id, product_id
                 FROM {schemaName}.inventory
-                WHERE id = @to_inventory_id
+                WHERE product_id = @product_id
+                  AND market_id = @to_market_id
+                  AND department_id IS NOT DISTINCT FROM @to_department_id
                   {scopeCondition}
                 FOR UPDATE
             ),
@@ -814,8 +818,11 @@ public sealed class TenantQueryService : ITenantQueryService
             SELECT (SELECT id FROM updated_source), (SELECT id FROM updated_destination);
             """, cancellationToken, transaction);
 
-        command.Parameters.AddWithValue("from_inventory_id", request.FromInventoryId);
-        command.Parameters.AddWithValue("to_inventory_id", request.ToInventoryId);
+        command.Parameters.AddWithValue("product_id", request.ProductId);
+        command.Parameters.AddWithValue("from_market_id", request.FromMarketId);
+        command.Parameters.AddWithValue("from_department_id", DbValue(request.FromDepartmentId));
+        command.Parameters.AddWithValue("to_market_id", request.ToMarketId);
+        command.Parameters.AddWithValue("to_department_id", DbValue(request.ToDepartmentId));
         command.Parameters.AddWithValue("quantity", request.Quantity);
         command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
         AddInventoryScopeParameters(command, scope);
@@ -827,26 +834,29 @@ public sealed class TenantQueryService : ITenantQueryService
             return false;
         }
 
+        var sourceInventoryId = reader.GetInt32(0);
+        var destinationInventoryId = reader.GetInt32(1);
+        var referenceNumber = $"transfer:{sourceInventoryId}:{destinationInventoryId}";
         await reader.DisposeAsync();
 
         await RecordInventoryMovementAsync(
             schemaName,
-            request.FromInventoryId,
+            sourceInventoryId,
             "TransferOut",
             -request.Quantity,
             updatedByUserId,
-            $"transfer:{request.FromInventoryId}:{request.ToInventoryId}",
+            referenceNumber,
             cancellationToken,
             transaction,
             note: request.Note);
 
         await RecordInventoryMovementAsync(
             schemaName,
-            request.ToInventoryId,
+            destinationInventoryId,
             "TransferIn",
             request.Quantity,
             updatedByUserId,
-            $"transfer:{request.FromInventoryId}:{request.ToInventoryId}",
+            referenceNumber,
             cancellationToken,
             transaction,
             note: request.Note);
