@@ -55,6 +55,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                 AS $$
                 BEGIN
                     PERFORM public.create_tenant_schema(NEW.schema_name);
+                    PERFORM public.ensure_tenant_inventory_movements_table(NEW.schema_name);
                     PERFORM public.ensure_tenant_low_stock_alerts_table(NEW.schema_name);
                     RETURN NEW;
                 END;
@@ -94,6 +95,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                 AS $$
                 BEGIN
                     PERFORM public.create_tenant_schema(NEW.schema_name);
+                    PERFORM public.ensure_tenant_inventory_movements_table(NEW.schema_name);
                     RETURN NEW;
                 END;
                 $$;
