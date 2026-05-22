@@ -33,7 +33,7 @@ public sealed class TenantInventoryQueryFilterTests
         Assert.Contains("p.category_id = @category_id", whereClause, StringComparison.Ordinal);
         Assert.Contains("i.market_id = @market_id", whereClause, StringComparison.Ordinal);
         Assert.Contains("i.department_id = @department_id", whereClause, StringComparison.Ordinal);
-        Assert.Contains("i.quantity <= p.min_stock_alert", whereClause, StringComparison.Ordinal);
+        Assert.Contains("(i.quantity - i.reserved_quantity) <= p.min_stock_alert", whereClause, StringComparison.Ordinal);
     }
 
     private static string BuildInventoryWhereClause(InventoryListQuery query)

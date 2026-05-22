@@ -399,7 +399,7 @@ public sealed class TenantQueryService : ITenantQueryService
                    i.quantity,
                    i.reserved_quantity,
                    i.quantity - i.reserved_quantity AS available_quantity,
-                   i.quantity <= p.min_stock_alert AS is_low_stock,
+                   (i.quantity - i.reserved_quantity) <= p.min_stock_alert AS is_low_stock,
                    i.updated_at,
                    i.last_updated_by
             FROM {schemaName}.inventory i
@@ -960,7 +960,7 @@ public sealed class TenantQueryService : ITenantQueryService
                    i.quantity,
                    i.reserved_quantity,
                    i.quantity - i.reserved_quantity AS available_quantity,
-                   i.quantity <= p.min_stock_alert AS is_low_stock,
+                   (i.quantity - i.reserved_quantity) <= p.min_stock_alert AS is_low_stock,
                    i.updated_at,
                    i.last_updated_by
             FROM {schemaName}.inventory i
@@ -1352,7 +1352,7 @@ public sealed class TenantQueryService : ITenantQueryService
 
         if (query.LowStockOnly)
         {
-            conditions.Add("i.quantity <= p.min_stock_alert");
+            conditions.Add("(i.quantity - i.reserved_quantity) <= p.min_stock_alert");
         }
 
         return conditions.Count == 0
