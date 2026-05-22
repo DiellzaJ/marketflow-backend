@@ -1033,7 +1033,7 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
-        public Task<PurchaseDto> CreatePurchaseAsync(
+        public Task<PurchaseDto?> CreatePurchaseAsync(
             CreatePurchaseRequest request,
             int createdByUserId,
             CancellationToken cancellationToken = default)

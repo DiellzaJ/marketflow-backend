@@ -1070,12 +1070,23 @@ public sealed class TenantQueryService : ITenantQueryService
         return purchases;
     }
 
-    public async Task<PurchaseDto> CreatePurchaseAsync(
+    public async Task<PurchaseDto?> CreatePurchaseAsync(
         CreatePurchaseRequest request,
         int createdByUserId,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var receivesPurchase = string.Equals(request.Status, "Received", StringComparison.OrdinalIgnoreCase);
+
+        if (receivesPurchase)
+        {
+            var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+            if (!CanAccessInventoryTarget(scope, request.MarketId, departmentId: null))
+            {
+                return null;
+            }
+        }
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
@@ -1119,7 +1130,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 transaction);
         }
 
-        if (string.Equals(purchase.Status, "Received", StringComparison.OrdinalIgnoreCase))
+        if (receivesPurchase)
         {
             foreach (var item in request.Items)
             {
@@ -1151,11 +1162,21 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
-        var previousStatus = await GetPurchaseStatusForUpdateAsync(schemaName, id, cancellationToken, transaction);
+        var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
 
-        if (previousStatus is null)
+        if (currentPurchase is null)
         {
             return null;
+        }
+
+        if (ShouldReceivePurchase(currentPurchase.Status, request.Status, request.MarketId))
+        {
+            var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+            if (!CanAccessInventoryTarget(scope, request.MarketId, departmentId: null))
+            {
+                return null;
+            }
         }
 
         await using var command = await CreateCommandAsync($"""
@@ -1185,7 +1206,7 @@ public sealed class TenantQueryService : ITenantQueryService
             await ApplyPurchaseReceiptIfNeededAsync(
                 schemaName,
                 purchase,
-                previousStatus,
+                currentPurchase.Status,
                 updatedByUserId,
                 cancellationToken,
                 transaction);
@@ -1205,11 +1226,24 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
-        var previousStatus = await GetPurchaseStatusForUpdateAsync(schemaName, id, cancellationToken, transaction);
+        var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
 
-        if (previousStatus is null)
+        if (currentPurchase is null)
         {
             return null;
+        }
+
+        var effectiveStatus = request.Status?.Trim() ?? currentPurchase.Status;
+        var effectiveMarketId = request.MarketId ?? currentPurchase.MarketId;
+
+        if (ShouldReceivePurchase(currentPurchase.Status, effectiveStatus, effectiveMarketId))
+        {
+            var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+            if (!CanAccessInventoryTarget(scope, effectiveMarketId, departmentId: null))
+            {
+                return null;
+            }
         }
 
         await using var command = await CreateCommandAsync($"""
@@ -1239,7 +1273,7 @@ public sealed class TenantQueryService : ITenantQueryService
             await ApplyPurchaseReceiptIfNeededAsync(
                 schemaName,
                 purchase,
-                previousStatus,
+                currentPurchase.Status,
                 updatedByUserId,
                 cancellationToken,
                 transaction);
@@ -1763,21 +1797,36 @@ public sealed class TenantQueryService : ITenantQueryService
             ?? throw new InvalidOperationException("Inventory item was not created.");
     }
 
-    private async Task<string?> GetPurchaseStatusForUpdateAsync(
+    private async Task<PurchaseReceiptState?> GetPurchaseReceiptStateForUpdateAsync(
         string quotedSchemaName,
         int purchaseId,
         CancellationToken cancellationToken,
         NpgsqlTransaction transaction)
     {
         await using var command = await CreateCommandAsync($"""
-            SELECT status
+            SELECT status,
+                   market_id
             FROM {quotedSchemaName}.purchases
             WHERE id = @purchase_id
             FOR UPDATE;
             """, cancellationToken, transaction);
         command.Parameters.AddWithValue("purchase_id", purchaseId);
 
-        return (string?)await command.ExecuteScalarAsync(cancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken)
+            ? new PurchaseReceiptState(reader.GetString(0), reader.GetInt32(1))
+            : null;
+    }
+
+    private static bool ShouldReceivePurchase(
+        string previousStatus,
+        string status,
+        int marketId)
+    {
+        return marketId > 0 &&
+            string.Equals(status, "Received", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(previousStatus, "Received", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task ApplyPurchaseReceiptIfNeededAsync(
@@ -2318,6 +2367,8 @@ public sealed class TenantQueryService : ITenantQueryService
     }
 
     private sealed record StaffAssignmentScope(int MarketId, int? DepartmentId);
+
+    private sealed record PurchaseReceiptState(string Status, int MarketId);
 
     private sealed record PurchaseStockItem(int ProductId, int Quantity);
 

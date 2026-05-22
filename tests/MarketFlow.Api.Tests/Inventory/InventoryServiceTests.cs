@@ -401,7 +401,7 @@ public sealed class InventoryServiceTests
         public Task<SaleDto?> PatchSaleAsync(int id, PatchSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeleteSaleAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PurchaseDto> CreatePurchaseAsync(CreatePurchaseRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PurchaseDto?> CreatePurchaseAsync(CreatePurchaseRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PurchaseDto?> UpdatePurchaseAsync(int id, UpdatePurchaseRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PurchaseDto?> PatchPurchaseAsync(int id, PatchPurchaseRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeletePurchaseAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();

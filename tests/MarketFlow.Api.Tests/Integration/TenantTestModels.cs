@@ -27,6 +27,10 @@ public sealed record TenantTestDepartment(
     int MarketId,
     string Name);
 
+public sealed record TenantTestSupplier(
+    int Id,
+    string Name);
+
 public sealed record TenantTestStaffAssignment(
     int Id,
     int UserId,
@@ -55,6 +59,12 @@ public sealed record TenantTestInventoryMovement(
     int QuantityChanged,
     string? ReferenceNumber,
     int? CreatedByUserId);
+
+public sealed record TenantTestPurchase(
+    int Id,
+    int SupplierId,
+    int MarketId,
+    string Status);
 
 public sealed record TenantTestProductDetails(
     int Id,

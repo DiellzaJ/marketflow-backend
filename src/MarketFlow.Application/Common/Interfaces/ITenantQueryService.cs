@@ -101,7 +101,7 @@ public interface ITenantQueryService
 
     Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(CancellationToken cancellationToken = default);
 
-    Task<PurchaseDto> CreatePurchaseAsync(
+    Task<PurchaseDto?> CreatePurchaseAsync(
         CreatePurchaseRequest request,
         int createdByUserId,
         CancellationToken cancellationToken = default);
