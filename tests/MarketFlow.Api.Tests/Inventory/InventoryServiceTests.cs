@@ -83,11 +83,151 @@ public sealed class InventoryServiceTests
         Assert.Equal(1, result.Data?.TotalCount);
     }
 
+    [Fact]
+    public async Task AdjustInventoryItemAsync_UpdatesQuantityAndRecordsAdjustment()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 }
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest
+            {
+                QuantityChange = 10,
+                Reason = " ManualCorrection ",
+                Note = " Initial stock count correction "
+            });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Inventory stock adjusted.", result.Message);
+        Assert.Equal(15, result.Data?.Quantity);
+        Assert.True(tenantQueryService.AdjustInventoryWasCalled);
+        Assert.Equal(7, tenantQueryService.LastAdjustedInventoryId);
+        Assert.Equal(10, tenantQueryService.LastAdjustmentRequest?.QuantityChange);
+        Assert.Equal("ManualCorrection", tenantQueryService.LastAdjustmentRequest?.Reason);
+        Assert.Equal("Initial stock count correction", tenantQueryService.LastAdjustmentRequest?.Note);
+        Assert.Equal(1, tenantQueryService.LastAdjustmentUpdatedByUserId);
+    }
+
+    [Fact]
+    public async Task AdjustInventoryItemAsync_RejectsMissingReason()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 }
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = 1, Reason = " " });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Adjustment reason is required.", result.Message);
+        Assert.False(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
+    [Fact]
+    public async Task AdjustInventoryItemAsync_RejectsReasonLongerThanMovementColumn()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 }
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = 1, Reason = new string('x', 101) });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Adjustment reason cannot exceed 100 characters.", result.Message);
+        Assert.False(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
+    [Fact]
+    public async Task AdjustInventoryItemAsync_RejectsNegativeResultingStock()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 }
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = -6, Reason = "ManualCorrection" });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Stock cannot become negative.", result.Message);
+        Assert.False(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
+    [Fact]
+    public async Task AdjustInventoryItemAsync_ReturnsNotFoundWhenScopedUpdateMissesAfterInitialRead()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 },
+            ReturnNullFromAdjustment = true,
+            ReturnNullFromSecondInventoryRead = true
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = 1, Reason = "ManualCorrection" });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Inventory item was not found.", result.Message);
+        Assert.True(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
+    [Fact]
+    public async Task AdjustInventoryItemAsync_ReturnsNegativeStockFailureWhenConcurrentAdjustmentUnderflows()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 },
+            ReturnNullFromAdjustment = true
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = -4, Reason = "ManualCorrection" });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal("Stock cannot become negative.", result.Message);
+        Assert.True(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
     private sealed class RecordingTenantQueryService : ITenantQueryService
     {
         public bool GetInventoryWasCalled { get; private set; }
 
+        public bool AdjustInventoryWasCalled { get; private set; }
+
         public InventoryListQuery? LastInventoryListQuery { get; private set; }
+
+        public int LastAdjustedInventoryId { get; private set; }
+
+        public AdjustInventoryRequest? LastAdjustmentRequest { get; private set; }
+
+        public int? LastAdjustmentUpdatedByUserId { get; private set; }
+
+        public InventoryItemDto? InventoryItem { get; init; }
+
+        public bool ReturnNullFromAdjustment { get; init; }
+
+        public bool ReturnNullFromSecondInventoryRead { get; init; }
+
+        private int _inventoryReadCount;
 
         public Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
             InventoryListQuery query,
@@ -115,11 +255,37 @@ public sealed class InventoryServiceTests
         public Task<ProductDto?> PatchProductAsync(int id, PatchProductRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ProductDto?> SetProductActiveStateAsync(int id, bool isActive, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default)
+        {
+            _inventoryReadCount++;
+
+            return Task.FromResult<InventoryItemDto?>(
+                ReturnNullFromSecondInventoryRead && _inventoryReadCount > 1
+                    ? null
+                    : InventoryItem);
+        }
         public Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(int inventoryId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<InventoryItemDto?> CreateInventoryItemAsync(CreateInventoryItemRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<InventoryItemDto?> UpdateInventoryItemAsync(int id, UpdateInventoryItemRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<InventoryItemDto?> PatchInventoryItemAsync(int id, PatchInventoryItemRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<InventoryItemDto?> AdjustInventoryItemAsync(int id, AdjustInventoryRequest request, int? updatedByUserId, CancellationToken cancellationToken = default)
+        {
+            AdjustInventoryWasCalled = true;
+            LastAdjustedInventoryId = id;
+            LastAdjustmentRequest = request;
+            LastAdjustmentUpdatedByUserId = updatedByUserId;
+
+            if (ReturnNullFromAdjustment)
+            {
+                return Task.FromResult<InventoryItemDto?>(null);
+            }
+
+            return Task.FromResult<InventoryItemDto?>(
+                InventoryItem is null
+                    ? null
+                    : new InventoryItemDto { Id = InventoryItem.Id, Quantity = InventoryItem.Quantity + request.QuantityChange });
+        }
+
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto> CreateSaleAsync(CreateSaleRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();

@@ -31,6 +31,11 @@ public interface IInventoryService
         PatchInventoryItemRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<InventoryItemDto>> AdjustInventoryItemAsync(
+        int id,
+        AdjustInventoryRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<bool>> DeleteInventoryItemAsync(
         int id,
         CancellationToken cancellationToken = default);

@@ -22,6 +22,10 @@ public class InventoryMovementDto
 
     public string? ReferenceNumber { get; set; }
 
+    public string? Reason { get; set; }
+
+    public string? Note { get; set; }
+
     public int? CreatedByUserId { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }

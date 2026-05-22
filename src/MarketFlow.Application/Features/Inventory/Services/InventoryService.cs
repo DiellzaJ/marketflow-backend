@@ -9,6 +9,7 @@ namespace MarketFlow.Application.Features.Inventory.Services;
 public class InventoryService : IInventoryService
 {
     private const int MaxPageSize = 100;
+    private const int MaxAdjustmentReasonLength = 100;
 
     private readonly ITenantQueryService _tenantQueryService;
     private readonly ICurrentUserService _currentUserService;
@@ -146,6 +147,59 @@ public class InventoryService : IInventoryService
         return inventoryItem is null
             ? ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.")
             : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item updated.");
+    }
+
+    public async Task<ServiceResult<InventoryItemDto>> AdjustInventoryItemAsync(
+        int id,
+        AdjustInventoryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        request.Reason = (request.Reason ?? string.Empty).Trim();
+        request.Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Adjustment reason is required.");
+        }
+
+        if (request.Reason.Length > MaxAdjustmentReasonLength)
+        {
+            return ServiceResult<InventoryItemDto>.Failure(
+                $"Adjustment reason cannot exceed {MaxAdjustmentReasonLength} characters.");
+        }
+
+        var currentInventoryItem = await _tenantQueryService.GetInventoryItemAsync(id, cancellationToken);
+
+        if (currentInventoryItem is null)
+        {
+            return ServiceResult<InventoryItemDto>.Failure(
+                "Inventory item was not found.",
+                ServiceResultFailureType.NotFound);
+        }
+
+        if (currentInventoryItem.Quantity + request.QuantityChange < 0)
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Stock cannot become negative.");
+        }
+
+        var inventoryItem = await _tenantQueryService.AdjustInventoryItemAsync(
+            id,
+            request,
+            _currentUserService.UserId,
+            cancellationToken);
+
+        if (inventoryItem is not null)
+        {
+            return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory stock adjusted.");
+        }
+
+        var inventoryStillExists = await _tenantQueryService.GetInventoryItemAsync(id, cancellationToken);
+
+        return inventoryStillExists is null
+            ? ServiceResult<InventoryItemDto>.Failure(
+                "Inventory item was not found.",
+                ServiceResultFailureType.NotFound)
+            : ServiceResult<InventoryItemDto>.Failure("Stock cannot become negative.");
     }
 
     public async Task<ServiceResult<bool>> DeleteInventoryItemAsync(
