@@ -54,16 +54,17 @@ public sealed class TenantQueryService : ITenantQueryService
             var cacheKey = CreateBarcodeCacheKey(
                 await GetCurrentTenantIdAsync(cancellationToken),
                 query.Barcode!);
+            var lookupVariantKey = CreateProductBarcodeLookupVariantKey(query);
             var cachedLookup = await GetBarcodeLookupCacheAsync(cacheKey, cancellationToken);
 
-            if (cachedLookup?.Products is not null)
+            if (cachedLookup?.ProductLookups.TryGetValue(lookupVariantKey, out var cachedProducts) == true)
             {
-                return cachedLookup.Products;
+                return cachedProducts;
             }
 
-            var lookupResult = await GetProductsByBarcodeFromDatabaseAsync(query, schemaName, cancellationToken);
+            var lookupResult = await GetProductsFromDatabaseAsync(query, schemaName, cancellationToken);
             cachedLookup ??= new BarcodeLookupCacheEntry();
-            cachedLookup.Products = lookupResult;
+            cachedLookup.ProductLookups[lookupVariantKey] = lookupResult;
             await SetBarcodeLookupCacheAsync(cacheKey, cachedLookup, cancellationToken);
 
             return lookupResult;
@@ -117,66 +118,6 @@ public sealed class TenantQueryService : ITenantQueryService
         AddProductListParameters(command, query);
         command.Parameters.AddWithValue("page_size", query.PageSize);
         command.Parameters.AddWithValue("offset", offset);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            products.Add(ReadProduct(reader));
-        }
-
-        return new PagedResult<ProductDto>
-        {
-            Items = products,
-            Page = query.Page,
-            PageSize = query.PageSize,
-            TotalCount = totalCount,
-            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
-        };
-    }
-
-    private async Task<PagedResult<ProductDto>> GetProductsByBarcodeFromDatabaseAsync(
-        ProductListQuery query,
-        string schemaName,
-        CancellationToken cancellationToken)
-    {
-        var products = new List<ProductDto>();
-        var sortColumn = GetProductSortColumn(query.SortBy);
-        var sortDirection = string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase)
-            ? "DESC"
-            : "ASC";
-
-        await using var countCommand = await CreateCommandAsync($"""
-            SELECT COUNT(*)
-            FROM {schemaName}.products p
-            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
-            WHERE p.barcode = @barcode
-              AND p.is_active = TRUE;
-            """, cancellationToken);
-        countCommand.Parameters.AddWithValue("barcode", query.Barcode!.Trim());
-        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
-
-        await using var command = await CreateCommandAsync($"""
-            SELECT p.id,
-                   p.name,
-                   p.description,
-                   p.barcode,
-                   p.category_id,
-                   c.name AS category_name,
-                   p.unit_price,
-                   p.cost_price,
-                   p.tax_rate,
-                   p.min_stock_alert,
-                   p.is_active
-            FROM {schemaName}.products p
-            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
-            WHERE p.barcode = @barcode
-              AND p.is_active = TRUE
-            ORDER BY {sortColumn} {sortDirection}, p.id ASC
-            LIMIT @page_size;
-            """, cancellationToken);
-        command.Parameters.AddWithValue("barcode", query.Barcode.Trim());
-        command.Parameters.AddWithValue("page_size", query.PageSize);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -490,16 +431,17 @@ public sealed class TenantQueryService : ITenantQueryService
             var cacheKey = CreateBarcodeCacheKey(
                 await GetCurrentTenantIdAsync(cancellationToken),
                 query.Barcode!);
+            var lookupVariantKey = CreateInventoryBarcodeLookupVariantKey(query, scope);
             var cachedLookup = await GetBarcodeLookupCacheAsync(cacheKey, cancellationToken);
 
-            if (cachedLookup?.Inventory is not null)
+            if (cachedLookup?.InventoryLookups.TryGetValue(lookupVariantKey, out var cachedInventory) == true)
             {
-                return cachedLookup.Inventory;
+                return cachedInventory;
             }
 
-            var lookupResult = await GetInventoryByBarcodeFromDatabaseAsync(query, schemaName, scope, cancellationToken);
+            var lookupResult = await GetInventoryFromDatabaseAsync(query, schemaName, scope, cancellationToken);
             cachedLookup ??= new BarcodeLookupCacheEntry();
-            cachedLookup.Inventory = lookupResult;
+            cachedLookup.InventoryLookups[lookupVariantKey] = lookupResult;
             await SetBarcodeLookupCacheAsync(cacheKey, cachedLookup, cancellationToken);
 
             return lookupResult;
@@ -568,84 +510,6 @@ public sealed class TenantQueryService : ITenantQueryService
         AddInventoryScopeParameters(command, scope);
         command.Parameters.AddWithValue("page_size", query.PageSize);
         command.Parameters.AddWithValue("offset", offset);
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-        while (await reader.ReadAsync(cancellationToken))
-        {
-            inventory.Add(ReadInventoryItem(reader));
-        }
-
-        return new PagedResult<InventoryItemDto>
-        {
-            Items = inventory,
-            Page = query.Page,
-            PageSize = query.PageSize,
-            TotalCount = totalCount,
-            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
-        };
-    }
-
-    private async Task<PagedResult<InventoryItemDto>> GetInventoryByBarcodeFromDatabaseAsync(
-        InventoryListQuery query,
-        string schemaName,
-        InventoryScope scope,
-        CancellationToken cancellationToken)
-    {
-        var inventory = new List<InventoryItemDto>();
-        var scopeCondition = BuildInventoryScopeCondition(scope, "AND");
-        var sortColumn = GetInventorySortColumn(query.SortBy);
-        var sortDirection = string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase)
-            ? "DESC"
-            : "ASC";
-
-        await using var countCommand = await CreateCommandAsync($"""
-            SELECT COUNT(*)
-            FROM {schemaName}.inventory i
-            INNER JOIN {schemaName}.products p ON p.id = i.product_id
-            INNER JOIN {schemaName}.markets m ON m.id = i.market_id
-            LEFT JOIN {schemaName}.departments d ON d.id = i.department_id
-            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
-            WHERE p.barcode = @barcode
-              {scopeCondition};
-            """, cancellationToken);
-        countCommand.Parameters.AddWithValue("barcode", query.Barcode!.Trim());
-        AddInventoryScopeParameters(countCommand, scope);
-        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
-
-        await using var command = await CreateCommandAsync($"""
-            SELECT i.id,
-                   i.product_id,
-                   p.name,
-                   p.barcode,
-                   p.category_id,
-                   c.name AS category_name,
-                   p.unit_price,
-                   p.min_stock_alert,
-                   GREATEST(p.min_stock_alert - i.quantity, 0) AS suggested_restock_quantity,
-                   i.market_id,
-                   m.name,
-                   i.department_id,
-                   d.name AS department_name,
-                   i.quantity,
-                   i.reserved_quantity,
-                   i.quantity - i.reserved_quantity AS available_quantity,
-                   i.quantity <= p.min_stock_alert AS is_low_stock,
-                   i.updated_at,
-                   i.last_updated_by
-            FROM {schemaName}.inventory i
-            INNER JOIN {schemaName}.products p ON p.id = i.product_id
-            INNER JOIN {schemaName}.markets m ON m.id = i.market_id
-            LEFT JOIN {schemaName}.departments d ON d.id = i.department_id
-            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
-            WHERE p.barcode = @barcode
-              {scopeCondition}
-            ORDER BY {sortColumn} {sortDirection}, i.id ASC
-            LIMIT @page_size;
-            """, cancellationToken);
-        command.Parameters.AddWithValue("barcode", query.Barcode.Trim());
-        AddInventoryScopeParameters(command, scope);
-        command.Parameters.AddWithValue("page_size", query.PageSize);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -2239,6 +2103,47 @@ public sealed class TenantQueryService : ITenantQueryService
         return $"tenant:{tenantId}:barcode:{barcode.Trim()}";
     }
 
+    private static string CreateProductBarcodeLookupVariantKey(ProductListQuery query)
+    {
+        return string.Join(
+            ':',
+            "products",
+            $"page={query.Page}",
+            $"size={query.PageSize}",
+            $"sort={NormalizeCacheKeyPart(query.SortBy)}",
+            $"dir={NormalizeCacheKeyPart(query.SortDirection)}");
+    }
+
+    private static string CreateInventoryBarcodeLookupVariantKey(InventoryListQuery query, InventoryScope scope)
+    {
+        return string.Join(
+            ':',
+            "inventory",
+            $"scope={CreateInventoryScopeCacheKeyPart(scope)}",
+            $"page={query.Page}",
+            $"size={query.PageSize}",
+            $"sort={NormalizeCacheKeyPart(query.SortBy)}",
+            $"dir={NormalizeCacheKeyPart(query.SortDirection)}");
+    }
+
+    private static string CreateInventoryScopeCacheKeyPart(InventoryScope scope)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => "company",
+            InventoryScopeKind.Market => $"market:{scope.MarketId}",
+            InventoryScopeKind.Department => $"department:{scope.MarketId}:{scope.DepartmentId}",
+            _ => "none"
+        };
+    }
+
+    private static string NormalizeCacheKeyPart(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToLowerInvariant();
+    }
+
     private static int GetBarcodeLookupCacheTtlSeconds(IConfiguration? configuration)
     {
         var configuredValue = configuration?["Redis:BarcodeLookupTtlSeconds"];
@@ -2757,9 +2662,9 @@ public sealed class TenantQueryService : ITenantQueryService
 
     private sealed class BarcodeLookupCacheEntry
     {
-        public PagedResult<ProductDto>? Products { get; set; }
+        public Dictionary<string, PagedResult<ProductDto>> ProductLookups { get; set; } = [];
 
-        public PagedResult<InventoryItemDto>? Inventory { get; set; }
+        public Dictionary<string, PagedResult<InventoryItemDto>> InventoryLookups { get; set; } = [];
     }
 
     private sealed record InventoryScope(
