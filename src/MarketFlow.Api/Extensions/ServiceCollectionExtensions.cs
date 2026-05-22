@@ -19,6 +19,7 @@ using MarketFlow.Application.Features.Sales.Interfaces;
 using MarketFlow.Application.Features.Sales.Services;
 using MarketFlow.Application.Features.Users.Interfaces;
 using MarketFlow.Application.Features.Users.Services;
+using MarketFlow.Infrastructure.BackgroundJobs;
 using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Infrastructure.MultiTenancy;
 using MarketFlow.Infrastructure.Persistence;
@@ -212,6 +213,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<OpenAiService>();
         services.AddScoped<TenantProvider>();
         services.AddSingleton<RedisCacheService>();
+        services.Configure<StockAlertJobOptions>(
+            configuration.GetSection("BackgroundJobs:LowStockAlerts"));
+        services.AddScoped<StockAlertJob>();
+        services.AddHostedService<StockAlertHostedService>();
 
         return services;
     }

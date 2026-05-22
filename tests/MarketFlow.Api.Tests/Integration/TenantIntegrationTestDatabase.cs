@@ -168,6 +168,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         _createdCompanyIds.Add(companyId);
 
         await EnsureInventoryMovementsTableAsync(connection, schemaName, cancellationToken);
+        await EnsureLowStockAlertsTableAsync(connection, schemaName, cancellationToken);
 
         if (generatedSchemaName || dropSchemaOnDispose)
         {
@@ -865,6 +866,37 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             );
             CREATE INDEX IF NOT EXISTS idx_inventory_movements_inventory ON {QuoteIdentifier(schemaName)}.inventory_movements(inventory_id);
             CREATE INDEX IF NOT EXISTS idx_inventory_movements_created ON {QuoteIdentifier(schemaName)}.inventory_movements(created_at);
+            """,
+            cancellationToken);
+    }
+
+    private static async Task EnsureLowStockAlertsTableAsync(
+        NpgsqlConnection connection,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteAsync(
+            connection,
+            $"""
+            CREATE TABLE IF NOT EXISTS {QuoteIdentifier(schemaName)}.low_stock_alerts (
+                id                BIGSERIAL PRIMARY KEY,
+                inventory_id      INT         NOT NULL REFERENCES {QuoteIdentifier(schemaName)}.inventory(id) ON DELETE CASCADE,
+                product_id        INT         NOT NULL REFERENCES {QuoteIdentifier(schemaName)}.products(id) ON DELETE CASCADE,
+                market_id         INT         NOT NULL REFERENCES {QuoteIdentifier(schemaName)}.markets(id) ON DELETE CASCADE,
+                department_id     INT         REFERENCES {QuoteIdentifier(schemaName)}.departments(id) ON DELETE SET NULL,
+                quantity          INT         NOT NULL,
+                min_stock_alert   INT         NOT NULL,
+                status            VARCHAR(20) NOT NULL DEFAULT 'Active'
+                    CHECK (status IN ('Active', 'Resolved')),
+                first_detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_detected_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                resolved_at       TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_low_stock_alerts_inventory ON {QuoteIdentifier(schemaName)}.low_stock_alerts(inventory_id);
+            CREATE INDEX IF NOT EXISTS idx_low_stock_alerts_status ON {QuoteIdentifier(schemaName)}.low_stock_alerts(status);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_low_stock_alerts_active_product_location
+                ON {QuoteIdentifier(schemaName)}.low_stock_alerts(product_id, market_id, (COALESCE(department_id, -1)))
+                WHERE status = 'Active';
             """,
             cancellationToken);
     }
