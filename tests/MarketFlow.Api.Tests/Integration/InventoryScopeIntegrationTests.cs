@@ -186,12 +186,12 @@ public sealed class InventoryScopeIntegrationTests
         var response = await client.GetAsync("/api/inventory");
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<ServiceResult<IReadOnlyList<InventoryItemDto>>>();
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<PagedResult<InventoryItemDto>>>();
         Assert.NotNull(result);
         Assert.True(result.Succeeded);
         Assert.NotNull(result.Data);
 
-        return result.Data;
+        return result.Data.Items.ToList();
     }
 
     private static async Task<IReadOnlyList<InventoryMovementDto>> GetInventoryMovementsAsync(

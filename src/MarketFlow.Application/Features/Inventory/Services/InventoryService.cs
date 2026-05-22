@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.Inventory.Configuration;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Inventory.Interfaces;
 
@@ -7,6 +8,8 @@ namespace MarketFlow.Application.Features.Inventory.Services;
 
 public class InventoryService : IInventoryService
 {
+    private const int MaxPageSize = 100;
+
     private readonly ITenantQueryService _tenantQueryService;
     private readonly ICurrentUserService _currentUserService;
 
@@ -18,11 +21,37 @@ public class InventoryService : IInventoryService
         _currentUserService = currentUserService;
     }
 
-    public async Task<ServiceResult<IReadOnlyCollection<InventoryItemDto>>> GetInventoryAsync(
+    public async Task<ServiceResult<PagedResult<InventoryItemDto>>> GetInventoryAsync(
+        InventoryListQuery query,
         CancellationToken cancellationToken = default)
     {
-        var inventory = await _tenantQueryService.GetInventoryAsync(cancellationToken);
-        return ServiceResult<IReadOnlyCollection<InventoryItemDto>>.Success(inventory);
+        query.SortBy = query.SortBy?.Trim();
+        query.SortDirection = query.SortDirection?.Trim();
+
+        if (query.Page < 1)
+        {
+            return ServiceResult<PagedResult<InventoryItemDto>>.Failure("Page must be greater than zero.");
+        }
+
+        if (query.PageSize is < 1 or > MaxPageSize)
+        {
+            return ServiceResult<PagedResult<InventoryItemDto>>.Failure($"Page size must be between 1 and {MaxPageSize}.");
+        }
+
+        if (!InventorySortFields.IsAllowed(query.SortBy))
+        {
+            return ServiceResult<PagedResult<InventoryItemDto>>.Failure("Sort field is not supported.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.SortDirection) &&
+            !string.Equals(query.SortDirection, "asc", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase))
+        {
+            return ServiceResult<PagedResult<InventoryItemDto>>.Failure("Sort direction must be asc or desc.");
+        }
+
+        var inventory = await _tenantQueryService.GetInventoryAsync(query, cancellationToken);
+        return ServiceResult<PagedResult<InventoryItemDto>>.Success(inventory);
     }
 
     public async Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(
