@@ -390,6 +390,8 @@ public sealed class TenantQueryService : ITenantQueryService
                    p.barcode,
                    p.category_id,
                    c.name AS category_name,
+                   p.unit_price,
+                   p.min_stock_alert,
                    i.market_id,
                    m.name,
                    i.department_id,
@@ -397,7 +399,9 @@ public sealed class TenantQueryService : ITenantQueryService
                    i.quantity,
                    i.reserved_quantity,
                    i.quantity - i.reserved_quantity AS available_quantity,
-                   i.updated_at
+                   (i.quantity - i.reserved_quantity) <= p.min_stock_alert AS is_low_stock,
+                   i.updated_at,
+                   i.last_updated_by
             FROM {schemaName}.inventory i
             INNER JOIN {schemaName}.products p ON p.id = i.product_id
             INNER JOIN {schemaName}.markets m ON m.id = i.market_id
@@ -947,6 +951,8 @@ public sealed class TenantQueryService : ITenantQueryService
                    p.barcode,
                    p.category_id,
                    c.name AS category_name,
+                   p.unit_price,
+                   p.min_stock_alert,
                    i.market_id,
                    m.name,
                    i.department_id,
@@ -954,7 +960,9 @@ public sealed class TenantQueryService : ITenantQueryService
                    i.quantity,
                    i.reserved_quantity,
                    i.quantity - i.reserved_quantity AS available_quantity,
-                   i.updated_at
+                   (i.quantity - i.reserved_quantity) <= p.min_stock_alert AS is_low_stock,
+                   i.updated_at,
+                   i.last_updated_by
             FROM {schemaName}.inventory i
             INNER JOIN {schemaName}.products p ON p.id = i.product_id
             INNER JOIN {schemaName}.markets m ON m.id = i.market_id
@@ -1419,14 +1427,18 @@ public sealed class TenantQueryService : ITenantQueryService
             Barcode = reader.IsDBNull(3) ? null : reader.GetString(3),
             CategoryId = reader.IsDBNull(4) ? null : reader.GetInt32(4),
             CategoryName = reader.IsDBNull(5) ? null : reader.GetString(5),
-            MarketId = reader.GetInt32(6),
-            MarketName = reader.GetString(7),
-            DepartmentId = reader.IsDBNull(8) ? null : reader.GetInt32(8),
-            DepartmentName = reader.IsDBNull(9) ? null : reader.GetString(9),
-            Quantity = reader.GetInt32(10),
-            ReservedQuantity = reader.GetInt32(11),
-            AvailableQuantity = reader.GetInt32(12),
-            UpdatedAt = reader.GetFieldValue<DateTimeOffset>(13)
+            UnitPrice = reader.GetDecimal(6),
+            MinStockAlert = reader.GetInt32(7),
+            MarketId = reader.GetInt32(8),
+            MarketName = reader.GetString(9),
+            DepartmentId = reader.IsDBNull(10) ? null : reader.GetInt32(10),
+            DepartmentName = reader.IsDBNull(11) ? null : reader.GetString(11),
+            Quantity = reader.GetInt32(12),
+            ReservedQuantity = reader.GetInt32(13),
+            AvailableQuantity = reader.GetInt32(14),
+            IsLowStock = reader.GetBoolean(15),
+            UpdatedAt = reader.GetFieldValue<DateTimeOffset>(16),
+            LastUpdatedBy = reader.IsDBNull(17) ? null : reader.GetInt32(17)
         };
     }
 
