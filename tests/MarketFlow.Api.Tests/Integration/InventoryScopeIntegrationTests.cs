@@ -137,6 +137,87 @@ public sealed class InventoryScopeIntegrationTests
     }
 
     [PostgresIntegrationFact]
+    public async Task Seller_CannotCreateOrAdjustInventory()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        var setup = await CreateSingleTenantInventorySetupAsync(database, "seller_inventory_denied");
+        var user = await database.CreateUserAsync(setup.Company, roleName: "Seller");
+        await database.InsertStaffAssignmentAsync(setup.Company.SchemaName, user.Id, setup.MarketA.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var createResponse = await client.PostAsJsonAsync(
+            "/api/inventory",
+            new CreateInventoryItemRequest
+            {
+                ProductId = setup.ProductA.Id,
+                MarketId = setup.MarketA.Id,
+                Quantity = 5
+            });
+        Assert.Equal(HttpStatusCode.Forbidden, createResponse.StatusCode);
+
+        var adjustResponse = await client.PostAsJsonAsync(
+            $"/api/inventory/{setup.MarketAInventory.Id}/adjust",
+            new AdjustInventoryRequest
+            {
+                QuantityChange = 3,
+                Reason = "Seller should not adjust stock"
+            });
+        Assert.Equal(HttpStatusCode.Forbidden, adjustResponse.StatusCode);
+
+        var inventory = await database.GetInventoryDetailsAsync(
+            setup.Company.SchemaName,
+            setup.MarketAInventory.Id);
+        Assert.Equal(setup.MarketAInventory, inventory);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task InventoryFilters_DoNotBypassAssignedMarketOrDepartmentScope()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        var setup = await CreateSingleTenantInventorySetupAsync(database, "inventory_filter_scope");
+        var user = await database.CreateUserAsync(setup.Company, roleName: "MainOperator");
+        await database.InsertStaffAssignmentAsync(setup.Company.SchemaName, user.Id, setup.MarketA.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var marketFilter = await GetInventoryAsync(client, $"marketId={setup.MarketB.Id}");
+        Assert.Empty(marketFilter);
+
+        var productFilter = await GetInventoryAsync(client, $"productId={setup.MarketBInventory.ProductId}");
+        Assert.Empty(productFilter);
+
+        var searchFilter = await GetInventoryAsync(client, "search=Product%20C");
+        Assert.Empty(searchFilter);
+
+        var departmentUser = await database.CreateUserAsync(setup.Company, roleName: "DepartmentManager");
+        await database.InsertStaffAssignmentAsync(
+            setup.Company.SchemaName,
+            departmentUser.Id,
+            setup.MarketA.Id,
+            setup.DepartmentA.Id);
+
+        using var departmentClient = apiFactory.CreateAuthenticatedClient(database, departmentUser);
+
+        var departmentMarketFilter = await GetInventoryAsync(departmentClient, $"marketId={setup.MarketA.Id}");
+        Assert.Single(departmentMarketFilter);
+        Assert.Equal(setup.DepartmentAInventory.Id, departmentMarketFilter[0].Id);
+
+        var parentMarketItemFilter = await GetInventoryAsync(
+            departmentClient,
+            $"productId={setup.MarketAInventory.ProductId}");
+        Assert.Empty(parentMarketItemFilter);
+    }
+
+    [PostgresIntegrationFact]
     public async Task CompanyAdmin_CanReadAllCompanyInventory_ButCannotReachAnotherCompanyInventory()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();
@@ -179,6 +260,41 @@ public sealed class InventoryScopeIntegrationTests
 
         var hiddenMovements = await client.GetAsync($"/api/inventory/{companyBProtectedInventory.Id}/movements");
         Assert.Equal(HttpStatusCode.NotFound, hiddenMovements.StatusCode);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task InventoryFilters_DoNotBypassTenantIsolation()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        var companyASetup = await CreateSingleTenantInventorySetupAsync(database, "inventory_filter_tenant_a");
+        var companyBSetup = await CreateSingleTenantInventorySetupAsync(database, "inventory_filter_tenant_b");
+        var companyAUser = await database.CreateUserAsync(companyASetup.Company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, companyAUser);
+        client.DefaultRequestHeaders.Add(TenantSchemaHeaderName, companyBSetup.Company.SchemaName);
+
+        var productFilter = await GetInventoryAsync(client, $"productId={companyBSetup.MarketAInventory.ProductId}");
+        Assert.DoesNotContain(
+            productFilter,
+            item => item.ProductName.Contains("inventory_filter_tenant_b", StringComparison.Ordinal));
+        Assert.Contains(
+            productFilter,
+            item => item.ProductName.Contains("inventory_filter_tenant_a", StringComparison.Ordinal));
+
+        var marketFilter = await GetInventoryAsync(client, $"marketId={companyBSetup.MarketA.Id}");
+        Assert.DoesNotContain(
+            marketFilter,
+            item => item.ProductName.Contains("inventory_filter_tenant_b", StringComparison.Ordinal));
+        Assert.Contains(
+            marketFilter,
+            item => item.ProductName.Contains("inventory_filter_tenant_a", StringComparison.Ordinal));
+
+        var searchFilter = await GetInventoryAsync(client, "search=inventory_filter_tenant_b");
+        Assert.Empty(searchFilter);
     }
 
     [PostgresIntegrationFact]
@@ -421,9 +537,14 @@ public sealed class InventoryScopeIntegrationTests
         Assert.Equal(2, unchangedDestination?.Quantity);
     }
 
-    private static async Task<IReadOnlyList<InventoryItemDto>> GetInventoryAsync(HttpClient client)
+    private static async Task<IReadOnlyList<InventoryItemDto>> GetInventoryAsync(
+        HttpClient client,
+        string? queryString = null)
     {
-        var response = await client.GetAsync("/api/inventory");
+        var requestUri = string.IsNullOrWhiteSpace(queryString)
+            ? "/api/inventory"
+            : $"/api/inventory?{queryString}";
+        var response = await client.GetAsync(requestUri);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<ServiceResult<PagedResult<InventoryItemDto>>>();
