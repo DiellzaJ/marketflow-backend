@@ -211,7 +211,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PasswordHasher>();
         services.AddScoped<OpenAiService>();
         services.AddScoped<TenantProvider>();
-        services.AddScoped<RedisCacheService>();
+        services.AddSingleton<RedisCacheService>();
 
         return services;
     }
