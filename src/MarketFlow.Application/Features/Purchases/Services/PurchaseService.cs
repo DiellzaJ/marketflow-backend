@@ -46,7 +46,9 @@ public class PurchaseService : IPurchaseService
 
         var purchase = await _tenantQueryService.CreatePurchaseAsync(request, userId, cancellationToken);
 
-        return ServiceResult<PurchaseDto>.Success(purchase, "Purchase created.");
+        return purchase is null
+            ? ServiceResult<PurchaseDto>.Failure("Purchase receipt destination is outside the current user's inventory scope.")
+            : ServiceResult<PurchaseDto>.Success(purchase, "Purchase created.");
     }
 
     public async Task<ServiceResult<PurchaseDto>> UpdatePurchaseAsync(

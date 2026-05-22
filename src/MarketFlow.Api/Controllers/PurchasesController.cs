@@ -28,7 +28,7 @@ public class PurchasesController(IPurchaseService purchaseService) : ControllerB
     {
         var result = await purchaseService.CreatePurchaseAsync(request, cancellationToken);
 
-        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
+        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), routeValues: null, value: result) : BadRequest(result);
     }
 
     [HttpPut("{id:int}")]

@@ -319,6 +319,27 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         return new TenantTestDepartment(departmentId, marketId, name);
     }
 
+    public async Task<TenantTestSupplier> InsertSupplierAsync(
+        string schemaName,
+        string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        name ??= $"Supplier {Guid.NewGuid():N}"[..24];
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var supplierId = await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.suppliers (name, is_active)
+            VALUES (@name, TRUE)
+            RETURNING id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("name", name));
+
+        return new TenantTestSupplier(supplierId, name);
+    }
+
     public async Task<TenantTestStaffAssignment> InsertStaffAssignmentAsync(
         string schemaName,
         int userId,
@@ -524,6 +545,73 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             quantityChanged,
             referenceNumber,
             createdByUserId);
+    }
+
+    public async Task<TenantTestPurchase> InsertPurchaseAsync(
+        string schemaName,
+        int supplierId,
+        int marketId,
+        int createdByUserId,
+        string status = "Pending",
+        decimal totalAmount = 0,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var purchaseId = await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.purchases (
+                supplier_id,
+                market_id,
+                created_by_user_id,
+                status,
+                total_amount)
+            VALUES (
+                @supplier_id,
+                @market_id,
+                @created_by_user_id,
+                @status,
+                @total_amount)
+            RETURNING id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("supplier_id", supplierId),
+            new NpgsqlParameter("market_id", marketId),
+            new NpgsqlParameter("created_by_user_id", createdByUserId),
+            new NpgsqlParameter("status", status),
+            new NpgsqlParameter("total_amount", totalAmount));
+
+        return new TenantTestPurchase(purchaseId, supplierId, marketId, status);
+    }
+
+    public async Task InsertPurchaseItemAsync(
+        string schemaName,
+        int purchaseId,
+        int productId,
+        int quantity,
+        decimal unitCost,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await ExecuteAsync(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.purchase_items (
+                purchase_id,
+                product_id,
+                quantity,
+                unit_cost)
+            VALUES (
+                @purchase_id,
+                @product_id,
+                @quantity,
+                @unit_cost);
+            """,
+            cancellationToken,
+            new NpgsqlParameter("purchase_id", purchaseId),
+            new NpgsqlParameter("product_id", productId),
+            new NpgsqlParameter("quantity", quantity),
+            new NpgsqlParameter("unit_cost", unitCost));
     }
 
     public async Task<bool> SchemaExistsAsync(
