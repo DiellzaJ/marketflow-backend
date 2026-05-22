@@ -131,6 +131,24 @@ public sealed class InventoryServiceTests
     }
 
     [Fact]
+    public async Task AdjustInventoryItemAsync_RejectsReasonLongerThanMovementColumn()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 }
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = 1, Reason = new string('x', 101) });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Adjustment reason cannot exceed 100 characters.", result.Message);
+        Assert.False(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
+    [Fact]
     public async Task AdjustInventoryItemAsync_RejectsNegativeResultingStock()
     {
         var tenantQueryService = new RecordingTenantQueryService
@@ -148,6 +166,26 @@ public sealed class InventoryServiceTests
         Assert.False(tenantQueryService.AdjustInventoryWasCalled);
     }
 
+    [Fact]
+    public async Task AdjustInventoryItemAsync_ReturnsNotFoundWhenScopedUpdateMissesAfterInitialRead()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 },
+            ReturnNullFromAdjustment = true
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = 1, Reason = "ManualCorrection" });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Inventory item was not found.", result.Message);
+        Assert.True(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
     private sealed class RecordingTenantQueryService : ITenantQueryService
     {
         public bool GetInventoryWasCalled { get; private set; }
@@ -163,6 +201,8 @@ public sealed class InventoryServiceTests
         public int? LastAdjustmentUpdatedByUserId { get; private set; }
 
         public InventoryItemDto? InventoryItem { get; init; }
+
+        public bool ReturnNullFromAdjustment { get; init; }
 
         public Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
             InventoryListQuery query,
@@ -201,6 +241,11 @@ public sealed class InventoryServiceTests
             LastAdjustedInventoryId = id;
             LastAdjustmentRequest = request;
             LastAdjustmentUpdatedByUserId = updatedByUserId;
+
+            if (ReturnNullFromAdjustment)
+            {
+                return Task.FromResult<InventoryItemDto?>(null);
+            }
 
             return Task.FromResult<InventoryItemDto?>(
                 InventoryItem is null

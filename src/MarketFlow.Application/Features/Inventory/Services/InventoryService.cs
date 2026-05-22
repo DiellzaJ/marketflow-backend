@@ -9,6 +9,7 @@ namespace MarketFlow.Application.Features.Inventory.Services;
 public class InventoryService : IInventoryService
 {
     private const int MaxPageSize = 100;
+    private const int MaxAdjustmentReasonLength = 100;
 
     private readonly ITenantQueryService _tenantQueryService;
     private readonly ICurrentUserService _currentUserService;
@@ -161,6 +162,12 @@ public class InventoryService : IInventoryService
             return ServiceResult<InventoryItemDto>.Failure("Adjustment reason is required.");
         }
 
+        if (request.Reason.Length > MaxAdjustmentReasonLength)
+        {
+            return ServiceResult<InventoryItemDto>.Failure(
+                $"Adjustment reason cannot exceed {MaxAdjustmentReasonLength} characters.");
+        }
+
         var currentInventoryItem = await _tenantQueryService.GetInventoryItemAsync(id, cancellationToken);
 
         if (currentInventoryItem is null)
@@ -182,7 +189,9 @@ public class InventoryService : IInventoryService
             cancellationToken);
 
         return inventoryItem is null
-            ? ServiceResult<InventoryItemDto>.Failure("Stock cannot become negative.")
+            ? ServiceResult<InventoryItemDto>.Failure(
+                "Inventory item was not found.",
+                ServiceResultFailureType.NotFound)
             : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory stock adjusted.");
     }
 
