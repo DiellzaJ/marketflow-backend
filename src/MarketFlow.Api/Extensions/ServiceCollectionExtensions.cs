@@ -169,10 +169,10 @@ public static class ServiceCollectionExtensions
             options.AddPolicy(AuthorizationPolicies.ReadInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("inventory", "read")));
 
-            options.AddPolicy(AuthorizationPolicies.UpdateInventoryStock, policy =>
+            options.AddPolicy(AuthorizationPolicies.UpdateInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("stock", "update")));
 
-            options.AddPolicy(AuthorizationPolicies.AdjustInventoryStock, policy =>
+            options.AddPolicy(AuthorizationPolicies.AdjustInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("stock", "adjust")));
 
             options.AddPolicy(AuthorizationPolicies.DeleteInventory, policy =>
@@ -181,7 +181,7 @@ public static class ServiceCollectionExtensions
             options.AddPolicy(AuthorizationPolicies.ReadInventoryMovements, policy =>
                 policy.Requirements.Add(new PermissionRequirement("inventory-movements", "read")));
 
-            options.AddPolicy(AuthorizationPolicies.TransferInventoryStock, policy =>
+            options.AddPolicy(AuthorizationPolicies.TransferInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("stock", "transfer")));
         });
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
