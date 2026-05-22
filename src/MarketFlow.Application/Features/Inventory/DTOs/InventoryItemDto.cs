@@ -14,6 +14,10 @@ public class InventoryItemDto
 
     public string? CategoryName { get; set; }
 
+    public decimal UnitPrice { get; set; }
+
+    public int MinStockAlert { get; set; }
+
     public int MarketId { get; set; }
 
     public string MarketName { get; set; } = string.Empty;
@@ -28,5 +32,9 @@ public class InventoryItemDto
 
     public int AvailableQuantity { get; set; }
 
+    public bool IsLowStock { get; set; }
+
     public DateTimeOffset UpdatedAt { get; set; }
+
+    public int? LastUpdatedBy { get; set; }
 }
