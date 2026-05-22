@@ -84,6 +84,22 @@ public sealed class InventoryServiceTests
     }
 
     [Fact]
+    public async Task GetLowStockInventoryAsync_ReturnsReusableLowStockInventory()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.GetLowStockInventoryAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.True(tenantQueryService.GetLowStockInventoryWasCalled);
+        Assert.NotNull(result.Data);
+        var item = Assert.Single(result.Data);
+        Assert.Equal("Milk", item.ProductName);
+        Assert.Equal(2, item.SuggestedRestockQuantity);
+    }
+
+    [Fact]
     public async Task AdjustInventoryItemAsync_UpdatesQuantityAndRecordsAdjustment()
     {
         var tenantQueryService = new RecordingTenantQueryService
@@ -211,6 +227,8 @@ public sealed class InventoryServiceTests
     {
         public bool GetInventoryWasCalled { get; private set; }
 
+        public bool GetLowStockInventoryWasCalled { get; private set; }
+
         public bool AdjustInventoryWasCalled { get; private set; }
 
         public InventoryListQuery? LastInventoryListQuery { get; private set; }
@@ -244,6 +262,28 @@ public sealed class InventoryServiceTests
                 TotalCount = 1,
                 TotalPages = 1
             });
+        }
+
+        public Task<IReadOnlyCollection<InventoryItemDto>> GetLowStockInventoryAsync(
+            CancellationToken cancellationToken = default)
+        {
+            GetLowStockInventoryWasCalled = true;
+
+            return Task.FromResult<IReadOnlyCollection<InventoryItemDto>>(
+            [
+                new InventoryItemDto
+                {
+                    Id = 1,
+                    ProductId = 10,
+                    ProductName = "Milk",
+                    Barcode = "123",
+                    MarketName = "Main",
+                    Quantity = 3,
+                    MinStockAlert = 5,
+                    SuggestedRestockQuantity = 2,
+                    IsLowStock = true
+                }
+            ]);
         }
 
         public Task<PagedResult<ProductDto>> GetProductsAsync(ProductListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();

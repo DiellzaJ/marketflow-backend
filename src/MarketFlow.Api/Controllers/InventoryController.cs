@@ -23,6 +23,15 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
         return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 
+    [HttpGet("low-stock")]
+    [Authorize(Policy = AuthorizationPolicies.ReadInventory)]
+    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<InventoryItemDto>>>> GetLowStockAsync(
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.GetLowStockInventoryAsync(cancellationToken);
+        return Ok(result);
+    }
+
     [HttpGet("movements")]
     [Authorize(Policy = AuthorizationPolicies.ReadInventoryMovements)]
     public async Task<ActionResult<ServiceResult<PagedResult<InventoryMovementDto>>>> GetMovementsAsync(

@@ -918,6 +918,12 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
+        public Task<IReadOnlyCollection<InventoryItemDto>> GetLowStockInventoryAsync(
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<InventoryItemDto?> GetInventoryItemAsync(
             int id,
             CancellationToken cancellationToken = default)
