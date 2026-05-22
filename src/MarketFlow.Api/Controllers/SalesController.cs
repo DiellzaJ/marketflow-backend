@@ -28,7 +28,7 @@ public class SalesController(ISalesService salesService) : ControllerBase
     {
         var result = await salesService.CreateSaleAsync(request, cancellationToken);
 
-        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
+        return result.Succeeded ? Created("/api/sales", result) : BadRequest(result);
     }
 
     [HttpPut("{id:int}")]

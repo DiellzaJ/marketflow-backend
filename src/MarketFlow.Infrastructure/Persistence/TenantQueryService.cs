@@ -900,6 +900,15 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var departmentId = scope.Kind == InventoryScopeKind.Department
+            ? scope.DepartmentId
+            : null;
+
+        if (!CanAccessInventoryTarget(scope, request.MarketId, departmentId))
+        {
+            return null;
+        }
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
@@ -946,7 +955,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 schemaName,
                 item.ProductId,
                 request.MarketId,
-                departmentId: null,
+                departmentId,
                 -item.Quantity,
                 "SaleCompleted",
                 createdByUserId,
@@ -1487,6 +1496,12 @@ public sealed class TenantQueryService : ITenantQueryService
         if (string.Equals(role, RoleAssignmentRules.MainOperator, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(role, RoleAssignmentRules.Seller, StringComparison.OrdinalIgnoreCase))
         {
+            if (string.Equals(role, RoleAssignmentRules.Seller, StringComparison.OrdinalIgnoreCase) &&
+                assignment.DepartmentId.HasValue)
+            {
+                return InventoryScope.Department(assignment.MarketId, assignment.DepartmentId.Value);
+            }
+
             return InventoryScope.Market(assignment.MarketId);
         }
 
