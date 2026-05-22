@@ -15,11 +15,12 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
 
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicies.ReadInventory)]
-    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<InventoryItemDto>>>> GetAsync(
+    public async Task<ActionResult<ServiceResult<PagedResult<InventoryItemDto>>>> GetAsync(
+        [FromQuery] InventoryListQuery query,
         CancellationToken cancellationToken)
     {
-        var result = await inventoryService.GetInventoryAsync(cancellationToken);
-        return Ok(result);
+        var result = await inventoryService.GetInventoryAsync(query, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 
     [HttpGet("{id:int}", Name = GetInventoryItemByIdRouteName)]

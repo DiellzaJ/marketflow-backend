@@ -2,6 +2,7 @@ using System.Data;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Features.Inventory.Configuration;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
@@ -355,49 +356,77 @@ public sealed class TenantQueryService : ITenantQueryService
         return categories;
     }
 
-    public async Task<IReadOnlyCollection<InventoryItemDto>> GetInventoryAsync(
+    public async Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
+        InventoryListQuery query,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var inventory = new List<InventoryItemDto>();
-        var scopeCondition = BuildInventoryScopeCondition(scope);
+        var whereClause = BuildInventoryWhereClause(query, scope);
+        var sortColumn = GetInventorySortColumn(query.SortBy);
+        var sortDirection = string.Equals(query.SortDirection, "desc", StringComparison.OrdinalIgnoreCase)
+            ? "DESC"
+            : "ASC";
+        var offset = ((long)query.Page - 1L) * query.PageSize;
+
+        await using var countCommand = await CreateCommandAsync($"""
+            SELECT COUNT(*)
+            FROM {schemaName}.inventory i
+            INNER JOIN {schemaName}.products p ON p.id = i.product_id
+            INNER JOIN {schemaName}.markets m ON m.id = i.market_id
+            LEFT JOIN {schemaName}.departments d ON d.id = i.department_id
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            {whereClause};
+            """, cancellationToken);
+        AddInventoryListParameters(countCommand, query);
+        AddInventoryScopeParameters(countCommand, scope);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
 
         await using var command = await CreateCommandAsync($"""
             SELECT i.id,
                    i.product_id,
                    p.name,
+                   p.barcode,
+                   p.category_id,
+                   c.name AS category_name,
                    i.market_id,
                    m.name,
                    i.department_id,
+                   d.name AS department_name,
                    i.quantity,
-                   i.reserved_quantity
+                   i.reserved_quantity,
+                   i.quantity - i.reserved_quantity AS available_quantity,
+                   i.updated_at
             FROM {schemaName}.inventory i
             INNER JOIN {schemaName}.products p ON p.id = i.product_id
             INNER JOIN {schemaName}.markets m ON m.id = i.market_id
-            {scopeCondition}
-            ORDER BY m.name, p.name;
+            LEFT JOIN {schemaName}.departments d ON d.id = i.department_id
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            {whereClause}
+            ORDER BY {sortColumn} {sortDirection}, i.id ASC
+            LIMIT @page_size OFFSET @offset;
             """, cancellationToken);
+        AddInventoryListParameters(command, query);
         AddInventoryScopeParameters(command, scope);
+        command.Parameters.AddWithValue("page_size", query.PageSize);
+        command.Parameters.AddWithValue("offset", offset);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
         while (await reader.ReadAsync(cancellationToken))
         {
-            inventory.Add(new InventoryItemDto
-            {
-                Id = reader.GetInt32(0),
-                ProductId = reader.GetInt32(1),
-                ProductName = reader.GetString(2),
-                MarketId = reader.GetInt32(3),
-                MarketName = reader.GetString(4),
-                DepartmentId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                Quantity = reader.GetInt32(6),
-                ReservedQuantity = reader.GetInt32(7)
-            });
+            inventory.Add(ReadInventoryItem(reader));
         }
 
-        return inventory;
+        return new PagedResult<InventoryItemDto>
+        {
+            Items = inventory,
+            Page = query.Page,
+            PageSize = query.PageSize,
+            TotalCount = totalCount,
+            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
+        };
     }
 
     public async Task<InventoryItemDto?> CreateInventoryItemAsync(
@@ -915,14 +944,22 @@ public sealed class TenantQueryService : ITenantQueryService
             SELECT i.id,
                    i.product_id,
                    p.name,
+                   p.barcode,
+                   p.category_id,
+                   c.name AS category_name,
                    i.market_id,
                    m.name,
                    i.department_id,
+                   d.name AS department_name,
                    i.quantity,
-                   i.reserved_quantity
+                   i.reserved_quantity,
+                   i.quantity - i.reserved_quantity AS available_quantity,
+                   i.updated_at
             FROM {schemaName}.inventory i
             INNER JOIN {schemaName}.products p ON p.id = i.product_id
             INNER JOIN {schemaName}.markets m ON m.id = i.market_id
+            LEFT JOIN {schemaName}.departments d ON d.id = i.department_id
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
             WHERE i.id = @id
               {scopeCondition};
             """, cancellationToken);
@@ -931,19 +968,7 @@ public sealed class TenantQueryService : ITenantQueryService
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-        return await reader.ReadAsync(cancellationToken)
-            ? new InventoryItemDto
-            {
-                Id = reader.GetInt32(0),
-                ProductId = reader.GetInt32(1),
-                ProductName = reader.GetString(2),
-                MarketId = reader.GetInt32(3),
-                MarketName = reader.GetString(4),
-                DepartmentId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                Quantity = reader.GetInt32(6),
-                ReservedQuantity = reader.GetInt32(7)
-            }
-            : null;
+        return await reader.ReadAsync(cancellationToken) ? ReadInventoryItem(reader) : null;
     }
 
     public async Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(
@@ -1267,6 +1292,113 @@ public sealed class TenantQueryService : ITenantQueryService
         };
     }
 
+    private static string BuildInventoryWhereClause(InventoryListQuery query, InventoryScope scope)
+    {
+        var conditions = new List<string>();
+
+        switch (scope.Kind)
+        {
+            case InventoryScopeKind.Company:
+                break;
+            case InventoryScopeKind.Market:
+                conditions.Add("i.market_id = @scope_market_id");
+                break;
+            case InventoryScopeKind.Department:
+                conditions.Add("i.market_id = @scope_market_id");
+                conditions.Add("i.department_id = @scope_department_id");
+                break;
+            default:
+                conditions.Add("FALSE");
+                break;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            conditions.Add("(p.name ILIKE @search ESCAPE '\\' OR p.barcode ILIKE @search ESCAPE '\\')");
+        }
+
+        if (query.ProductId.HasValue)
+        {
+            conditions.Add("i.product_id = @product_id");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Barcode))
+        {
+            conditions.Add("p.barcode ILIKE @barcode ESCAPE '\\'");
+        }
+
+        if (query.CategoryId.HasValue)
+        {
+            conditions.Add("p.category_id = @category_id");
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            conditions.Add("i.market_id = @market_id");
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            conditions.Add("i.department_id = @department_id");
+        }
+
+        if (query.LowStockOnly)
+        {
+            conditions.Add("(i.quantity - i.reserved_quantity) <= p.min_stock_alert");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static void AddInventoryListParameters(NpgsqlCommand command, InventoryListQuery query)
+    {
+        if (!string.IsNullOrWhiteSpace(query.Search))
+        {
+            command.Parameters.AddWithValue("search", LikePattern(query.Search));
+        }
+
+        if (query.ProductId.HasValue)
+        {
+            command.Parameters.AddWithValue("product_id", query.ProductId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Barcode))
+        {
+            command.Parameters.AddWithValue("barcode", LikePattern(query.Barcode));
+        }
+
+        if (query.CategoryId.HasValue)
+        {
+            command.Parameters.AddWithValue("category_id", query.CategoryId.Value);
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", query.MarketId.Value);
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("department_id", query.DepartmentId.Value);
+        }
+    }
+
+    private static string GetInventorySortColumn(string? sortBy)
+    {
+        return sortBy?.Trim() switch
+        {
+            { } value when string.Equals(value, InventorySortFields.Barcode, StringComparison.OrdinalIgnoreCase) => "p.barcode",
+            { } value when string.Equals(value, InventorySortFields.MarketName, StringComparison.OrdinalIgnoreCase) => "m.name",
+            { } value when string.Equals(value, InventorySortFields.DepartmentName, StringComparison.OrdinalIgnoreCase) => "d.name",
+            { } value when string.Equals(value, InventorySortFields.Quantity, StringComparison.OrdinalIgnoreCase) => "i.quantity",
+            { } value when string.Equals(value, InventorySortFields.AvailableQuantity, StringComparison.OrdinalIgnoreCase) => "available_quantity",
+            { } value when string.Equals(value, InventorySortFields.UpdatedAt, StringComparison.OrdinalIgnoreCase) => "i.updated_at",
+            _ => "p.name"
+        };
+    }
+
     private static string LikePattern(string value)
     {
         var escaped = value.Trim()
@@ -1275,6 +1407,27 @@ public sealed class TenantQueryService : ITenantQueryService
             .Replace("_", @"\_", StringComparison.Ordinal);
 
         return $"%{escaped}%";
+    }
+
+    private static InventoryItemDto ReadInventoryItem(NpgsqlDataReader reader)
+    {
+        return new InventoryItemDto
+        {
+            Id = reader.GetInt32(0),
+            ProductId = reader.GetInt32(1),
+            ProductName = reader.GetString(2),
+            Barcode = reader.IsDBNull(3) ? null : reader.GetString(3),
+            CategoryId = reader.IsDBNull(4) ? null : reader.GetInt32(4),
+            CategoryName = reader.IsDBNull(5) ? null : reader.GetString(5),
+            MarketId = reader.GetInt32(6),
+            MarketName = reader.GetString(7),
+            DepartmentId = reader.IsDBNull(8) ? null : reader.GetInt32(8),
+            DepartmentName = reader.IsDBNull(9) ? null : reader.GetString(9),
+            Quantity = reader.GetInt32(10),
+            ReservedQuantity = reader.GetInt32(11),
+            AvailableQuantity = reader.GetInt32(12),
+            UpdatedAt = reader.GetFieldValue<DateTimeOffset>(13)
+        };
     }
 
     private static ProductDto ReadProduct(NpgsqlDataReader reader)

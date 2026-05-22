@@ -8,13 +8,25 @@ public class InventoryItemDto
 
     public string ProductName { get; set; } = string.Empty;
 
+    public string? Barcode { get; set; }
+
+    public int? CategoryId { get; set; }
+
+    public string? CategoryName { get; set; }
+
     public int MarketId { get; set; }
 
     public string MarketName { get; set; } = string.Empty;
 
     public int? DepartmentId { get; set; }
 
+    public string? DepartmentName { get; set; }
+
     public int Quantity { get; set; }
 
     public int ReservedQuantity { get; set; }
+
+    public int AvailableQuantity { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; }
 }

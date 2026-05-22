@@ -911,7 +911,8 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
-        public Task<IReadOnlyCollection<InventoryItemDto>> GetInventoryAsync(
+        public Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
+            InventoryListQuery query,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

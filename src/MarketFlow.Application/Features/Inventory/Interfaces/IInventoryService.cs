@@ -5,7 +5,8 @@ namespace MarketFlow.Application.Features.Inventory.Interfaces;
 
 public interface IInventoryService
 {
-    Task<ServiceResult<IReadOnlyCollection<InventoryItemDto>>> GetInventoryAsync(
+    Task<ServiceResult<PagedResult<InventoryItemDto>>> GetInventoryAsync(
+        InventoryListQuery query,
         CancellationToken cancellationToken = default);
 
     Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(
