@@ -829,7 +829,7 @@ public sealed class TenantQueryService : ITenantQueryService
         return sales;
     }
 
-    public async Task<SaleDto> CreateSaleAsync(
+    public async Task<SaleDto?> CreateSaleAsync(
         CreateSaleRequest request,
         int createdByUserId,
         CancellationToken cancellationToken = default)
@@ -877,7 +877,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 cancellationToken,
                 transaction);
 
-            await ApplyInventoryQuantityChangeByProductAsync(
+            var stockUpdated = await ApplyInventoryQuantityChangeByProductAsync(
                 schemaName,
                 item.ProductId,
                 request.MarketId,
@@ -888,6 +888,11 @@ public sealed class TenantQueryService : ITenantQueryService
                 $"sale:{sale.Id}",
                 cancellationToken,
                 transaction);
+
+            if (!stockUpdated)
+            {
+                return null;
+            }
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -1075,6 +1080,7 @@ public sealed class TenantQueryService : ITenantQueryService
     public async Task<PurchaseDto?> UpdatePurchaseAsync(
         int id,
         UpdatePurchaseRequest request,
+        int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
@@ -1115,7 +1121,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 schemaName,
                 purchase,
                 previousStatus,
-                updatedByUserId: null,
+                updatedByUserId,
                 cancellationToken,
                 transaction);
         }
@@ -1128,6 +1134,7 @@ public sealed class TenantQueryService : ITenantQueryService
     public async Task<PurchaseDto?> PatchPurchaseAsync(
         int id,
         PatchPurchaseRequest request,
+        int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
@@ -1168,7 +1175,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 schemaName,
                 purchase,
                 previousStatus,
-                updatedByUserId: null,
+                updatedByUserId,
                 cancellationToken,
                 transaction);
         }
@@ -1565,7 +1572,7 @@ public sealed class TenantQueryService : ITenantQueryService
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private async Task ApplyInventoryQuantityChangeByProductAsync(
+    private async Task<bool> ApplyInventoryQuantityChangeByProductAsync(
         string quotedSchemaName,
         int productId,
         int marketId,
@@ -1614,7 +1621,7 @@ public sealed class TenantQueryService : ITenantQueryService
 
         if (updatedInventoryId is null)
         {
-            throw new InvalidOperationException("Inventory stock could not be updated.");
+            return false;
         }
 
         await RecordInventoryMovementAsync(
@@ -1626,6 +1633,8 @@ public sealed class TenantQueryService : ITenantQueryService
             referenceNumber,
             cancellationToken,
             transaction);
+
+        return true;
     }
 
     private async Task<int?> GetInventoryIdForUpdateAsync(

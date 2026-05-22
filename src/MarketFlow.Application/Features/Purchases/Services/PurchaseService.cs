@@ -59,7 +59,11 @@ public class PurchaseService : IPurchaseService
             return ServiceResult<PurchaseDto>.Failure("Supplier and market are required.");
         }
 
-        var purchase = await _tenantQueryService.UpdatePurchaseAsync(id, request, cancellationToken);
+        var purchase = await _tenantQueryService.UpdatePurchaseAsync(
+            id,
+            request,
+            _currentUserService.UserId,
+            cancellationToken);
 
         return purchase is null
             ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.")
@@ -71,7 +75,11 @@ public class PurchaseService : IPurchaseService
         PatchPurchaseRequest request,
         CancellationToken cancellationToken = default)
     {
-        var purchase = await _tenantQueryService.PatchPurchaseAsync(id, request, cancellationToken);
+        var purchase = await _tenantQueryService.PatchPurchaseAsync(
+            id,
+            request,
+            _currentUserService.UserId,
+            cancellationToken);
 
         return purchase is null
             ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.")

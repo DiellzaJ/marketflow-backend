@@ -85,7 +85,7 @@ public interface ITenantQueryService
 
     Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default);
 
-    Task<SaleDto> CreateSaleAsync(
+    Task<SaleDto?> CreateSaleAsync(
         CreateSaleRequest request,
         int createdByUserId,
         CancellationToken cancellationToken = default);
@@ -103,9 +103,17 @@ public interface ITenantQueryService
         int createdByUserId,
         CancellationToken cancellationToken = default);
 
-    Task<PurchaseDto?> UpdatePurchaseAsync(int id, UpdatePurchaseRequest request, CancellationToken cancellationToken = default);
+    Task<PurchaseDto?> UpdatePurchaseAsync(
+        int id,
+        UpdatePurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
 
-    Task<PurchaseDto?> PatchPurchaseAsync(int id, PatchPurchaseRequest request, CancellationToken cancellationToken = default);
+    Task<PurchaseDto?> PatchPurchaseAsync(
+        int id,
+        PatchPurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
 
     Task<bool> DeletePurchaseAsync(int id, CancellationToken cancellationToken = default);
 }

@@ -46,7 +46,9 @@ public class SalesService : ISalesService
 
         var sale = await _tenantQueryService.CreateSaleAsync(request, userId, cancellationToken);
 
-        return ServiceResult<SaleDto>.Success(sale, "Sale created.");
+        return sale is null
+            ? ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.")
+            : ServiceResult<SaleDto>.Success(sale, "Sale created.");
     }
 
     public async Task<ServiceResult<SaleDto>> UpdateSaleAsync(

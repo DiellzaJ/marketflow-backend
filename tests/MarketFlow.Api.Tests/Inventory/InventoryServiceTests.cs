@@ -290,14 +290,14 @@ public sealed class InventoryServiceTests
         public Task<bool> TransferInventoryAsync(TransferInventoryRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<SaleDto> CreateSaleAsync(CreateSaleRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<SaleDto?> CreateSaleAsync(CreateSaleRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto?> UpdateSaleAsync(int id, UpdateSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto?> PatchSaleAsync(int id, PatchSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeleteSaleAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PurchaseDto> CreatePurchaseAsync(CreatePurchaseRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PurchaseDto?> UpdatePurchaseAsync(int id, UpdatePurchaseRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<PurchaseDto?> PatchPurchaseAsync(int id, PatchPurchaseRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PurchaseDto?> UpdatePurchaseAsync(int id, UpdatePurchaseRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PurchaseDto?> PatchPurchaseAsync(int id, PatchPurchaseRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeletePurchaseAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
