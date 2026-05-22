@@ -9,8 +9,10 @@ using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
+using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Infrastructure.MultiTenancy;
+using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -18,18 +20,27 @@ namespace MarketFlow.Infrastructure.Persistence;
 
 public sealed class TenantQueryService : ITenantQueryService
 {
+    private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
+
     private readonly ApplicationDbContext _dbContext;
     private readonly TenantProvider _tenantProvider;
     private readonly ICurrentUserService _currentUserService;
+    private readonly RedisCacheService? _cacheService;
+    private readonly TimeSpan _barcodeLookupCacheTtl;
 
     public TenantQueryService(
         ApplicationDbContext dbContext,
         TenantProvider tenantProvider,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        RedisCacheService? cacheService = null,
+        IConfiguration? configuration = null)
     {
         _dbContext = dbContext;
         _tenantProvider = tenantProvider;
         _currentUserService = currentUserService;
+        _cacheService = cacheService;
+        _barcodeLookupCacheTtl = TimeSpan.FromSeconds(
+            GetBarcodeLookupCacheTtlSeconds(configuration));
     }
 
     public async Task<PagedResult<ProductDto>> GetProductsAsync(
@@ -37,6 +48,36 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        if (IsProductBarcodeLookup(query))
+        {
+            var cacheKey = CreateBarcodeCacheKey(
+                await GetCurrentTenantIdAsync(cancellationToken),
+                query.Barcode!);
+            var lookupVariantKey = CreateProductBarcodeLookupVariantKey(query);
+            var cachedLookup = await GetBarcodeLookupCacheAsync(cacheKey, cancellationToken);
+
+            if (cachedLookup?.ProductLookups.TryGetValue(lookupVariantKey, out var cachedProducts) == true)
+            {
+                return cachedProducts;
+            }
+
+            var lookupResult = await GetProductsFromDatabaseAsync(query, schemaName, cancellationToken);
+            cachedLookup ??= new BarcodeLookupCacheEntry();
+            cachedLookup.ProductLookups[lookupVariantKey] = lookupResult;
+            await SetBarcodeLookupCacheAsync(cacheKey, cachedLookup, cancellationToken);
+
+            return lookupResult;
+        }
+
+        return await GetProductsFromDatabaseAsync(query, schemaName, cancellationToken);
+    }
+
+    private async Task<PagedResult<ProductDto>> GetProductsFromDatabaseAsync(
+        ProductListQuery query,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
         var products = new List<ProductDto>();
         var whereClause = BuildProductWhereClause(query);
         var sortColumn = GetProductSortColumn(query.SortBy);
@@ -210,6 +251,8 @@ public sealed class TenantQueryService : ITenantQueryService
             ? value
             : throw new InvalidOperationException("Product was not created.");
 
+        await InvalidateBarcodeLookupAsync(request.Barcode, cancellationToken);
+
         return await GetProductAsync(createdId, cancellationToken: cancellationToken)
             ?? throw new InvalidOperationException("Product was not found after creation.");
     }
@@ -220,6 +263,7 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var currentBarcode = await GetProductBarcodeByIdAsync(schemaName, id, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.products
@@ -250,9 +294,15 @@ public sealed class TenantQueryService : ITenantQueryService
             throw new ProductBarcodeConflictException();
         }
 
-        return updatedId is null
-            ? null
-            : await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
+        if (updatedId is null)
+        {
+            return null;
+        }
+
+        await InvalidateBarcodeLookupAsync(currentBarcode, cancellationToken);
+        await InvalidateBarcodeLookupAsync(request.Barcode, cancellationToken);
+
+        return await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
     }
 
     public async Task<ProductDto?> PatchProductAsync(
@@ -261,6 +311,7 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var currentBarcode = await GetProductBarcodeByIdAsync(schemaName, id, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.products
@@ -299,9 +350,15 @@ public sealed class TenantQueryService : ITenantQueryService
             throw new ProductBarcodeConflictException();
         }
 
-        return updatedId is null
-            ? null
-            : await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
+        if (updatedId is null)
+        {
+            return null;
+        }
+
+        await InvalidateBarcodeLookupAsync(currentBarcode, cancellationToken);
+        await InvalidateBarcodeLookupAsync(request.Barcode ?? currentBarcode, cancellationToken);
+
+        return await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
     }
 
     public async Task<ProductDto?> SetProductActiveStateAsync(
@@ -310,6 +367,7 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var currentBarcode = await GetProductBarcodeByIdAsync(schemaName, id, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.products
@@ -323,9 +381,14 @@ public sealed class TenantQueryService : ITenantQueryService
 
         var updatedId = await command.ExecuteScalarAsync(cancellationToken);
 
-        return updatedId is null
-            ? null
-            : await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
+        if (updatedId is null)
+        {
+            return null;
+        }
+
+        await InvalidateBarcodeLookupAsync(currentBarcode, cancellationToken);
+
+        return await GetProductAsync(id, includeInactive: true, cancellationToken: cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(
@@ -362,6 +425,37 @@ public sealed class TenantQueryService : ITenantQueryService
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+        if (IsInventoryBarcodeLookup(query))
+        {
+            var cacheKey = CreateBarcodeCacheKey(
+                await GetCurrentTenantIdAsync(cancellationToken),
+                query.Barcode!);
+            var lookupVariantKey = CreateInventoryBarcodeLookupVariantKey(query, scope);
+            var cachedLookup = await GetBarcodeLookupCacheAsync(cacheKey, cancellationToken);
+
+            if (cachedLookup?.InventoryLookups.TryGetValue(lookupVariantKey, out var cachedInventory) == true)
+            {
+                return cachedInventory;
+            }
+
+            var lookupResult = await GetInventoryFromDatabaseAsync(query, schemaName, scope, cancellationToken);
+            cachedLookup ??= new BarcodeLookupCacheEntry();
+            cachedLookup.InventoryLookups[lookupVariantKey] = lookupResult;
+            await SetBarcodeLookupCacheAsync(cacheKey, cachedLookup, cancellationToken);
+
+            return lookupResult;
+        }
+
+        return await GetInventoryFromDatabaseAsync(query, schemaName, scope, cancellationToken);
+    }
+
+    private async Task<PagedResult<InventoryItemDto>> GetInventoryFromDatabaseAsync(
+        InventoryListQuery query,
+        string schemaName,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
         var inventory = new List<InventoryItemDto>();
         var whereClause = BuildInventoryWhereClause(query, scope);
         var sortColumn = GetInventorySortColumn(query.SortBy);
@@ -501,6 +595,8 @@ public sealed class TenantQueryService : ITenantQueryService
             return null;
         }
 
+        var productBarcode = await GetProductBarcodeByIdAsync(schemaName, request.ProductId, cancellationToken);
+
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.inventory (
@@ -544,6 +640,7 @@ public sealed class TenantQueryService : ITenantQueryService
         }
 
         await transaction.CommitAsync(cancellationToken);
+        await InvalidateBarcodeLookupAsync(productBarcode, cancellationToken);
 
         return await GetInventoryItemAsync(createdId, cancellationToken)
             ?? throw new InvalidOperationException("Inventory item was not found after creation.");
@@ -558,6 +655,7 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
+        var currentBarcode = await GetInventoryItemBarcodeByIdAsync(schemaName, id, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
@@ -613,6 +711,7 @@ public sealed class TenantQueryService : ITenantQueryService
         }
 
         await transaction.CommitAsync(cancellationToken);
+        await InvalidateBarcodeLookupAsync(currentBarcode, cancellationToken);
 
         return await GetInventoryItemAsync(id, cancellationToken);
     }
@@ -624,6 +723,7 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
+        var currentBarcode = await GetInventoryItemBarcodeByIdAsync(schemaName, id, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             DELETE FROM {schemaName}.inventory
@@ -633,7 +733,14 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("id", id);
         AddInventoryScopeParameters(command, scope);
 
-        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        var deleted = await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+
+        if (deleted)
+        {
+            await InvalidateBarcodeLookupAsync(currentBarcode, cancellationToken);
+        }
+
+        return deleted;
     }
 
     public async Task<InventoryItemDto?> PatchInventoryItemAsync(
@@ -645,6 +752,7 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
+        var currentBarcode = await GetInventoryItemBarcodeByIdAsync(schemaName, id, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
@@ -700,6 +808,7 @@ public sealed class TenantQueryService : ITenantQueryService
         }
 
         await transaction.CommitAsync(cancellationToken);
+        await InvalidateBarcodeLookupAsync(currentBarcode, cancellationToken);
 
         return await GetInventoryItemAsync(id, cancellationToken);
     }
@@ -713,6 +822,7 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
+        var currentBarcode = await GetInventoryItemBarcodeByIdAsync(schemaName, id, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
@@ -762,6 +872,7 @@ public sealed class TenantQueryService : ITenantQueryService
             request.Note);
 
         await transaction.CommitAsync(cancellationToken);
+        await InvalidateBarcodeLookupAsync(currentBarcode, cancellationToken);
 
         return await GetInventoryItemAsync(id, cancellationToken);
     }
@@ -774,6 +885,7 @@ public sealed class TenantQueryService : ITenantQueryService
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
+        var productBarcode = await GetProductBarcodeByIdAsync(schemaName, request.ProductId, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
@@ -862,6 +974,7 @@ public sealed class TenantQueryService : ITenantQueryService
             note: request.Note);
 
         await transaction.CommitAsync(cancellationToken);
+        await InvalidateBarcodeLookupAsync(productBarcode, cancellationToken);
         return true;
     }
 
@@ -1739,6 +1852,12 @@ public sealed class TenantQueryService : ITenantQueryService
             return false;
         }
 
+        var productBarcode = await GetProductBarcodeByIdAsync(
+            quotedSchemaName,
+            productId,
+            cancellationToken,
+            transaction);
+
         await RecordInventoryMovementAsync(
             quotedSchemaName,
             updatedInventoryId.Value,
@@ -1748,6 +1867,8 @@ public sealed class TenantQueryService : ITenantQueryService
             referenceNumber,
             cancellationToken,
             transaction);
+
+        await InvalidateBarcodeLookupAsync(productBarcode, cancellationToken);
 
         return true;
     }
@@ -1904,6 +2025,134 @@ public sealed class TenantQueryService : ITenantQueryService
         return items;
     }
 
+    private async Task<string?> GetProductBarcodeByIdAsync(
+        string quotedSchemaName,
+        int productId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT barcode
+            FROM {quotedSchemaName}.products
+            WHERE id = @product_id;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("product_id", productId);
+
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    private async Task<string?> GetInventoryItemBarcodeByIdAsync(
+        string quotedSchemaName,
+        int inventoryId,
+        CancellationToken cancellationToken)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT p.barcode
+            FROM {quotedSchemaName}.inventory i
+            INNER JOIN {quotedSchemaName}.products p ON p.id = i.product_id
+            WHERE i.id = @inventory_id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("inventory_id", inventoryId);
+
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    private async Task<BarcodeLookupCacheEntry?> GetBarcodeLookupCacheAsync(
+        string cacheKey,
+        CancellationToken cancellationToken)
+    {
+        return _cacheService is null
+            ? null
+            : await _cacheService.GetAsync<BarcodeLookupCacheEntry>(cacheKey, cancellationToken);
+    }
+
+    private async Task SetBarcodeLookupCacheAsync(
+        string cacheKey,
+        BarcodeLookupCacheEntry lookup,
+        CancellationToken cancellationToken)
+    {
+        if (_cacheService is not null)
+        {
+            await _cacheService.SetAsync(cacheKey, lookup, _barcodeLookupCacheTtl, cancellationToken);
+        }
+    }
+
+    private async Task InvalidateBarcodeLookupAsync(
+        string? barcode,
+        CancellationToken cancellationToken)
+    {
+        if (_cacheService is null || string.IsNullOrWhiteSpace(barcode))
+        {
+            return;
+        }
+
+        var cacheKey = CreateBarcodeCacheKey(
+            await GetCurrentTenantIdAsync(cancellationToken),
+            barcode);
+
+        await _cacheService.RemoveAsync(cacheKey, cancellationToken);
+    }
+
+    private async Task<string> GetCurrentTenantIdAsync(CancellationToken cancellationToken)
+    {
+        return await _tenantProvider.GetCurrentSchemaNameAsync(cancellationToken);
+    }
+
+    private static string CreateBarcodeCacheKey(string tenantId, string barcode)
+    {
+        return $"tenant:{tenantId}:barcode:{barcode.Trim()}";
+    }
+
+    private static string CreateProductBarcodeLookupVariantKey(ProductListQuery query)
+    {
+        return string.Join(
+            ':',
+            "products",
+            $"page={query.Page}",
+            $"size={query.PageSize}",
+            $"sort={NormalizeCacheKeyPart(query.SortBy)}",
+            $"dir={NormalizeCacheKeyPart(query.SortDirection)}");
+    }
+
+    private static string CreateInventoryBarcodeLookupVariantKey(InventoryListQuery query, InventoryScope scope)
+    {
+        return string.Join(
+            ':',
+            "inventory",
+            $"scope={CreateInventoryScopeCacheKeyPart(scope)}",
+            $"page={query.Page}",
+            $"size={query.PageSize}",
+            $"sort={NormalizeCacheKeyPart(query.SortBy)}",
+            $"dir={NormalizeCacheKeyPart(query.SortDirection)}");
+    }
+
+    private static string CreateInventoryScopeCacheKeyPart(InventoryScope scope)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => "company",
+            InventoryScopeKind.Market => $"market:{scope.MarketId}",
+            InventoryScopeKind.Department => $"department:{scope.MarketId}:{scope.DepartmentId}",
+            _ => "none"
+        };
+    }
+
+    private static string NormalizeCacheKeyPart(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToLowerInvariant();
+    }
+
+    private static int GetBarcodeLookupCacheTtlSeconds(IConfiguration? configuration)
+    {
+        var configuredValue = configuration?["Redis:BarcodeLookupTtlSeconds"];
+
+        return int.TryParse(configuredValue, out var seconds) && seconds > 0
+            ? seconds
+            : DefaultBarcodeLookupCacheTtlSeconds;
+    }
+
     private static async Task<ProductDto?> ReadProductAsync(
         NpgsqlCommand command,
         CancellationToken cancellationToken)
@@ -1987,6 +2236,18 @@ public sealed class TenantQueryService : ITenantQueryService
         {
             command.Parameters.AddWithValue("is_active", query.IsActive.Value);
         }
+    }
+
+    private static bool IsProductBarcodeLookup(ProductListQuery query)
+    {
+        return !string.IsNullOrWhiteSpace(query.Barcode) &&
+            string.IsNullOrWhiteSpace(query.Search) &&
+            string.IsNullOrWhiteSpace(query.Name) &&
+            string.IsNullOrWhiteSpace(query.Category) &&
+            !query.CategoryId.HasValue &&
+            !query.IsActive.HasValue &&
+            !query.IncludeInactive &&
+            query.Page == 1;
     }
 
     private static string GetProductSortColumn(string? sortBy)
@@ -2097,6 +2358,18 @@ public sealed class TenantQueryService : ITenantQueryService
         {
             command.Parameters.AddWithValue("department_id", query.DepartmentId.Value);
         }
+    }
+
+    private static bool IsInventoryBarcodeLookup(InventoryListQuery query)
+    {
+        return !string.IsNullOrWhiteSpace(query.Barcode) &&
+            string.IsNullOrWhiteSpace(query.Search) &&
+            !query.ProductId.HasValue &&
+            !query.CategoryId.HasValue &&
+            !query.MarketId.HasValue &&
+            !query.DepartmentId.HasValue &&
+            !query.LowStockOnly &&
+            query.Page == 1;
     }
 
     private static string BuildInventoryMovementWhereClause(
@@ -2386,6 +2659,13 @@ public sealed class TenantQueryService : ITenantQueryService
     private sealed record PurchaseReceiptState(string Status, int MarketId);
 
     private sealed record PurchaseStockItem(int ProductId, int Quantity);
+
+    private sealed class BarcodeLookupCacheEntry
+    {
+        public Dictionary<string, PagedResult<ProductDto>> ProductLookups { get; set; } = [];
+
+        public Dictionary<string, PagedResult<InventoryItemDto>> InventoryLookups { get; set; } = [];
+    }
 
     private sealed record InventoryScope(
         InventoryScopeKind Kind,

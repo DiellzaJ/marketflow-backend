@@ -21,6 +21,7 @@ public static class EnvironmentVariableConfigurationExtensions
             ["ROOT_ADMIN_PASSWORD"] = "RootAdmin:Password",
             ["TENANT_SCHEMA_PREFIX"] = "Tenant:SchemaPrefix",
             ["REDIS_CONNECTION"] = "Redis:Configuration",
+            ["REDIS_BARCODE_LOOKUP_TTL_SECONDS"] = "Redis:BarcodeLookupTtlSeconds",
             ["OPENAI_API_KEY"] = "OpenAi:ApiKey",
             ["OPENAI_MODEL"] = "OpenAi:Model",
             ["FRONTEND_URL"] = "Cors:FrontendUrl"
