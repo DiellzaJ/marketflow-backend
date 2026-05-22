@@ -27,9 +27,13 @@ public static class AuthorizationPolicies
 
     public const string CreateInventory = "CreateInventory";
     public const string ReadInventory = "ReadInventory";
-    public const string UpdateInventoryStock = "UpdateInventoryStock";
-    public const string AdjustInventoryStock = "AdjustInventoryStock";
+    public const string UpdateInventory = "UpdateInventory";
+    public const string AdjustInventory = "AdjustInventory";
     public const string DeleteInventory = "DeleteInventory";
     public const string ReadInventoryMovements = "ReadInventoryMovements";
-    public const string TransferInventoryStock = "TransferInventoryStock";
+    public const string TransferInventory = "TransferInventory";
+
+    public const string UpdateInventoryStock = UpdateInventory;
+    public const string AdjustInventoryStock = AdjustInventory;
+    public const string TransferInventoryStock = TransferInventory;
 }

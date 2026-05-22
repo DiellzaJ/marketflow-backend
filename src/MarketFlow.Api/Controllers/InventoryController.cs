@@ -32,7 +32,7 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
     }
 
     [HttpPut("{id:int}")]
-    [Authorize(Policy = AuthorizationPolicies.UpdateInventoryStock)]
+    [Authorize(Policy = AuthorizationPolicies.UpdateInventory)]
     public async Task<ActionResult<ServiceResult<InventoryItemDto>>> UpdateAsync(
         int id,
         UpdateInventoryItemRequest request,
@@ -44,7 +44,7 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
     }
 
     [HttpPatch("{id:int}")]
-    [Authorize(Policy = AuthorizationPolicies.AdjustInventoryStock)]
+    [Authorize(Policy = AuthorizationPolicies.AdjustInventory)]
     public async Task<ActionResult<ServiceResult<InventoryItemDto>>> PatchAsync(
         int id,
         PatchInventoryItemRequest request,
