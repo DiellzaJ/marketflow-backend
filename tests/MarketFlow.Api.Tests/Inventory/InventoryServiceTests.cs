@@ -172,7 +172,8 @@ public sealed class InventoryServiceTests
         var tenantQueryService = new RecordingTenantQueryService
         {
             InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 },
-            ReturnNullFromAdjustment = true
+            ReturnNullFromAdjustment = true,
+            ReturnNullFromSecondInventoryRead = true
         };
         var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
 
@@ -183,6 +184,26 @@ public sealed class InventoryServiceTests
         Assert.False(result.Succeeded);
         Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
         Assert.Equal("Inventory item was not found.", result.Message);
+        Assert.True(tenantQueryService.AdjustInventoryWasCalled);
+    }
+
+    [Fact]
+    public async Task AdjustInventoryItemAsync_ReturnsNegativeStockFailureWhenConcurrentAdjustmentUnderflows()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 },
+            ReturnNullFromAdjustment = true
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = -4, Reason = "ManualCorrection" });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal("Stock cannot become negative.", result.Message);
         Assert.True(tenantQueryService.AdjustInventoryWasCalled);
     }
 
@@ -203,6 +224,10 @@ public sealed class InventoryServiceTests
         public InventoryItemDto? InventoryItem { get; init; }
 
         public bool ReturnNullFromAdjustment { get; init; }
+
+        public bool ReturnNullFromSecondInventoryRead { get; init; }
+
+        private int _inventoryReadCount;
 
         public Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
             InventoryListQuery query,
@@ -230,7 +255,15 @@ public sealed class InventoryServiceTests
         public Task<ProductDto?> PatchProductAsync(int id, PatchProductRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ProductDto?> SetProductActiveStateAsync(int id, bool isActive, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default) => Task.FromResult(InventoryItem);
+        public Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default)
+        {
+            _inventoryReadCount++;
+
+            return Task.FromResult<InventoryItemDto?>(
+                ReturnNullFromSecondInventoryRead && _inventoryReadCount > 1
+                    ? null
+                    : InventoryItem);
+        }
         public Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(int inventoryId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<InventoryItemDto?> CreateInventoryItemAsync(CreateInventoryItemRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<InventoryItemDto?> UpdateInventoryItemAsync(int id, UpdateInventoryItemRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();

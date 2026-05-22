@@ -188,11 +188,18 @@ public class InventoryService : IInventoryService
             _currentUserService.UserId,
             cancellationToken);
 
-        return inventoryItem is null
+        if (inventoryItem is not null)
+        {
+            return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory stock adjusted.");
+        }
+
+        var inventoryStillExists = await _tenantQueryService.GetInventoryItemAsync(id, cancellationToken);
+
+        return inventoryStillExists is null
             ? ServiceResult<InventoryItemDto>.Failure(
                 "Inventory item was not found.",
                 ServiceResultFailureType.NotFound)
-            : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory stock adjusted.");
+            : ServiceResult<InventoryItemDto>.Failure("Stock cannot become negative.");
     }
 
     public async Task<ServiceResult<bool>> DeleteInventoryItemAsync(
