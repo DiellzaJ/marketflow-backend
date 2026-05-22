@@ -39,6 +39,11 @@ public class PurchaseService : IPurchaseService
             return ServiceResult<PurchaseDto>.Failure("Supplier and market are required.");
         }
 
+        if (request.Items.Any(item => item.ProductId <= 0 || item.Quantity <= 0 || item.UnitCost < 0))
+        {
+            return ServiceResult<PurchaseDto>.Failure("Purchase items must include a product, positive quantity, and non-negative unit cost.");
+        }
+
         var purchase = await _tenantQueryService.CreatePurchaseAsync(request, userId, cancellationToken);
 
         return ServiceResult<PurchaseDto>.Success(purchase, "Purchase created.");

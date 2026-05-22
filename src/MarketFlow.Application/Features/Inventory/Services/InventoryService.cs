@@ -66,21 +66,45 @@ public class InventoryService : IInventoryService
             : ServiceResult<InventoryItemDto>.Success(inventoryItem);
     }
 
-    public async Task<ServiceResult<IReadOnlyCollection<InventoryMovementDto>>> GetInventoryMovementsAsync(
+    public async Task<ServiceResult<PagedResult<InventoryMovementDto>>> GetInventoryMovementsAsync(
+        InventoryMovementListQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var validation = ValidateMovementQuery(query);
+        if (validation is not null)
+        {
+            return ServiceResult<PagedResult<InventoryMovementDto>>.Failure(validation);
+        }
+
+        var movements = await _tenantQueryService.GetInventoryMovementsAsync(query, cancellationToken);
+        return ServiceResult<PagedResult<InventoryMovementDto>>.Success(movements);
+    }
+
+    public async Task<ServiceResult<PagedResult<InventoryMovementDto>>> GetInventoryMovementsForInventoryAsync(
         int inventoryId,
+        InventoryMovementListQuery query,
         CancellationToken cancellationToken = default)
     {
         var inventoryItem = await _tenantQueryService.GetInventoryItemAsync(inventoryId, cancellationToken);
 
         if (inventoryItem is null)
         {
-            return ServiceResult<IReadOnlyCollection<InventoryMovementDto>>.Failure(
+            return ServiceResult<PagedResult<InventoryMovementDto>>.Failure(
                 "Inventory item was not found.");
         }
 
-        var movements = await _tenantQueryService.GetInventoryMovementsAsync(inventoryId, cancellationToken);
+        var validation = ValidateMovementQuery(query);
+        if (validation is not null)
+        {
+            return ServiceResult<PagedResult<InventoryMovementDto>>.Failure(validation);
+        }
 
-        return ServiceResult<IReadOnlyCollection<InventoryMovementDto>>.Success(movements);
+        var movements = await _tenantQueryService.GetInventoryMovementsForInventoryAsync(
+            inventoryId,
+            query,
+            cancellationToken);
+
+        return ServiceResult<PagedResult<InventoryMovementDto>>.Success(movements);
     }
 
     public async Task<ServiceResult<InventoryItemDto>> CreateInventoryItemAsync(
@@ -212,4 +236,74 @@ public class InventoryService : IInventoryService
             ? ServiceResult<bool>.Success(true, "Inventory item deleted.")
             : ServiceResult<bool>.Failure("Inventory item was not found.");
     }
+
+    public async Task<ServiceResult<bool>> TransferInventoryAsync(
+        TransferInventoryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        request.Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+
+        if (request.FromInventoryId <= 0 || request.ToInventoryId <= 0)
+        {
+            return ServiceResult<bool>.Failure("Source and destination inventory are required.");
+        }
+
+        if (request.FromInventoryId == request.ToInventoryId)
+        {
+            return ServiceResult<bool>.Failure("Source and destination inventory must be different.");
+        }
+
+        if (request.Quantity <= 0)
+        {
+            return ServiceResult<bool>.Failure("Transfer quantity must be greater than zero.");
+        }
+
+        var transferred = await _tenantQueryService.TransferInventoryAsync(
+            request,
+            _currentUserService.UserId,
+            cancellationToken);
+
+        return transferred
+            ? ServiceResult<bool>.Success(true, "Inventory stock transferred.")
+            : ServiceResult<bool>.Failure("Inventory transfer could not be completed.");
+    }
+
+    private static string? ValidateMovementQuery(InventoryMovementListQuery query)
+    {
+        query.MovementType = query.MovementType?.Trim();
+
+        if (query.Page < 1)
+        {
+            return "Page must be greater than zero.";
+        }
+
+        if (query.PageSize is < 1 or > MaxPageSize)
+        {
+            return $"Page size must be between 1 and {MaxPageSize}.";
+        }
+
+        if (query.DateFrom.HasValue && query.DateTo.HasValue && query.DateFrom > query.DateTo)
+        {
+            return "Date from cannot be later than date to.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.MovementType) &&
+            !AllowedMovementTypes.Contains(query.MovementType, StringComparer.OrdinalIgnoreCase))
+        {
+            return "Movement type is not supported.";
+        }
+
+        return null;
+    }
+
+    private static readonly IReadOnlySet<string> AllowedMovementTypes =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "InitialStock",
+            "ManualAdjustment",
+            "PurchaseReceived",
+            "SaleCompleted",
+            "TransferOut",
+            "TransferIn"
+        };
 }

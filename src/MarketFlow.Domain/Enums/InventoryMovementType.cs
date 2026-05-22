@@ -2,8 +2,10 @@ namespace MarketFlow.Domain.Enums;
 
 public enum InventoryMovementType
 {
-    Purchase = 1,
-    Sale = 2,
-    Adjustment = 3,
-    Transfer = 4
+    InitialStock = 1,
+    ManualAdjustment = 2,
+    PurchaseReceived = 3,
+    SaleCompleted = 4,
+    TransferOut = 5,
+    TransferIn = 6
 }

@@ -100,8 +100,8 @@ public sealed class InventoryScopeIntegrationTests
         var movements = await GetInventoryMovementsAsync(client, setup.DepartmentAInventory.Id);
         Assert.Contains(
             movements,
-            movement => movement.InventoryId == setup.DepartmentAInventory.Id &&
-                movement.MovementType == "Adjustment" &&
+                movement => movement.InventoryId == setup.DepartmentAInventory.Id &&
+                movement.MovementType == "ManualAdjustment" &&
                 movement.QuantityChanged == 31);
     }
 
@@ -201,12 +201,12 @@ public sealed class InventoryScopeIntegrationTests
         var response = await client.GetAsync($"/api/inventory/{inventoryId}/movements");
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<ServiceResult<IReadOnlyList<InventoryMovementDto>>>();
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<PagedResult<InventoryMovementDto>>>();
         Assert.NotNull(result);
         Assert.True(result.Succeeded);
         Assert.NotNull(result.Data);
 
-        return result.Data;
+        return result.Data.Items.ToList();
     }
 
     private static async Task<InventoryScopeSetup> CreateSingleTenantInventorySetupAsync(

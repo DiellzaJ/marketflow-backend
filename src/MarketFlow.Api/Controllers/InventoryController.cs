@@ -23,6 +23,16 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
         return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 
+    [HttpGet("movements")]
+    [Authorize(Policy = AuthorizationPolicies.ReadInventoryMovements)]
+    public async Task<ActionResult<ServiceResult<PagedResult<InventoryMovementDto>>>> GetMovementsAsync(
+        [FromQuery] InventoryMovementListQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.GetInventoryMovementsAsync(query, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
     [HttpGet("{id:int}", Name = GetInventoryItemByIdRouteName)]
     [Authorize(Policy = AuthorizationPolicies.ReadInventory)]
     public async Task<ActionResult<ServiceResult<InventoryItemDto>>> GetByIdAsync(
@@ -35,12 +45,18 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
 
     [HttpGet("{id:int}/movements")]
     [Authorize(Policy = AuthorizationPolicies.ReadInventoryMovements)]
-    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<InventoryMovementDto>>>> GetMovementsAsync(
+    public async Task<ActionResult<ServiceResult<PagedResult<InventoryMovementDto>>>> GetMovementsForInventoryAsync(
         int id,
+        [FromQuery] InventoryMovementListQuery query,
         CancellationToken cancellationToken)
     {
-        var result = await inventoryService.GetInventoryMovementsAsync(id, cancellationToken);
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        var result = await inventoryService.GetInventoryMovementsForInventoryAsync(id, query, cancellationToken);
+
+        return result.Succeeded
+            ? Ok(result)
+            : result.Message == "Inventory item was not found."
+                ? NotFound(result)
+                : BadRequest(result);
     }
 
     [HttpPost]
@@ -94,6 +110,17 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
             : result.FailureType == ServiceResultFailureType.NotFound
                 ? NotFound(result)
                 : BadRequest(result);
+    }
+
+    [HttpPost("transfer")]
+    [Authorize(Policy = AuthorizationPolicies.TransferInventory)]
+    public async Task<ActionResult<ServiceResult<bool>>> TransferAsync(
+        TransferInventoryRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.TransferInventoryAsync(request, cancellationToken);
+
+        return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 
     [HttpDelete("{id:int}")]

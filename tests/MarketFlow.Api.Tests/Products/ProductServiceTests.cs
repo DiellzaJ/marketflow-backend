@@ -925,8 +925,16 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
-        public Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(
+        public Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(
+            InventoryMovementListQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsForInventoryAsync(
             int inventoryId,
+            InventoryMovementListQuery query,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -961,6 +969,14 @@ public sealed class ProductServiceTests
         public Task<InventoryItemDto?> AdjustInventoryItemAsync(
             int id,
             AdjustInventoryRequest request,
+            int? updatedByUserId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<bool> TransferInventoryAsync(
+            TransferInventoryRequest request,
             int? updatedByUserId,
             CancellationToken cancellationToken = default)
         {

@@ -44,8 +44,13 @@ public interface ITenantQueryService
 
     Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(
+    Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(
+        InventoryMovementListQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsForInventoryAsync(
         int inventoryId,
+        InventoryMovementListQuery query,
         CancellationToken cancellationToken = default);
 
     Task<InventoryItemDto?> CreateInventoryItemAsync(
@@ -68,6 +73,11 @@ public interface ITenantQueryService
     Task<InventoryItemDto?> AdjustInventoryItemAsync(
         int id,
         AdjustInventoryRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> TransferInventoryAsync(
+        TransferInventoryRequest request,
         int? updatedByUserId,
         CancellationToken cancellationToken = default);
 
