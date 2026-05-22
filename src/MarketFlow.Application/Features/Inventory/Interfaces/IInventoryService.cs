@@ -9,6 +9,9 @@ public interface IInventoryService
         InventoryListQuery query,
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<IReadOnlyCollection<InventoryItemDto>>> GetLowStockInventoryAsync(
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(
         int id,
         CancellationToken cancellationToken = default);

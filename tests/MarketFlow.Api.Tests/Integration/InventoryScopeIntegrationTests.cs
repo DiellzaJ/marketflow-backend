@@ -181,6 +181,86 @@ public sealed class InventoryScopeIntegrationTests
         Assert.Equal(HttpStatusCode.NotFound, hiddenMovements.StatusCode);
     }
 
+    [PostgresIntegrationFact]
+    public async Task LowStockEndpoint_ReturnsQuantityScopedLowStockItems()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("low_stock_scope"),
+            name: "low_stock_scope",
+            dropSchemaOnDispose: true);
+        var marketA = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var marketB = await database.InsertMarketAsync(company.SchemaName, "Market B");
+        var departmentA = await database.InsertDepartmentAsync(company.SchemaName, marketA.Id, "Produce");
+
+        var lowProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "Low Product",
+            minStockAlert: 5);
+        var equalProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "Equal Product",
+            minStockAlert: 2);
+        var healthyProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "Healthy Product",
+            minStockAlert: 1);
+        var outsideScopeProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "Outside Scope Product",
+            minStockAlert: 10);
+
+        var lowInventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            lowProduct.Id,
+            marketA.Id,
+            quantity: 3);
+        var equalInventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            equalProduct.Id,
+            marketA.Id,
+            departmentA.Id,
+            quantity: 2);
+        var healthyInventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            healthyProduct.Id,
+            marketA.Id,
+            quantity: 8);
+        var outsideScopeInventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            outsideScopeProduct.Id,
+            marketB.Id,
+            quantity: 1);
+
+        var user = await database.CreateUserAsync(company, roleName: "MainOperator");
+        await database.InsertStaffAssignmentAsync(company.SchemaName, user.Id, marketA.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var lowStock = await GetLowStockInventoryAsync(client);
+
+        Assert.Contains(lowStock, item =>
+            item.Id == lowInventory.Id &&
+            item.Quantity == 3 &&
+            item.MinStockAlert == 5 &&
+            item.SuggestedRestockQuantity == 2 &&
+            item.IsLowStock);
+        Assert.Contains(lowStock, item =>
+            item.Id == equalInventory.Id &&
+            item.Quantity == 2 &&
+            item.MinStockAlert == 2 &&
+            item.SuggestedRestockQuantity == 0 &&
+            item.IsLowStock);
+        Assert.DoesNotContain(lowStock, item => item.Id == healthyInventory.Id);
+        Assert.DoesNotContain(lowStock, item => item.Id == outsideScopeInventory.Id);
+    }
+
     private static async Task<IReadOnlyList<InventoryItemDto>> GetInventoryAsync(HttpClient client)
     {
         var response = await client.GetAsync("/api/inventory");
@@ -192,6 +272,19 @@ public sealed class InventoryScopeIntegrationTests
         Assert.NotNull(result.Data);
 
         return result.Data.Items.ToList();
+    }
+
+    private static async Task<IReadOnlyList<InventoryItemDto>> GetLowStockInventoryAsync(HttpClient client)
+    {
+        var response = await client.GetAsync("/api/inventory/low-stock");
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<IReadOnlyCollection<InventoryItemDto>>>();
+        Assert.NotNull(result);
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Data);
+
+        return result.Data.ToList();
     }
 
     private static async Task<IReadOnlyList<InventoryMovementDto>> GetInventoryMovementsAsync(

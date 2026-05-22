@@ -392,6 +392,7 @@ public sealed class TenantQueryService : ITenantQueryService
                    c.name AS category_name,
                    p.unit_price,
                    p.min_stock_alert,
+                   GREATEST(p.min_stock_alert - i.quantity, 0) AS suggested_restock_quantity,
                    i.market_id,
                    m.name,
                    i.department_id,
@@ -399,7 +400,7 @@ public sealed class TenantQueryService : ITenantQueryService
                    i.quantity,
                    i.reserved_quantity,
                    i.quantity - i.reserved_quantity AS available_quantity,
-                   (i.quantity - i.reserved_quantity) <= p.min_stock_alert AS is_low_stock,
+                   i.quantity <= p.min_stock_alert AS is_low_stock,
                    i.updated_at,
                    i.last_updated_by
             FROM {schemaName}.inventory i
@@ -431,6 +432,60 @@ public sealed class TenantQueryService : ITenantQueryService
             TotalCount = totalCount,
             TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
         };
+    }
+
+    public async Task<IReadOnlyCollection<InventoryItemDto>> GetLowStockInventoryAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var inventory = new List<InventoryItemDto>();
+        var query = new InventoryListQuery
+        {
+            LowStockOnly = true,
+            SortBy = InventorySortFields.ProductName,
+            SortDirection = "asc"
+        };
+        var whereClause = BuildInventoryWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT i.id,
+                   i.product_id,
+                   p.name,
+                   p.barcode,
+                   p.category_id,
+                   c.name AS category_name,
+                   p.unit_price,
+                   p.min_stock_alert,
+                   GREATEST(p.min_stock_alert - i.quantity, 0) AS suggested_restock_quantity,
+                   i.market_id,
+                   m.name,
+                   i.department_id,
+                   d.name AS department_name,
+                   i.quantity,
+                   i.reserved_quantity,
+                   i.quantity - i.reserved_quantity AS available_quantity,
+                   i.quantity <= p.min_stock_alert AS is_low_stock,
+                   i.updated_at,
+                   i.last_updated_by
+            FROM {schemaName}.inventory i
+            INNER JOIN {schemaName}.products p ON p.id = i.product_id
+            INNER JOIN {schemaName}.markets m ON m.id = i.market_id
+            LEFT JOIN {schemaName}.departments d ON d.id = i.department_id
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            {whereClause}
+            ORDER BY p.name ASC, i.id ASC;
+            """, cancellationToken);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            inventory.Add(ReadInventoryItem(reader));
+        }
+
+        return inventory;
     }
 
     public async Task<InventoryItemDto?> CreateInventoryItemAsync(
@@ -1217,6 +1272,7 @@ public sealed class TenantQueryService : ITenantQueryService
                    c.name AS category_name,
                    p.unit_price,
                    p.min_stock_alert,
+                   GREATEST(p.min_stock_alert - i.quantity, 0) AS suggested_restock_quantity,
                    i.market_id,
                    m.name,
                    i.department_id,
@@ -1224,7 +1280,7 @@ public sealed class TenantQueryService : ITenantQueryService
                    i.quantity,
                    i.reserved_quantity,
                    i.quantity - i.reserved_quantity AS available_quantity,
-                   (i.quantity - i.reserved_quantity) <= p.min_stock_alert AS is_low_stock,
+                   i.quantity <= p.min_stock_alert AS is_low_stock,
                    i.updated_at,
                    i.last_updated_by
             FROM {schemaName}.inventory i
@@ -1928,7 +1984,7 @@ public sealed class TenantQueryService : ITenantQueryService
 
         if (query.LowStockOnly)
         {
-            conditions.Add("(i.quantity - i.reserved_quantity) <= p.min_stock_alert");
+            conditions.Add("i.quantity <= p.min_stock_alert");
         }
 
         return conditions.Count == 0
@@ -2109,16 +2165,17 @@ public sealed class TenantQueryService : ITenantQueryService
             CategoryName = reader.IsDBNull(5) ? null : reader.GetString(5),
             UnitPrice = reader.GetDecimal(6),
             MinStockAlert = reader.GetInt32(7),
-            MarketId = reader.GetInt32(8),
-            MarketName = reader.GetString(9),
-            DepartmentId = reader.IsDBNull(10) ? null : reader.GetInt32(10),
-            DepartmentName = reader.IsDBNull(11) ? null : reader.GetString(11),
-            Quantity = reader.GetInt32(12),
-            ReservedQuantity = reader.GetInt32(13),
-            AvailableQuantity = reader.GetInt32(14),
-            IsLowStock = reader.GetBoolean(15),
-            UpdatedAt = reader.GetFieldValue<DateTimeOffset>(16),
-            LastUpdatedBy = reader.IsDBNull(17) ? null : reader.GetInt32(17)
+            SuggestedRestockQuantity = reader.GetInt32(8),
+            MarketId = reader.GetInt32(9),
+            MarketName = reader.GetString(10),
+            DepartmentId = reader.IsDBNull(11) ? null : reader.GetInt32(11),
+            DepartmentName = reader.IsDBNull(12) ? null : reader.GetString(12),
+            Quantity = reader.GetInt32(13),
+            ReservedQuantity = reader.GetInt32(14),
+            AvailableQuantity = reader.GetInt32(15),
+            IsLowStock = reader.GetBoolean(16),
+            UpdatedAt = reader.GetFieldValue<DateTimeOffset>(17),
+            LastUpdatedBy = reader.IsDBNull(18) ? null : reader.GetInt32(18)
         };
     }
 

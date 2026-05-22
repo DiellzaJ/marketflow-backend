@@ -358,6 +358,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         string? name = null,
         string? barcode = null,
         decimal unitPrice = 1.25m,
+        int minStockAlert = 0,
         CancellationToken cancellationToken = default)
     {
         if (!categoryId.HasValue)
@@ -389,7 +390,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 @unit_price,
                 0,
                 0,
-                0,
+                @min_stock_alert,
                 TRUE
             )
             RETURNING id;
@@ -398,7 +399,8 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             new NpgsqlParameter("name", name),
             new NpgsqlParameter("barcode", barcode),
             new NpgsqlParameter("category_id", categoryId.Value),
-            new NpgsqlParameter("unit_price", unitPrice));
+            new NpgsqlParameter("unit_price", unitPrice),
+            new NpgsqlParameter("min_stock_alert", minStockAlert));
 
         return new TenantTestProduct(productId, name, barcode, categoryId.Value);
     }

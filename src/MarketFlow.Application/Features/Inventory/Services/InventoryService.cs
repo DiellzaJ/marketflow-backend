@@ -55,6 +55,13 @@ public class InventoryService : IInventoryService
         return ServiceResult<PagedResult<InventoryItemDto>>.Success(inventory);
     }
 
+    public async Task<ServiceResult<IReadOnlyCollection<InventoryItemDto>>> GetLowStockInventoryAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var inventory = await _tenantQueryService.GetLowStockInventoryAsync(cancellationToken);
+        return ServiceResult<IReadOnlyCollection<InventoryItemDto>>.Success(inventory);
+    }
+
     public async Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(
         int id,
         CancellationToken cancellationToken = default)

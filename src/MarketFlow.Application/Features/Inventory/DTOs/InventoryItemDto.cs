@@ -18,6 +18,8 @@ public class InventoryItemDto
 
     public int MinStockAlert { get; set; }
 
+    public int SuggestedRestockQuantity { get; set; }
+
     public int MarketId { get; set; }
 
     public string MarketName { get; set; } = string.Empty;
