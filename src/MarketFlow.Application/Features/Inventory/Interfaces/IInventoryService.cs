@@ -8,6 +8,14 @@ public interface IInventoryService
     Task<ServiceResult<IReadOnlyCollection<InventoryItemDto>>> GetInventoryAsync(
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<IReadOnlyCollection<InventoryMovementDto>>> GetInventoryMovementsAsync(
+        int inventoryId,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<InventoryItemDto>> CreateInventoryItemAsync(
         CreateInventoryItemRequest request,
         CancellationToken cancellationToken = default);

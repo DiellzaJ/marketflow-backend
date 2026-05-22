@@ -917,6 +917,20 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
+        public Task<InventoryItemDto?> GetInventoryItemAsync(
+            int id,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(
+            int inventoryId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<InventoryItemDto?> CreateInventoryItemAsync(
             CreateInventoryItemRequest request,
             int? updatedByUserId,

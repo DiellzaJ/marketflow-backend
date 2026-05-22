@@ -22,11 +22,39 @@ public sealed record TenantTestMarket(
     int Id,
     string Name);
 
+public sealed record TenantTestDepartment(
+    int Id,
+    int MarketId,
+    string Name);
+
+public sealed record TenantTestStaffAssignment(
+    int Id,
+    int UserId,
+    int MarketId,
+    int? DepartmentId,
+    bool IsActive);
+
 public sealed record TenantTestProduct(
     int Id,
     string Name,
     string Barcode,
     int CategoryId);
+
+public sealed record TenantTestInventoryItem(
+    int Id,
+    int ProductId,
+    int MarketId,
+    int? DepartmentId,
+    int Quantity,
+    int ReservedQuantity);
+
+public sealed record TenantTestInventoryMovement(
+    int Id,
+    int InventoryId,
+    string MovementType,
+    int QuantityChanged,
+    string? ReferenceNumber,
+    int? CreatedByUserId);
 
 public sealed record TenantTestProductDetails(
     int Id,
