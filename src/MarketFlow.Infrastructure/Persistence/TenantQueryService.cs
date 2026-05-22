@@ -413,6 +413,7 @@ public sealed class TenantQueryService : ITenantQueryService
             return null;
         }
 
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.inventory (
                 product_id,
@@ -429,7 +430,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 @reserved_quantity,
                 @last_updated_by)
             RETURNING id;
-            """, cancellationToken);
+            """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("product_id", request.ProductId);
         command.Parameters.AddWithValue("market_id", request.MarketId);
@@ -450,8 +451,11 @@ public sealed class TenantQueryService : ITenantQueryService
                 request.Quantity,
                 updatedByUserId,
                 "inventory-create",
-                cancellationToken);
+                cancellationToken,
+                transaction);
         }
+
+        await transaction.CommitAsync(cancellationToken);
 
         return await GetInventoryItemAsync(createdId, cancellationToken)
             ?? throw new InvalidOperationException("Inventory item was not found after creation.");
@@ -464,26 +468,31 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        var existingInventoryItem = await GetInventoryItemAsync(id, cancellationToken);
-
-        if (existingInventoryItem is null)
-        {
-            return null;
-        }
-
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
-            UPDATE {schemaName}.inventory
-            SET quantity = @quantity,
-                reserved_quantity = @reserved_quantity,
-                last_updated_by = @last_updated_by,
-                updated_at = NOW()
-            WHERE id = @id
-              {scopeCondition}
-            RETURNING id;
-            """, cancellationToken);
+            WITH target AS (
+                SELECT id, quantity
+                FROM {schemaName}.inventory
+                WHERE id = @id
+                  {scopeCondition}
+                FOR UPDATE
+            ),
+            updated AS (
+                UPDATE {schemaName}.inventory i
+                SET quantity = @quantity,
+                    reserved_quantity = @reserved_quantity,
+                    last_updated_by = @last_updated_by,
+                    updated_at = NOW()
+                FROM target t
+                WHERE i.id = t.id
+                RETURNING i.id, @quantity - t.quantity AS quantity_delta
+            )
+            SELECT id, quantity_delta
+            FROM updated;
+            """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("quantity", request.Quantity);
@@ -491,14 +500,16 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
         AddInventoryScopeParameters(command, scope);
 
-        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-        if (updatedId is null)
+        if (!await reader.ReadAsync(cancellationToken))
         {
             return null;
         }
 
-        var quantityDelta = request.Quantity - existingInventoryItem.Quantity;
+        var updatedId = reader.GetInt32(0);
+        var quantityDelta = reader.GetInt32(1);
+        await reader.DisposeAsync();
 
         if (quantityDelta != 0)
         {
@@ -509,8 +520,11 @@ public sealed class TenantQueryService : ITenantQueryService
                 quantityDelta,
                 updatedByUserId,
                 "inventory-update",
-                cancellationToken);
+                cancellationToken,
+                transaction);
         }
+
+        await transaction.CommitAsync(cancellationToken);
 
         return await GetInventoryItemAsync(id, cancellationToken);
     }
@@ -541,26 +555,31 @@ public sealed class TenantQueryService : ITenantQueryService
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        var existingInventoryItem = await GetInventoryItemAsync(id, cancellationToken);
-
-        if (existingInventoryItem is null)
-        {
-            return null;
-        }
-
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
 
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
-            UPDATE {schemaName}.inventory
-            SET quantity = COALESCE(@quantity, quantity),
-                reserved_quantity = COALESCE(@reserved_quantity, reserved_quantity),
-                last_updated_by = @last_updated_by,
-                updated_at = NOW()
-            WHERE id = @id
-              {scopeCondition}
-            RETURNING id;
-            """, cancellationToken);
+            WITH target AS (
+                SELECT id, quantity
+                FROM {schemaName}.inventory
+                WHERE id = @id
+                  {scopeCondition}
+                FOR UPDATE
+            ),
+            updated AS (
+                UPDATE {schemaName}.inventory i
+                SET quantity = COALESCE(@quantity, i.quantity),
+                    reserved_quantity = COALESCE(@reserved_quantity, i.reserved_quantity),
+                    last_updated_by = @last_updated_by,
+                    updated_at = NOW()
+                FROM target t
+                WHERE i.id = t.id
+                RETURNING i.id, COALESCE(@quantity, i.quantity) - t.quantity AS quantity_delta
+            )
+            SELECT id, quantity_delta
+            FROM updated;
+            """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("quantity", DbValue(request.Quantity));
@@ -568,15 +587,16 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
         AddInventoryScopeParameters(command, scope);
 
-        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
-        if (updatedId is null)
+        if (!await reader.ReadAsync(cancellationToken))
         {
             return null;
         }
 
-        var patchedQuantity = request.Quantity ?? existingInventoryItem.Quantity;
-        var quantityDelta = patchedQuantity - existingInventoryItem.Quantity;
+        var updatedId = reader.GetInt32(0);
+        var quantityDelta = reader.GetInt32(1);
+        await reader.DisposeAsync();
 
         if (quantityDelta != 0)
         {
@@ -587,8 +607,11 @@ public sealed class TenantQueryService : ITenantQueryService
                 quantityDelta,
                 updatedByUserId,
                 "stock-adjust",
-                cancellationToken);
+                cancellationToken,
+                transaction);
         }
+
+        await transaction.CommitAsync(cancellationToken);
 
         return await GetInventoryItemAsync(id, cancellationToken);
     }
@@ -1116,7 +1139,8 @@ public sealed class TenantQueryService : ITenantQueryService
         int quantityChanged,
         int? createdByUserId,
         string referenceNumber,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
     {
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {quotedSchemaName}.inventory_movements (
@@ -1131,7 +1155,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 @quantity_changed,
                 @reference_number,
                 @created_by_user_id);
-            """, cancellationToken);
+            """, cancellationToken, transaction);
         command.Parameters.AddWithValue("inventory_id", inventoryId);
         command.Parameters.AddWithValue("movement_type", movementType);
         command.Parameters.AddWithValue("quantity_changed", quantityChanged);
@@ -1346,7 +1370,8 @@ public sealed class TenantQueryService : ITenantQueryService
 
     private async Task<NpgsqlCommand> CreateCommandAsync(
         string commandText,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
     {
         var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
 
@@ -1355,7 +1380,19 @@ public sealed class TenantQueryService : ITenantQueryService
             await connection.OpenAsync(cancellationToken);
         }
 
-        return new NpgsqlCommand(commandText, connection);
+        return new NpgsqlCommand(commandText, connection, transaction);
+    }
+
+    private async Task<NpgsqlTransaction> BeginTransactionAsync(CancellationToken cancellationToken)
+    {
+        var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
+
+        if (connection.State != ConnectionState.Open)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        return await connection.BeginTransactionAsync(cancellationToken);
     }
 
     private async Task<string> GetQuotedCurrentSchemaNameAsync(CancellationToken cancellationToken)
