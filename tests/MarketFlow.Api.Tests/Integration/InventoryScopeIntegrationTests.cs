@@ -261,6 +261,166 @@ public sealed class InventoryScopeIntegrationTests
         Assert.DoesNotContain(lowStock, item => item.Id == outsideScopeInventory.Id);
     }
 
+    [PostgresIntegrationFact]
+    public async Task TransferEndpoint_UpdatesStockAndCreatesMovementHistory()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("transfer_success"),
+            name: "transfer_success",
+            dropSchemaOnDispose: true);
+        var marketA = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var marketB = await database.InsertMarketAsync(company.SchemaName, "Market B");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Transfer Product");
+        var source = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            marketA.Id,
+            quantity: 10);
+        var destination = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            marketB.Id,
+            quantity: 2);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/inventory/transfer",
+            new TransferInventoryRequest
+            {
+                ProductId = product.Id,
+                FromMarketId = marketA.Id,
+                ToMarketId = marketB.Id,
+                Quantity = 4,
+                Note = "Store balancing"
+            });
+
+        response.EnsureSuccessStatusCode();
+
+        var updatedSource = await database.GetInventoryDetailsAsync(company.SchemaName, source.Id);
+        var updatedDestination = await database.GetInventoryDetailsAsync(company.SchemaName, destination.Id);
+        Assert.Equal(6, updatedSource?.Quantity);
+        Assert.Equal(6, updatedDestination?.Quantity);
+
+        var sourceMovements = await GetInventoryMovementsAsync(client, source.Id);
+        var destinationMovements = await GetInventoryMovementsAsync(client, destination.Id);
+        Assert.Contains(sourceMovements, movement =>
+            movement.MovementType == "TransferOut" &&
+            movement.QuantityChanged == -4 &&
+            movement.Note == "Store balancing");
+        Assert.Contains(destinationMovements, movement =>
+            movement.MovementType == "TransferIn" &&
+            movement.QuantityChanged == 4 &&
+            movement.Note == "Store balancing");
+    }
+
+    [PostgresIntegrationFact]
+    public async Task TransferEndpoint_FailsWhenSourceStockIsInsufficient()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("transfer_insufficient"),
+            name: "transfer_insufficient",
+            dropSchemaOnDispose: true);
+        var marketA = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var marketB = await database.InsertMarketAsync(company.SchemaName, "Market B");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Transfer Product");
+        var source = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            marketA.Id,
+            quantity: 3);
+        var destination = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            marketB.Id,
+            quantity: 2);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/inventory/transfer",
+            new TransferInventoryRequest
+            {
+                ProductId = product.Id,
+                FromMarketId = marketA.Id,
+                ToMarketId = marketB.Id,
+                Quantity = 4
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var unchangedSource = await database.GetInventoryDetailsAsync(company.SchemaName, source.Id);
+        var unchangedDestination = await database.GetInventoryDetailsAsync(company.SchemaName, destination.Id);
+        Assert.Equal(3, unchangedSource?.Quantity);
+        Assert.Equal(2, unchangedDestination?.Quantity);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task TransferEndpoint_FailsWhenDestinationIsOutsideUserScope()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("transfer_scope"),
+            name: "transfer_scope",
+            dropSchemaOnDispose: true);
+        var marketA = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var marketB = await database.InsertMarketAsync(company.SchemaName, "Market B");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Transfer Product");
+        var source = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            marketA.Id,
+            quantity: 10);
+        var destination = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            marketB.Id,
+            quantity: 2);
+        var user = await database.CreateUserAsync(company, roleName: "MainOperator");
+        await database.InsertStaffAssignmentAsync(company.SchemaName, user.Id, marketA.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var response = await client.PostAsJsonAsync(
+            "/api/inventory/transfer",
+            new TransferInventoryRequest
+            {
+                ProductId = product.Id,
+                FromMarketId = marketA.Id,
+                ToMarketId = marketB.Id,
+                Quantity = 4
+            });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var unchangedSource = await database.GetInventoryDetailsAsync(company.SchemaName, source.Id);
+        var unchangedDestination = await database.GetInventoryDetailsAsync(company.SchemaName, destination.Id);
+        Assert.Equal(10, unchangedSource?.Quantity);
+        Assert.Equal(2, unchangedDestination?.Quantity);
+    }
+
     private static async Task<IReadOnlyList<InventoryItemDto>> GetInventoryAsync(HttpClient client)
     {
         var response = await client.GetAsync("/api/inventory");
