@@ -25,6 +25,34 @@ public class InventoryService : IInventoryService
         return ServiceResult<IReadOnlyCollection<InventoryItemDto>>.Success(inventory);
     }
 
+    public async Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var inventoryItem = await _tenantQueryService.GetInventoryItemAsync(id, cancellationToken);
+
+        return inventoryItem is null
+            ? ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.")
+            : ServiceResult<InventoryItemDto>.Success(inventoryItem);
+    }
+
+    public async Task<ServiceResult<IReadOnlyCollection<InventoryMovementDto>>> GetInventoryMovementsAsync(
+        int inventoryId,
+        CancellationToken cancellationToken = default)
+    {
+        var inventoryItem = await _tenantQueryService.GetInventoryItemAsync(inventoryId, cancellationToken);
+
+        if (inventoryItem is null)
+        {
+            return ServiceResult<IReadOnlyCollection<InventoryMovementDto>>.Failure(
+                "Inventory item was not found.");
+        }
+
+        var movements = await _tenantQueryService.GetInventoryMovementsAsync(inventoryId, cancellationToken);
+
+        return ServiceResult<IReadOnlyCollection<InventoryMovementDto>>.Success(movements);
+    }
+
     public async Task<ServiceResult<InventoryItemDto>> CreateInventoryItemAsync(
         CreateInventoryItemRequest request,
         CancellationToken cancellationToken = default)

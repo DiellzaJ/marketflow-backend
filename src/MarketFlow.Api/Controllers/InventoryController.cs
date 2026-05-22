@@ -11,6 +11,8 @@ namespace MarketFlow.Api.Controllers;
 [Route("api/[controller]")]
 public class InventoryController(IInventoryService inventoryService) : ControllerBase
 {
+    private const string GetInventoryItemByIdRouteName = "GetInventoryItemById";
+
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicies.ReadInventory)]
     public async Task<ActionResult<ServiceResult<IReadOnlyCollection<InventoryItemDto>>>> GetAsync(
@@ -18,6 +20,26 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
     {
         var result = await inventoryService.GetInventoryAsync(cancellationToken);
         return Ok(result);
+    }
+
+    [HttpGet("{id:int}", Name = GetInventoryItemByIdRouteName)]
+    [Authorize(Policy = AuthorizationPolicies.ReadInventory)]
+    public async Task<ActionResult<ServiceResult<InventoryItemDto>>> GetByIdAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.GetInventoryItemAsync(id, cancellationToken);
+        return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
+    [HttpGet("{id:int}/movements")]
+    [Authorize(Policy = AuthorizationPolicies.ReadInventoryMovements)]
+    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<InventoryMovementDto>>>> GetMovementsAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.GetInventoryMovementsAsync(id, cancellationToken);
+        return result.Succeeded ? Ok(result) : NotFound(result);
     }
 
     [HttpPost]
@@ -28,7 +50,9 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
     {
         var result = await inventoryService.CreateInventoryItemAsync(request, cancellationToken);
 
-        return result.Succeeded ? CreatedAtAction(nameof(GetAsync), result) : BadRequest(result);
+        return result.Succeeded
+            ? CreatedAtRoute(GetInventoryItemByIdRouteName, new { id = result.Data!.Id }, result)
+            : BadRequest(result);
     }
 
     [HttpPut("{id:int}")]

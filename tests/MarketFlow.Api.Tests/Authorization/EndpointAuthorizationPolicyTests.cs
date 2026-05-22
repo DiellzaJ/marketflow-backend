@@ -27,6 +27,8 @@ public sealed class EndpointAuthorizationPolicyTests
         { typeof(PurchasesController), nameof(PurchasesController.PatchAsync), AuthorizationPolicies.UpdatePurchases },
         { typeof(PurchasesController), nameof(PurchasesController.DeleteAsync), AuthorizationPolicies.DeletePurchases },
         { typeof(InventoryController), nameof(InventoryController.GetAsync), AuthorizationPolicies.ReadInventory },
+        { typeof(InventoryController), nameof(InventoryController.GetByIdAsync), AuthorizationPolicies.ReadInventory },
+        { typeof(InventoryController), nameof(InventoryController.GetMovementsAsync), AuthorizationPolicies.ReadInventoryMovements },
         { typeof(InventoryController), nameof(InventoryController.CreateAsync), AuthorizationPolicies.CreateInventory },
         { typeof(InventoryController), nameof(InventoryController.UpdateAsync), AuthorizationPolicies.UpdateInventory },
         { typeof(InventoryController), nameof(InventoryController.PatchAsync), AuthorizationPolicies.AdjustInventory },

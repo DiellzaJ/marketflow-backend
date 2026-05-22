@@ -167,6 +167,8 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
 
         _createdCompanyIds.Add(companyId);
 
+        await EnsureInventoryMovementsTableAsync(connection, schemaName, cancellationToken);
+
         if (generatedSchemaName || dropSchemaOnDispose)
         {
             _createdSchemaNames.Add(schemaName);
@@ -294,6 +296,62 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         return new TenantTestMarket(marketId, name);
     }
 
+    public async Task<TenantTestDepartment> InsertDepartmentAsync(
+        string schemaName,
+        int marketId,
+        string? name = null,
+        CancellationToken cancellationToken = default)
+    {
+        name ??= $"Department {Guid.NewGuid():N}"[..26];
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var departmentId = await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.departments (market_id, name, is_active)
+            VALUES (@market_id, @name, TRUE)
+            RETURNING id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("market_id", marketId),
+            new NpgsqlParameter("name", name));
+
+        return new TenantTestDepartment(departmentId, marketId, name);
+    }
+
+    public async Task<TenantTestStaffAssignment> InsertStaffAssignmentAsync(
+        string schemaName,
+        int userId,
+        int marketId,
+        int? departmentId = null,
+        bool isActive = true,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var assignmentId = await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.staff_assignments (
+                user_id,
+                market_id,
+                department_id,
+                is_active)
+            VALUES (
+                @user_id,
+                @market_id,
+                @department_id,
+                @is_active)
+            RETURNING id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("user_id", userId),
+            new NpgsqlParameter("market_id", marketId),
+            new NpgsqlParameter("department_id", departmentId is null ? DBNull.Value : departmentId),
+            new NpgsqlParameter("is_active", isActive));
+
+        return new TenantTestStaffAssignment(assignmentId, userId, marketId, departmentId, isActive);
+    }
+
     public async Task<TenantTestProduct> InsertProductAsync(
         string schemaName,
         int? categoryId = null,
@@ -343,6 +401,127 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             new NpgsqlParameter("unit_price", unitPrice));
 
         return new TenantTestProduct(productId, name, barcode, categoryId.Value);
+    }
+
+    public async Task<TenantTestInventoryItem> InsertInventoryAsync(
+        string schemaName,
+        int productId,
+        int marketId,
+        int? departmentId = null,
+        int quantity = 10,
+        int reservedQuantity = 0,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var inventoryId = await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.inventory (
+                product_id,
+                market_id,
+                department_id,
+                quantity,
+                reserved_quantity)
+            VALUES (
+                @product_id,
+                @market_id,
+                @department_id,
+                @quantity,
+                @reserved_quantity)
+            RETURNING id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("product_id", productId),
+            new NpgsqlParameter("market_id", marketId),
+            new NpgsqlParameter("department_id", departmentId is null ? DBNull.Value : departmentId),
+            new NpgsqlParameter("quantity", quantity),
+            new NpgsqlParameter("reserved_quantity", reservedQuantity));
+
+        return new TenantTestInventoryItem(
+            inventoryId,
+            productId,
+            marketId,
+            departmentId,
+            quantity,
+            reservedQuantity);
+    }
+
+    public async Task<TenantTestInventoryItem?> GetInventoryDetailsAsync(
+        string schemaName,
+        int inventoryId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"""
+            SELECT id,
+                   product_id,
+                   market_id,
+                   department_id,
+                   quantity,
+                   reserved_quantity
+            FROM {QuoteIdentifier(schemaName)}.inventory
+            WHERE id = @id;
+            """,
+            connection);
+        command.Parameters.AddWithValue("id", inventoryId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken)
+            ? new TenantTestInventoryItem(
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetInt32(2),
+                reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                reader.GetInt32(4),
+                reader.GetInt32(5))
+            : null;
+    }
+
+    public async Task<TenantTestInventoryMovement> InsertInventoryMovementAsync(
+        string schemaName,
+        int inventoryId,
+        string movementType = "Adjustment",
+        int quantityChanged = 1,
+        string? referenceNumber = null,
+        int? createdByUserId = null,
+        CancellationToken cancellationToken = default)
+    {
+        referenceNumber ??= $"movement-{Guid.NewGuid():N}"[..30];
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var movementId = await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.inventory_movements (
+                inventory_id,
+                movement_type,
+                quantity_changed,
+                reference_number,
+                created_by_user_id)
+            VALUES (
+                @inventory_id,
+                @movement_type,
+                @quantity_changed,
+                @reference_number,
+                @created_by_user_id)
+            RETURNING id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("inventory_id", inventoryId),
+            new NpgsqlParameter("movement_type", movementType),
+            new NpgsqlParameter("quantity_changed", quantityChanged),
+            new NpgsqlParameter("reference_number", referenceNumber),
+            new NpgsqlParameter("created_by_user_id", createdByUserId is null ? DBNull.Value : createdByUserId));
+
+        return new TenantTestInventoryMovement(
+            movementId,
+            inventoryId,
+            movementType,
+            quantityChanged,
+            referenceNumber,
+            createdByUserId);
     }
 
     public async Task<bool> SchemaExistsAsync(
@@ -573,6 +752,29 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         command.Parameters.AddRange(parameters);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task EnsureInventoryMovementsTableAsync(
+        NpgsqlConnection connection,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteAsync(
+            connection,
+            $"""
+            CREATE TABLE IF NOT EXISTS {QuoteIdentifier(schemaName)}.inventory_movements (
+                id                  SERIAL PRIMARY KEY,
+                inventory_id        INT         NOT NULL REFERENCES {QuoteIdentifier(schemaName)}.inventory(id) ON DELETE CASCADE,
+                movement_type       VARCHAR(30) NOT NULL,
+                quantity_changed    INT         NOT NULL,
+                reference_number    VARCHAR(100),
+                created_by_user_id  INT,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_inventory ON {QuoteIdentifier(schemaName)}.inventory_movements(inventory_id);
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_created ON {QuoteIdentifier(schemaName)}.inventory_movements(created_at);
+            """,
+            cancellationToken);
     }
 
     private static async Task<T> ExecuteScalarAsync<T>(
