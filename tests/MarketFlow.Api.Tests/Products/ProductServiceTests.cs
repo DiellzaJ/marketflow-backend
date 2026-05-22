@@ -958,6 +958,15 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
+        public Task<InventoryItemDto?> AdjustInventoryItemAsync(
+            int id,
+            AdjustInventoryRequest request,
+            int? updatedByUserId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

@@ -768,6 +768,8 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 movement_type       VARCHAR(30) NOT NULL,
                 quantity_changed    INT         NOT NULL,
                 reference_number    VARCHAR(100),
+                reason              VARCHAR(100),
+                note                TEXT,
                 created_by_user_id  INT,
                 created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );

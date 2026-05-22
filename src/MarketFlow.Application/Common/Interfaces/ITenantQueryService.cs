@@ -65,6 +65,12 @@ public interface ITenantQueryService
         int? updatedByUserId,
         CancellationToken cancellationToken = default);
 
+    Task<InventoryItemDto?> AdjustInventoryItemAsync(
+        int id,
+        AdjustInventoryRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
     Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default);

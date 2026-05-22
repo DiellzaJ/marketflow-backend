@@ -80,6 +80,22 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
         return result.Succeeded ? Ok(result) : NotFound(result);
     }
 
+    [HttpPost("{id:int}/adjust")]
+    [Authorize(Policy = AuthorizationPolicies.AdjustInventory)]
+    public async Task<ActionResult<ServiceResult<InventoryItemDto>>> AdjustAsync(
+        int id,
+        AdjustInventoryRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.AdjustInventoryItemAsync(id, request, cancellationToken);
+
+        return result.Succeeded
+            ? Ok(result)
+            : result.FailureType == ServiceResultFailureType.NotFound
+                ? NotFound(result)
+                : BadRequest(result);
+    }
+
     [HttpDelete("{id:int}")]
     [Authorize(Policy = AuthorizationPolicies.DeleteInventory)]
     public async Task<ActionResult<ServiceResult<bool>>> DeleteAsync(

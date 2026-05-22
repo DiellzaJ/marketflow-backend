@@ -148,6 +148,44 @@ public class InventoryService : IInventoryService
             : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item updated.");
     }
 
+    public async Task<ServiceResult<InventoryItemDto>> AdjustInventoryItemAsync(
+        int id,
+        AdjustInventoryRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        request.Reason = (request.Reason ?? string.Empty).Trim();
+        request.Note = string.IsNullOrWhiteSpace(request.Note) ? null : request.Note.Trim();
+
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Adjustment reason is required.");
+        }
+
+        var currentInventoryItem = await _tenantQueryService.GetInventoryItemAsync(id, cancellationToken);
+
+        if (currentInventoryItem is null)
+        {
+            return ServiceResult<InventoryItemDto>.Failure(
+                "Inventory item was not found.",
+                ServiceResultFailureType.NotFound);
+        }
+
+        if (currentInventoryItem.Quantity + request.QuantityChange < 0)
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Stock cannot become negative.");
+        }
+
+        var inventoryItem = await _tenantQueryService.AdjustInventoryItemAsync(
+            id,
+            request,
+            _currentUserService.UserId,
+            cancellationToken);
+
+        return inventoryItem is null
+            ? ServiceResult<InventoryItemDto>.Failure("Stock cannot become negative.")
+            : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory stock adjusted.");
+    }
+
     public async Task<ServiceResult<bool>> DeleteInventoryItemAsync(
         int id,
         CancellationToken cancellationToken = default)

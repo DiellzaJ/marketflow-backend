@@ -649,6 +649,68 @@ public sealed class TenantQueryService : ITenantQueryService
         return await GetInventoryItemAsync(id, cancellationToken);
     }
 
+    public async Task<InventoryItemDto?> AdjustInventoryItemAsync(
+        int id,
+        AdjustInventoryRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await using var command = await CreateCommandAsync($"""
+            WITH target AS (
+                SELECT id, quantity
+                FROM {schemaName}.inventory
+                WHERE id = @id
+                  {scopeCondition}
+                FOR UPDATE
+            ),
+            updated AS (
+                UPDATE {schemaName}.inventory i
+                SET quantity = t.quantity + @quantity_change,
+                    last_updated_by = @last_updated_by,
+                    updated_at = NOW()
+                FROM target t
+                WHERE i.id = t.id
+                  AND t.quantity + @quantity_change >= 0
+                RETURNING i.id
+            )
+            SELECT id
+            FROM updated;
+            """, cancellationToken, transaction);
+
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("quantity_change", request.QuantityChange);
+        command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
+        AddInventoryScopeParameters(command, scope);
+
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        if (updatedId is null)
+        {
+            return null;
+        }
+
+        await RecordInventoryMovementAsync(
+            schemaName,
+            id,
+            "Adjustment",
+            request.QuantityChange,
+            updatedByUserId,
+            "manual-adjustment",
+            cancellationToken,
+            transaction,
+            request.Reason,
+            request.Note);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return await GetInventoryItemAsync(id, cancellationToken);
+    }
+
     public async Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(
         CancellationToken cancellationToken = default)
     {
@@ -999,6 +1061,8 @@ public sealed class TenantQueryService : ITenantQueryService
                    im.movement_type,
                    im.quantity_changed,
                    im.reference_number,
+                   im.reason,
+                   im.note,
                    im.created_by_user_id,
                    im.created_at
             FROM {schemaName}.inventory_movements im
@@ -1028,8 +1092,10 @@ public sealed class TenantQueryService : ITenantQueryService
                 MovementType = reader.GetString(7),
                 QuantityChanged = reader.GetInt32(8),
                 ReferenceNumber = reader.IsDBNull(9) ? null : reader.GetString(9),
-                CreatedByUserId = reader.IsDBNull(10) ? null : reader.GetInt32(10),
-                CreatedAt = reader.GetFieldValue<DateTimeOffset>(11)
+                Reason = reader.IsDBNull(10) ? null : reader.GetString(10),
+                Note = reader.IsDBNull(11) ? null : reader.GetString(11),
+                CreatedByUserId = reader.IsDBNull(12) ? null : reader.GetInt32(12),
+                CreatedAt = reader.GetFieldValue<DateTimeOffset>(13)
             });
         }
 
@@ -1173,7 +1239,9 @@ public sealed class TenantQueryService : ITenantQueryService
         int? createdByUserId,
         string referenceNumber,
         CancellationToken cancellationToken,
-        NpgsqlTransaction transaction)
+        NpgsqlTransaction transaction,
+        string? reason = null,
+        string? note = null)
     {
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {quotedSchemaName}.inventory_movements (
@@ -1181,18 +1249,24 @@ public sealed class TenantQueryService : ITenantQueryService
                 movement_type,
                 quantity_changed,
                 reference_number,
+                reason,
+                note,
                 created_by_user_id)
             VALUES (
                 @inventory_id,
                 @movement_type,
                 @quantity_changed,
                 @reference_number,
+                @reason,
+                @note,
                 @created_by_user_id);
             """, cancellationToken, transaction);
         command.Parameters.AddWithValue("inventory_id", inventoryId);
         command.Parameters.AddWithValue("movement_type", movementType);
         command.Parameters.AddWithValue("quantity_changed", quantityChanged);
         command.Parameters.AddWithValue("reference_number", referenceNumber);
+        command.Parameters.AddWithValue("reason", DbValue(reason));
+        command.Parameters.AddWithValue("note", DbValue(note));
         command.Parameters.AddWithValue("created_by_user_id", DbValue(createdByUserId));
 
         await command.ExecuteNonQueryAsync(cancellationToken);
