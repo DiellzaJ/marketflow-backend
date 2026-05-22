@@ -480,7 +480,7 @@ public sealed class TenantQueryService : ITenantQueryService
             await RecordInventoryMovementAsync(
                 schemaName,
                 createdId,
-                "Adjustment",
+                "InitialStock",
                 request.Quantity,
                 updatedByUserId,
                 "inventory-create",
@@ -549,7 +549,7 @@ public sealed class TenantQueryService : ITenantQueryService
             await RecordInventoryMovementAsync(
                 schemaName,
                 id,
-                "Adjustment",
+                "ManualAdjustment",
                 quantityDelta,
                 updatedByUserId,
                 "inventory-update",
@@ -636,7 +636,7 @@ public sealed class TenantQueryService : ITenantQueryService
             await RecordInventoryMovementAsync(
                 schemaName,
                 id,
-                "Adjustment",
+                "ManualAdjustment",
                 quantityDelta,
                 updatedByUserId,
                 "stock-adjust",
@@ -697,7 +697,7 @@ public sealed class TenantQueryService : ITenantQueryService
         await RecordInventoryMovementAsync(
             schemaName,
             id,
-            "Adjustment",
+            "ManualAdjustment",
             request.QuantityChange,
             updatedByUserId,
             "manual-adjustment",
@@ -709,6 +709,95 @@ public sealed class TenantQueryService : ITenantQueryService
         await transaction.CommitAsync(cancellationToken);
 
         return await GetInventoryItemAsync(id, cancellationToken);
+    }
+
+    public async Task<bool> TransferInventoryAsync(
+        TransferInventoryRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildInventoryScopeCondition(scope, "AND", columnQualifier: string.Empty);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        await using var command = await CreateCommandAsync($"""
+            WITH source AS (
+                SELECT id, product_id, quantity
+                FROM {schemaName}.inventory
+                WHERE id = @from_inventory_id
+                  {scopeCondition}
+                FOR UPDATE
+            ),
+            destination AS (
+                SELECT id, product_id
+                FROM {schemaName}.inventory
+                WHERE id = @to_inventory_id
+                  {scopeCondition}
+                FOR UPDATE
+            ),
+            updated_source AS (
+                UPDATE {schemaName}.inventory i
+                SET quantity = i.quantity - @quantity,
+                    last_updated_by = @last_updated_by,
+                    updated_at = NOW()
+                FROM source s, destination d
+                WHERE i.id = s.id
+                  AND s.product_id = d.product_id
+                  AND s.quantity >= @quantity
+                RETURNING i.id
+            ),
+            updated_destination AS (
+                UPDATE {schemaName}.inventory i
+                SET quantity = i.quantity + @quantity,
+                    last_updated_by = @last_updated_by,
+                    updated_at = NOW()
+                FROM destination d, updated_source us
+                WHERE i.id = d.id
+                RETURNING i.id
+            )
+            SELECT (SELECT id FROM updated_source), (SELECT id FROM updated_destination);
+            """, cancellationToken, transaction);
+
+        command.Parameters.AddWithValue("from_inventory_id", request.FromInventoryId);
+        command.Parameters.AddWithValue("to_inventory_id", request.ToInventoryId);
+        command.Parameters.AddWithValue("quantity", request.Quantity);
+        command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0) || reader.IsDBNull(1))
+        {
+            return false;
+        }
+
+        await reader.DisposeAsync();
+
+        await RecordInventoryMovementAsync(
+            schemaName,
+            request.FromInventoryId,
+            "TransferOut",
+            -request.Quantity,
+            updatedByUserId,
+            $"transfer:{request.FromInventoryId}:{request.ToInventoryId}",
+            cancellationToken,
+            transaction,
+            note: request.Note);
+
+        await RecordInventoryMovementAsync(
+            schemaName,
+            request.ToInventoryId,
+            "TransferIn",
+            request.Quantity,
+            updatedByUserId,
+            $"transfer:{request.FromInventoryId}:{request.ToInventoryId}",
+            cancellationToken,
+            transaction,
+            note: request.Note);
+
+        await transaction.CommitAsync(cancellationToken);
+        return true;
     }
 
     public async Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(
@@ -740,13 +829,14 @@ public sealed class TenantQueryService : ITenantQueryService
         return sales;
     }
 
-    public async Task<SaleDto> CreateSaleAsync(
+    public async Task<SaleDto?> CreateSaleAsync(
         CreateSaleRequest request,
         int createdByUserId,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.sales (
                 market_id,
@@ -765,7 +855,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 @total_amount,
                 @notes)
             RETURNING id, market_id, sale_date, payment_method, total_amount;
-            """, cancellationToken);
+            """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("market_id", request.MarketId);
         command.Parameters.AddWithValue("created_by_user_id", createdByUserId);
@@ -775,8 +865,39 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
-        return await ReadSaleAsync(command, cancellationToken)
+        var sale = await ReadSaleAsync(command, cancellationToken)
             ?? throw new InvalidOperationException("Sale was not created.");
+
+        foreach (var item in request.Items)
+        {
+            await InsertSaleItemAsync(
+                schemaName,
+                sale.Id,
+                item,
+                cancellationToken,
+                transaction);
+
+            var stockUpdated = await ApplyInventoryQuantityChangeByProductAsync(
+                schemaName,
+                item.ProductId,
+                request.MarketId,
+                departmentId: null,
+                -item.Quantity,
+                "SaleCompleted",
+                createdByUserId,
+                $"sale:{sale.Id}",
+                cancellationToken,
+                transaction);
+
+            if (!stockUpdated)
+            {
+                return null;
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return sale;
     }
 
     public async Task<SaleDto?> UpdateSaleAsync(
@@ -891,6 +1012,7 @@ public sealed class TenantQueryService : ITenantQueryService
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
 
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.purchases (
                 supplier_id,
@@ -909,7 +1031,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 @total_amount,
                 @notes)
             RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
-            """, cancellationToken);
+            """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("supplier_id", request.SupplierId);
         command.Parameters.AddWithValue("market_id", request.MarketId);
@@ -919,16 +1041,57 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
-        return await ReadPurchaseAsync(command, cancellationToken)
+        var purchase = await ReadPurchaseAsync(command, cancellationToken)
             ?? throw new InvalidOperationException("Purchase was not created.");
+
+        foreach (var item in request.Items)
+        {
+            await InsertPurchaseItemAsync(
+                schemaName,
+                purchase.Id,
+                item,
+                cancellationToken,
+                transaction);
+        }
+
+        if (string.Equals(purchase.Status, "Received", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var item in request.Items)
+            {
+                await ApplyInventoryQuantityChangeByProductAsync(
+                    schemaName,
+                    item.ProductId,
+                    request.MarketId,
+                    departmentId: null,
+                    item.Quantity,
+                    "PurchaseReceived",
+                    createdByUserId,
+                    $"purchase:{purchase.Id}",
+                    cancellationToken,
+                    transaction);
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return purchase;
     }
 
     public async Task<PurchaseDto?> UpdatePurchaseAsync(
         int id,
         UpdatePurchaseRequest request,
+        int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var previousStatus = await GetPurchaseStatusForUpdateAsync(schemaName, id, cancellationToken, transaction);
+
+        if (previousStatus is null)
+        {
+            return null;
+        }
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.purchases
@@ -940,7 +1103,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 notes = @notes
             WHERE id = @id
             RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
-            """, cancellationToken);
+            """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("supplier_id", request.SupplierId);
@@ -950,15 +1113,39 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
-        return await ReadPurchaseAsync(command, cancellationToken);
+        var purchase = await ReadPurchaseAsync(command, cancellationToken);
+
+        if (purchase is not null)
+        {
+            await ApplyPurchaseReceiptIfNeededAsync(
+                schemaName,
+                purchase,
+                previousStatus,
+                updatedByUserId,
+                cancellationToken,
+                transaction);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return purchase;
     }
 
     public async Task<PurchaseDto?> PatchPurchaseAsync(
         int id,
         PatchPurchaseRequest request,
+        int? updatedByUserId,
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var previousStatus = await GetPurchaseStatusForUpdateAsync(schemaName, id, cancellationToken, transaction);
+
+        if (previousStatus is null)
+        {
+            return null;
+        }
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.purchases
@@ -970,7 +1157,7 @@ public sealed class TenantQueryService : ITenantQueryService
                 notes = COALESCE(@notes, notes)
             WHERE id = @id
             RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
-            """, cancellationToken);
+            """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("supplier_id", DbValue(request.SupplierId));
@@ -980,7 +1167,22 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("total_amount", DbValue(request.TotalAmount));
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
-        return await ReadPurchaseAsync(command, cancellationToken);
+        var purchase = await ReadPurchaseAsync(command, cancellationToken);
+
+        if (purchase is not null)
+        {
+            await ApplyPurchaseReceiptIfNeededAsync(
+                schemaName,
+                purchase,
+                previousStatus,
+                updatedByUserId,
+                cancellationToken,
+                transaction);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return purchase;
     }
 
     public async Task<bool> DeletePurchaseAsync(
@@ -1041,14 +1243,49 @@ public sealed class TenantQueryService : ITenantQueryService
         return await reader.ReadAsync(cancellationToken) ? ReadInventoryItem(reader) : null;
     }
 
-    public async Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(
-        int inventoryId,
+    public async Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(
+        InventoryMovementListQuery query,
         CancellationToken cancellationToken = default)
+    {
+        return await GetInventoryMovementsAsync(
+            query,
+            inventoryId: null,
+            cancellationToken);
+    }
+
+    public async Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsForInventoryAsync(
+        int inventoryId,
+        InventoryMovementListQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        return await GetInventoryMovementsAsync(
+            query,
+            inventoryId,
+            cancellationToken);
+    }
+
+    private async Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(
+        InventoryMovementListQuery query,
+        int? inventoryId,
+        CancellationToken cancellationToken)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
-        var scopeCondition = BuildInventoryScopeCondition(scope, "AND");
+        var whereClause = BuildInventoryMovementWhereClause(query, scope, inventoryId);
         var movements = new List<InventoryMovementDto>();
+        var offset = ((long)query.Page - 1L) * query.PageSize;
+
+        await using var countCommand = await CreateCommandAsync($"""
+            SELECT COUNT(*)
+            FROM {schemaName}.inventory_movements im
+            INNER JOIN {schemaName}.inventory i ON i.id = im.inventory_id
+            INNER JOIN {schemaName}.products p ON p.id = i.product_id
+            INNER JOIN {schemaName}.markets m ON m.id = i.market_id
+            {whereClause};
+            """, cancellationToken);
+        AddInventoryMovementListParameters(countCommand, query, inventoryId);
+        AddInventoryScopeParameters(countCommand, scope);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
 
         await using var command = await CreateCommandAsync($"""
             SELECT im.id,
@@ -1069,12 +1306,14 @@ public sealed class TenantQueryService : ITenantQueryService
             INNER JOIN {schemaName}.inventory i ON i.id = im.inventory_id
             INNER JOIN {schemaName}.products p ON p.id = i.product_id
             INNER JOIN {schemaName}.markets m ON m.id = i.market_id
-            WHERE im.inventory_id = @inventory_id
-              {scopeCondition}
-            ORDER BY im.created_at DESC, im.id DESC;
+            {whereClause}
+            ORDER BY im.created_at DESC, im.id DESC
+            LIMIT @page_size OFFSET @offset;
             """, cancellationToken);
-        command.Parameters.AddWithValue("inventory_id", inventoryId);
+        AddInventoryMovementListParameters(command, query, inventoryId);
         AddInventoryScopeParameters(command, scope);
+        command.Parameters.AddWithValue("page_size", query.PageSize);
+        command.Parameters.AddWithValue("offset", offset);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -1099,7 +1338,14 @@ public sealed class TenantQueryService : ITenantQueryService
             });
         }
 
-        return movements;
+        return new PagedResult<InventoryMovementDto>
+        {
+            Items = movements,
+            Page = query.Page,
+            PageSize = query.PageSize,
+            TotalCount = totalCount,
+            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
+        };
     }
 
     private async Task<InventoryScope> GetCurrentInventoryScopeAsync(
@@ -1270,6 +1516,262 @@ public sealed class TenantQueryService : ITenantQueryService
         command.Parameters.AddWithValue("created_by_user_id", DbValue(createdByUserId));
 
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task InsertSaleItemAsync(
+        string quotedSchemaName,
+        int saleId,
+        CreateSaleItemRequest item,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            INSERT INTO {quotedSchemaName}.sale_items (
+                sale_id,
+                product_id,
+                quantity,
+                unit_price)
+            VALUES (
+                @sale_id,
+                @product_id,
+                @quantity,
+                @unit_price);
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("sale_id", saleId);
+        command.Parameters.AddWithValue("product_id", item.ProductId);
+        command.Parameters.AddWithValue("quantity", item.Quantity);
+        command.Parameters.AddWithValue("unit_price", item.UnitPrice);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task InsertPurchaseItemAsync(
+        string quotedSchemaName,
+        int purchaseId,
+        CreatePurchaseItemRequest item,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            INSERT INTO {quotedSchemaName}.purchase_items (
+                purchase_id,
+                product_id,
+                quantity,
+                unit_cost)
+            VALUES (
+                @purchase_id,
+                @product_id,
+                @quantity,
+                @unit_cost);
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("purchase_id", purchaseId);
+        command.Parameters.AddWithValue("product_id", item.ProductId);
+        command.Parameters.AddWithValue("quantity", item.Quantity);
+        command.Parameters.AddWithValue("unit_cost", item.UnitCost);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task<bool> ApplyInventoryQuantityChangeByProductAsync(
+        string quotedSchemaName,
+        int productId,
+        int marketId,
+        int? departmentId,
+        int quantityChange,
+        string movementType,
+        int? updatedByUserId,
+        string referenceNumber,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        var inventoryId = await GetInventoryIdForUpdateAsync(
+            quotedSchemaName,
+            productId,
+            marketId,
+            departmentId,
+            cancellationToken,
+            transaction);
+
+        if (inventoryId is null && quantityChange > 0)
+        {
+            inventoryId = await CreateEmptyInventoryItemAsync(
+                quotedSchemaName,
+                productId,
+                marketId,
+                departmentId,
+                updatedByUserId,
+                cancellationToken,
+                transaction);
+        }
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {quotedSchemaName}.inventory
+            SET quantity = quantity + @quantity_change,
+                last_updated_by = @last_updated_by,
+                updated_at = NOW()
+            WHERE id = @inventory_id
+              AND quantity + @quantity_change >= 0
+            RETURNING id;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("inventory_id", DbValue(inventoryId));
+        command.Parameters.AddWithValue("quantity_change", quantityChange);
+        command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
+
+        var updatedInventoryId = (int?)await command.ExecuteScalarAsync(cancellationToken);
+
+        if (updatedInventoryId is null)
+        {
+            return false;
+        }
+
+        await RecordInventoryMovementAsync(
+            quotedSchemaName,
+            updatedInventoryId.Value,
+            movementType,
+            quantityChange,
+            updatedByUserId,
+            referenceNumber,
+            cancellationToken,
+            transaction);
+
+        return true;
+    }
+
+    private async Task<int?> GetInventoryIdForUpdateAsync(
+        string quotedSchemaName,
+        int productId,
+        int marketId,
+        int? departmentId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT id
+            FROM {quotedSchemaName}.inventory
+            WHERE product_id = @product_id
+              AND market_id = @market_id
+              AND department_id IS NOT DISTINCT FROM @department_id
+            ORDER BY id
+            LIMIT 1
+            FOR UPDATE;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("product_id", productId);
+        command.Parameters.AddWithValue("market_id", marketId);
+        command.Parameters.AddWithValue("department_id", DbValue(departmentId));
+
+        return (int?)await command.ExecuteScalarAsync(cancellationToken);
+    }
+
+    private async Task<int> CreateEmptyInventoryItemAsync(
+        string quotedSchemaName,
+        int productId,
+        int marketId,
+        int? departmentId,
+        int? updatedByUserId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            INSERT INTO {quotedSchemaName}.inventory (
+                product_id,
+                market_id,
+                department_id,
+                quantity,
+                reserved_quantity,
+                last_updated_by)
+            VALUES (
+                @product_id,
+                @market_id,
+                @department_id,
+                0,
+                0,
+                @last_updated_by)
+            RETURNING id;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("product_id", productId);
+        command.Parameters.AddWithValue("market_id", marketId);
+        command.Parameters.AddWithValue("department_id", DbValue(departmentId));
+        command.Parameters.AddWithValue("last_updated_by", DbValue(updatedByUserId));
+
+        return (int?)await command.ExecuteScalarAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Inventory item was not created.");
+    }
+
+    private async Task<string?> GetPurchaseStatusForUpdateAsync(
+        string quotedSchemaName,
+        int purchaseId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT status
+            FROM {quotedSchemaName}.purchases
+            WHERE id = @purchase_id
+            FOR UPDATE;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("purchase_id", purchaseId);
+
+        return (string?)await command.ExecuteScalarAsync(cancellationToken);
+    }
+
+    private async Task ApplyPurchaseReceiptIfNeededAsync(
+        string quotedSchemaName,
+        PurchaseDto purchase,
+        string previousStatus,
+        int? updatedByUserId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        if (!string.Equals(purchase.Status, "Received", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(previousStatus, "Received", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var items = await GetPurchaseItemsAsync(quotedSchemaName, purchase.Id, cancellationToken, transaction);
+
+        foreach (var item in items)
+        {
+            await ApplyInventoryQuantityChangeByProductAsync(
+                quotedSchemaName,
+                item.ProductId,
+                purchase.MarketId,
+                departmentId: null,
+                item.Quantity,
+                "PurchaseReceived",
+                updatedByUserId,
+                $"purchase:{purchase.Id}",
+                cancellationToken,
+                transaction);
+        }
+    }
+
+    private async Task<IReadOnlyCollection<PurchaseStockItem>> GetPurchaseItemsAsync(
+        string quotedSchemaName,
+        int purchaseId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        var items = new List<PurchaseStockItem>();
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT product_id,
+                   quantity
+            FROM {quotedSchemaName}.purchase_items
+            WHERE purchase_id = @purchase_id;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("purchase_id", purchaseId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            items.Add(new PurchaseStockItem(
+                reader.GetInt32(0),
+                reader.GetInt32(1)));
+        }
+
+        return items;
     }
 
     private static async Task<ProductDto?> ReadProductAsync(
@@ -1467,6 +1969,110 @@ public sealed class TenantQueryService : ITenantQueryService
         }
     }
 
+    private static string BuildInventoryMovementWhereClause(
+        InventoryMovementListQuery query,
+        InventoryScope scope,
+        int? inventoryId)
+    {
+        var conditions = new List<string>();
+
+        switch (scope.Kind)
+        {
+            case InventoryScopeKind.Company:
+                break;
+            case InventoryScopeKind.Market:
+                conditions.Add("i.market_id = @scope_market_id");
+                break;
+            case InventoryScopeKind.Department:
+                conditions.Add("i.market_id = @scope_market_id");
+                conditions.Add("i.department_id = @scope_department_id");
+                break;
+            default:
+                conditions.Add("FALSE");
+                break;
+        }
+
+        if (inventoryId.HasValue)
+        {
+            conditions.Add("im.inventory_id = @inventory_id");
+        }
+
+        if (query.ProductId.HasValue)
+        {
+            conditions.Add("i.product_id = @product_id");
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            conditions.Add("i.market_id = @market_id");
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            conditions.Add("i.department_id = @department_id");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.MovementType))
+        {
+            conditions.Add("im.movement_type = @movement_type");
+        }
+
+        if (query.DateFrom.HasValue)
+        {
+            conditions.Add("im.created_at >= @date_from");
+        }
+
+        if (query.DateTo.HasValue)
+        {
+            conditions.Add("im.created_at <= @date_to");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static void AddInventoryMovementListParameters(
+        NpgsqlCommand command,
+        InventoryMovementListQuery query,
+        int? inventoryId)
+    {
+        if (inventoryId.HasValue)
+        {
+            command.Parameters.AddWithValue("inventory_id", inventoryId.Value);
+        }
+
+        if (query.ProductId.HasValue)
+        {
+            command.Parameters.AddWithValue("product_id", query.ProductId.Value);
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", query.MarketId.Value);
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("department_id", query.DepartmentId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.MovementType))
+        {
+            command.Parameters.AddWithValue("movement_type", query.MovementType.Trim());
+        }
+
+        if (query.DateFrom.HasValue)
+        {
+            command.Parameters.AddWithValue("date_from", query.DateFrom.Value);
+        }
+
+        if (query.DateTo.HasValue)
+        {
+            command.Parameters.AddWithValue("date_to", query.DateTo.Value);
+        }
+    }
+
     private static string GetInventorySortColumn(string? sortBy)
     {
         return sortBy?.Trim() switch
@@ -1645,6 +2251,8 @@ public sealed class TenantQueryService : ITenantQueryService
     }
 
     private sealed record StaffAssignmentScope(int MarketId, int? DepartmentId);
+
+    private sealed record PurchaseStockItem(int ProductId, int Quantity);
 
     private sealed record InventoryScope(
         InventoryScopeKind Kind,

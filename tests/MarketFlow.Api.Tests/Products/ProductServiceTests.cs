@@ -925,8 +925,16 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
-        public Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(
+        public Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(
+            InventoryMovementListQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsForInventoryAsync(
             int inventoryId,
+            InventoryMovementListQuery query,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -967,6 +975,14 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
+        public Task<bool> TransferInventoryAsync(
+            TransferInventoryRequest request,
+            int? updatedByUserId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -977,7 +993,7 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
-        public Task<SaleDto> CreateSaleAsync(
+        public Task<SaleDto?> CreateSaleAsync(
             CreateSaleRequest request,
             int createdByUserId,
             CancellationToken cancellationToken = default)
@@ -1022,6 +1038,7 @@ public sealed class ProductServiceTests
         public Task<PurchaseDto?> UpdatePurchaseAsync(
             int id,
             UpdatePurchaseRequest request,
+            int? updatedByUserId,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -1030,6 +1047,7 @@ public sealed class ProductServiceTests
         public Task<PurchaseDto?> PatchPurchaseAsync(
             int id,
             PatchPurchaseRequest request,
+            int? updatedByUserId,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

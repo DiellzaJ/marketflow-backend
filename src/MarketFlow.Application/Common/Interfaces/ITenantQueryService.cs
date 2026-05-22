@@ -44,8 +44,13 @@ public interface ITenantQueryService
 
     Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyCollection<InventoryMovementDto>> GetInventoryMovementsAsync(
+    Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(
+        InventoryMovementListQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsForInventoryAsync(
         int inventoryId,
+        InventoryMovementListQuery query,
         CancellationToken cancellationToken = default);
 
     Task<InventoryItemDto?> CreateInventoryItemAsync(
@@ -71,11 +76,16 @@ public interface ITenantQueryService
         int? updatedByUserId,
         CancellationToken cancellationToken = default);
 
+    Task<bool> TransferInventoryAsync(
+        TransferInventoryRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
     Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default);
 
-    Task<SaleDto> CreateSaleAsync(
+    Task<SaleDto?> CreateSaleAsync(
         CreateSaleRequest request,
         int createdByUserId,
         CancellationToken cancellationToken = default);
@@ -93,9 +103,17 @@ public interface ITenantQueryService
         int createdByUserId,
         CancellationToken cancellationToken = default);
 
-    Task<PurchaseDto?> UpdatePurchaseAsync(int id, UpdatePurchaseRequest request, CancellationToken cancellationToken = default);
+    Task<PurchaseDto?> UpdatePurchaseAsync(
+        int id,
+        UpdatePurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
 
-    Task<PurchaseDto?> PatchPurchaseAsync(int id, PatchPurchaseRequest request, CancellationToken cancellationToken = default);
+    Task<PurchaseDto?> PatchPurchaseAsync(
+        int id,
+        PatchPurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
 
     Task<bool> DeletePurchaseAsync(int id, CancellationToken cancellationToken = default);
 }

@@ -13,4 +13,15 @@ public class CreatePurchaseRequest
     public decimal TotalAmount { get; set; }
 
     public string? Notes { get; set; }
+
+    public IReadOnlyCollection<CreatePurchaseItemRequest> Items { get; set; } = [];
+}
+
+public class CreatePurchaseItemRequest
+{
+    public int ProductId { get; set; }
+
+    public int Quantity { get; set; }
+
+    public decimal UnitCost { get; set; }
 }

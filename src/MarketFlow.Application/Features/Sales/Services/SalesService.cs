@@ -39,9 +39,16 @@ public class SalesService : ISalesService
             return ServiceResult<SaleDto>.Failure("Market is required.");
         }
 
+        if (request.Items.Any(item => item.ProductId <= 0 || item.Quantity <= 0 || item.UnitPrice < 0))
+        {
+            return ServiceResult<SaleDto>.Failure("Sale items must include a product, positive quantity, and non-negative unit price.");
+        }
+
         var sale = await _tenantQueryService.CreateSaleAsync(request, userId, cancellationToken);
 
-        return ServiceResult<SaleDto>.Success(sale, "Sale created.");
+        return sale is null
+            ? ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.")
+            : ServiceResult<SaleDto>.Success(sale, "Sale created.");
     }
 
     public async Task<ServiceResult<SaleDto>> UpdateSaleAsync(
