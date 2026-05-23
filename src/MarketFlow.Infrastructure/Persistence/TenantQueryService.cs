@@ -2,6 +2,8 @@ using System.Data;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Features.Departments.DTOs;
+using MarketFlow.Application.Features.Departments.Interfaces;
 using MarketFlow.Application.Features.Inventory.Configuration;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Markets.DTOs;
@@ -20,7 +22,7 @@ using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
-public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService
+public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IDepartmentQueryService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
 
@@ -449,6 +451,50 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
 
         return markets;
+    }
+
+    public async Task<IReadOnlyCollection<DepartmentDto>> GetDepartmentsAsync(
+        int? marketId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var departments = new List<DepartmentDto>();
+        var marketFilter = marketId.HasValue ? " AND market_id = @market_id" : string.Empty;
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id,
+                   market_id,
+                   name,
+                   description,
+                   is_active
+            FROM {schemaName}.departments
+            WHERE is_active = TRUE{marketFilter}
+            ORDER BY name, id;
+            """, cancellationToken);
+
+        if (marketId.HasValue)
+        {
+            command.Parameters.Add(new NpgsqlParameter("market_id", NpgsqlTypes.NpgsqlDbType.Integer)
+            {
+                Value = marketId.Value
+            });
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            departments.Add(new DepartmentDto
+            {
+                Id = reader.GetInt32(0),
+                MarketId = reader.GetInt32(1),
+                Name = reader.GetString(2),
+                Description = reader.IsDBNull(3) ? null : reader.GetString(3),
+                IsActive = reader.GetBoolean(4)
+            });
+        }
+
+        return departments;
     }
 
     public async Task<PagedResult<InventoryItemDto>> GetInventoryAsync(

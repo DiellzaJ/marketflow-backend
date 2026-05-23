@@ -38,6 +38,7 @@ public sealed class EndpointAuthorizationPolicyTests
         { typeof(InventoryController), nameof(InventoryController.AdjustAsync), AuthorizationPolicies.AdjustInventory },
         { typeof(InventoryController), nameof(InventoryController.DeleteAsync), AuthorizationPolicies.DeleteInventory },
         { typeof(MarketsController), nameof(MarketsController.GetAsync), AuthorizationPolicies.ReadMarkets },
+        { typeof(DepartmentsController), nameof(DepartmentsController.GetAsync), AuthorizationPolicies.ReadDepartments },
         { typeof(AuthController), nameof(AuthController.CreateRootAdmin), AuthorizationPolicies.RootAdminOnly },
         { typeof(CompaniesController), nameof(CompaniesController.GetAsync), AuthorizationPolicies.RootAdminOnly },
         { typeof(CompaniesController), nameof(CompaniesController.GetByIdAsync), AuthorizationPolicies.RootAdminOnly },

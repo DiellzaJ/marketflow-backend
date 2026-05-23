@@ -25,7 +25,9 @@ public sealed record TenantTestMarket(
 public sealed record TenantTestDepartment(
     int Id,
     int MarketId,
-    string Name);
+    string Name,
+    string? Description,
+    bool IsActive);
 
 public sealed record TenantTestSupplier(
     int Id,
