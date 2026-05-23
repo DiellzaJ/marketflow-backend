@@ -1,7 +1,6 @@
 using MarketFlow.Api.Authorization;
 using MarketFlow.Api.Extensions;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -12,6 +11,9 @@ public sealed class MarketsAuthorizationPolicyTests
     private const string CompanyAdminPermissions = """
         {
             "markets:read": true,
+            "markets:create": true,
+            "markets:update": true,
+            "markets:delete": true,
             "inventory:read": true
         }
         """;
@@ -31,28 +33,49 @@ public sealed class MarketsAuthorizationPolicyTests
         }
         """;
 
-    [Fact]
-    public void ReadMarketsPolicy_IsRegisteredWithMarketsReadRequirement()
+    public static TheoryData<string, string, string, string> MarketPolicies => new()
+    {
+        { AuthorizationPolicies.ReadMarkets, "markets", "read", CompanyAdminPermissions },
+        { AuthorizationPolicies.CreateMarkets, "markets", "create", CompanyAdminPermissions },
+        { AuthorizationPolicies.UpdateMarkets, "markets", "update", CompanyAdminPermissions },
+        { AuthorizationPolicies.DeleteMarkets, "markets", "delete", CompanyAdminPermissions }
+    };
+
+    [Theory]
+    [MemberData(nameof(MarketPolicies))]
+    public void MarketPolicy_IsRegisteredWithExpectedRequirement(
+        string policyName,
+        string expectedPermission,
+        string expectedAccess,
+        string permissions)
     {
         using var serviceProvider = BuildServiceProvider();
 
-        var requirement = GetPolicyRequirement(serviceProvider, AuthorizationPolicies.ReadMarkets);
+        var requirement = GetPolicyRequirement(serviceProvider, policyName);
+        var allowed = PermissionEvaluator.TryHasPermission(
+            permissions,
+            requirement.Permission,
+            requirement.Access);
 
-        Assert.Equal("markets", requirement.Permission);
-        Assert.Equal("read", requirement.Access);
+        Assert.Equal(expectedPermission, requirement.Permission);
+        Assert.Equal(expectedAccess, requirement.Access);
+        Assert.True(allowed);
     }
 
     [Theory]
-    [InlineData(CompanyAdminPermissions, true)]
-    [InlineData(SellerPermissions, true)]
-    [InlineData(InventoryOnlyPermissions, false)]
-    public void ReadMarketsPolicy_GrantsOnlyMarketsReadPermission(
+    [InlineData(AuthorizationPolicies.ReadMarkets, SellerPermissions, true)]
+    [InlineData(AuthorizationPolicies.CreateMarkets, SellerPermissions, false)]
+    [InlineData(AuthorizationPolicies.UpdateMarkets, SellerPermissions, false)]
+    [InlineData(AuthorizationPolicies.DeleteMarkets, SellerPermissions, false)]
+    [InlineData(AuthorizationPolicies.ReadMarkets, InventoryOnlyPermissions, false)]
+    public void MarketPolicies_GrantOnlyExpectedPermissions(
+        string policyName,
         string permissions,
         bool expectedAllowed)
     {
         using var serviceProvider = BuildServiceProvider();
 
-        var requirement = GetPolicyRequirement(serviceProvider, AuthorizationPolicies.ReadMarkets);
+        var requirement = GetPolicyRequirement(serviceProvider, policyName);
         var allowed = PermissionEvaluator.TryHasPermission(
             permissions,
             requirement.Permission,
@@ -63,18 +86,8 @@ public sealed class MarketsAuthorizationPolicyTests
 
     private static ServiceProvider BuildServiceProvider()
     {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:DefaultConnection"] = "Host=localhost;Database=marketflow;Username=test;Password=test",
-                ["Jwt:Issuer"] = "marketflow-tests",
-                ["Jwt:Audience"] = "marketflow-tests",
-                ["Jwt:Secret"] = "marketflow-tests-secret-with-enough-length"
-            })
-            .Build();
-
         return new ServiceCollection()
-            .AddApiServices(configuration)
+            .AddAuthorization(options => options.AddMarketFlowPolicies())
             .BuildServiceProvider();
     }
 

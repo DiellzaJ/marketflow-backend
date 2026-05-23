@@ -22,6 +22,13 @@ public sealed record TenantTestMarket(
     int Id,
     string Name);
 
+public sealed record TenantTestMarketDetails(
+    int Id,
+    string Name,
+    string? City,
+    string? Address,
+    bool IsActive);
+
 public sealed record TenantTestDepartment(
     int Id,
     int MarketId,

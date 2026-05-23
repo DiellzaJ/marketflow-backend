@@ -123,6 +123,8 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IMarketQueryService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IMarketStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IDepartmentQueryService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
@@ -236,6 +238,15 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.ReadMarkets, policy =>
             policy.Requirements.Add(new PermissionRequirement("markets", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateMarkets, policy =>
+            policy.Requirements.Add(new PermissionRequirement("markets", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateMarkets, policy =>
+            policy.Requirements.Add(new PermissionRequirement("markets", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteMarkets, policy =>
+            policy.Requirements.Add(new PermissionRequirement("markets", "delete")));
 
         options.AddPolicy(AuthorizationPolicies.ReadDepartments, policy =>
             policy.Requirements.Add(new PermissionRequirement("departments", "read")));
