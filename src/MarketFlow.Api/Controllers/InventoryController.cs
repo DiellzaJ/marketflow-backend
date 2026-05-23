@@ -32,6 +32,16 @@ public class InventoryController(IInventoryService inventoryService) : Controlle
         return Ok(result);
     }
 
+    [HttpGet("pos-products")]
+    [Authorize(Policy = AuthorizationPolicies.ReadInventory)]
+    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>>> GetPosProductsAsync(
+        [FromQuery] PosProductLookupQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await inventoryService.GetPosProductsAsync(query, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
     [HttpGet("movements")]
     [Authorize(Policy = AuthorizationPolicies.ReadInventoryMovements)]
     public async Task<ActionResult<ServiceResult<PagedResult<InventoryMovementDto>>>> GetMovementsAsync(

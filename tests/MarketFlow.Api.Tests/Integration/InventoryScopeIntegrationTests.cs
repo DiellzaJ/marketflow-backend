@@ -176,6 +176,129 @@ public sealed class InventoryScopeIntegrationTests
     }
 
     [PostgresIntegrationFact]
+    public async Task PosProducts_ReturnsActiveProductsWithScopedAvailableStock()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("pos_lookup_scope"),
+            name: "POS Lookup Scope",
+            dropSchemaOnDispose: true);
+        var marketA = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var marketB = await database.InsertMarketAsync(company.SchemaName, "Market B");
+        var activeProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "POS Lookup Milk",
+            barcode: "POS-LOOKUP-123",
+            unitPrice: 2.50m);
+        var inactiveProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "POS Lookup Inactive Milk",
+            barcode: "POS-LOOKUP-INACTIVE",
+            isActive: false);
+        var otherMarketProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "POS Lookup Other Market Milk",
+            barcode: "POS-LOOKUP-OTHER");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            activeProduct.Id,
+            marketA.Id,
+            quantity: 11,
+            reservedQuantity: 4);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            inactiveProduct.Id,
+            marketA.Id,
+            quantity: 99);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            otherMarketProduct.Id,
+            marketB.Id,
+            quantity: 13);
+        var seller = await database.CreateUserAsync(company, roleName: "Seller");
+        await database.InsertStaffAssignmentAsync(company.SchemaName, seller.Id, marketA.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, seller);
+
+        var searchResults = await GetPosProductsAsync(
+            client,
+            $"marketId={marketA.Id}&search=POS%20Lookup&limit=10");
+        var product = Assert.Single(searchResults, item => item.ProductId == activeProduct.Id);
+        Assert.Equal(activeProduct.Id, product.ProductId);
+        Assert.Equal("POS Lookup Milk", product.ProductName);
+        Assert.Equal("POS-LOOKUP-123", product.Barcode);
+        Assert.Equal(2.50m, product.UnitPrice);
+        Assert.Equal(7, product.AvailableQuantity);
+        Assert.DoesNotContain(searchResults, item => item.ProductId == inactiveProduct.Id);
+        Assert.Contains(searchResults, item =>
+            item.ProductId == otherMarketProduct.Id &&
+            item.AvailableQuantity == 0);
+
+        var barcodeResults = await GetPosProductsAsync(
+            client,
+            $"marketId={marketA.Id}&barcode=POS-LOOKUP-123");
+        Assert.Equal(activeProduct.Id, Assert.Single(barcodeResults).ProductId);
+
+        var outsideScopeResponse = await client.GetAsync(
+            $"/api/inventory/pos-products?marketId={marketB.Id}&search=POS%20Lookup");
+        Assert.Equal(HttpStatusCode.BadRequest, outsideScopeResponse.StatusCode);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task PosProducts_ForDepartmentAssignedSellerUsesDepartmentInventory()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("pos_lookup_department"),
+            name: "POS Lookup Department",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var department = await database.InsertDepartmentAsync(company.SchemaName, market.Id, "Produce");
+        var marketProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "POS Department Apple",
+            barcode: "POS-DEPT-MARKET");
+        var departmentProduct = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "POS Department Apple Premium",
+            barcode: "POS-DEPT-ASSIGNED");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            marketProduct.Id,
+            market.Id,
+            quantity: 20);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            departmentProduct.Id,
+            market.Id,
+            department.Id,
+            quantity: 9,
+            reservedQuantity: 2);
+        var seller = await database.CreateUserAsync(company, roleName: "Seller");
+        await database.InsertStaffAssignmentAsync(company.SchemaName, seller.Id, market.Id, department.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, seller);
+
+        var products = await GetPosProductsAsync(
+            client,
+            $"marketId={market.Id}&barcode=POS-DEPT-ASSIGNED");
+
+        var product = Assert.Single(products);
+        Assert.Equal(departmentProduct.Id, product.ProductId);
+        Assert.Equal(7, product.AvailableQuantity);
+    }
+
+    [PostgresIntegrationFact]
     public async Task InventoryFilters_DoNotBypassAssignedMarketOrDepartmentScope()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();
@@ -561,6 +684,22 @@ public sealed class InventoryScopeIntegrationTests
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<ServiceResult<IReadOnlyCollection<InventoryItemDto>>>();
+        Assert.NotNull(result);
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Data);
+
+        return result.Data.ToList();
+    }
+
+    private static async Task<IReadOnlyList<PosProductLookupItemDto>> GetPosProductsAsync(
+        HttpClient client,
+        string queryString)
+    {
+        var response = await client.GetAsync($"/api/inventory/pos-products?{queryString}");
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content
+            .ReadFromJsonAsync<ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>>();
         Assert.NotNull(result);
         Assert.True(result.Succeeded);
         Assert.NotNull(result.Data);

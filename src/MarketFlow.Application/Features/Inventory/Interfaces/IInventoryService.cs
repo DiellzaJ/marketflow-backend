@@ -12,6 +12,10 @@ public interface IInventoryService
     Task<ServiceResult<IReadOnlyCollection<InventoryItemDto>>> GetLowStockInventoryAsync(
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>> GetPosProductsAsync(
+        PosProductLookupQuery query,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(
         int id,
         CancellationToken cancellationToken = default);

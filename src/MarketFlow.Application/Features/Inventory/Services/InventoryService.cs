@@ -9,6 +9,7 @@ namespace MarketFlow.Application.Features.Inventory.Services;
 public class InventoryService : IInventoryService
 {
     private const int MaxPageSize = 100;
+    private const int MaxPosLookupLimit = 50;
     private const int MaxAdjustmentReasonLength = 100;
 
     private readonly ITenantQueryService _tenantQueryService;
@@ -60,6 +61,39 @@ public class InventoryService : IInventoryService
     {
         var inventory = await _tenantQueryService.GetLowStockInventoryAsync(cancellationToken);
         return ServiceResult<IReadOnlyCollection<InventoryItemDto>>.Success(inventory);
+    }
+
+    public async Task<ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>> GetPosProductsAsync(
+        PosProductLookupQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        query.Barcode = string.IsNullOrWhiteSpace(query.Barcode) ? null : query.Barcode.Trim();
+        query.Search = string.IsNullOrWhiteSpace(query.Search) ? null : query.Search.Trim();
+
+        if (!query.MarketId.HasValue || query.MarketId <= 0)
+        {
+            return ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>.Failure(
+                "Market is required for POS product lookup.");
+        }
+
+        if (string.IsNullOrWhiteSpace(query.Barcode) && string.IsNullOrWhiteSpace(query.Search))
+        {
+            return ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>.Failure(
+                "Barcode or product search is required.");
+        }
+
+        if (query.Limit is < 1 or > MaxPosLookupLimit)
+        {
+            return ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>.Failure(
+                $"Limit must be between 1 and {MaxPosLookupLimit}.");
+        }
+
+        var products = await _tenantQueryService.GetPosProductsAsync(query, cancellationToken);
+
+        return products is null
+            ? ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>.Failure(
+                "POS lookup market is outside the current user's inventory scope.")
+            : ServiceResult<IReadOnlyCollection<PosProductLookupItemDto>>.Success(products);
     }
 
     public async Task<ServiceResult<InventoryItemDto>> GetInventoryItemAsync(

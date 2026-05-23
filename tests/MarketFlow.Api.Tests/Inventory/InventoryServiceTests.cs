@@ -100,6 +100,98 @@ public sealed class InventoryServiceTests
     }
 
     [Fact]
+    public async Task GetPosProductsAsync_RejectsMissingMarket()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.GetPosProductsAsync(new PosProductLookupQuery
+        {
+            Barcode = "123"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Market is required for POS product lookup.", result.Message);
+        Assert.False(tenantQueryService.GetPosProductsWasCalled);
+    }
+
+    [Fact]
+    public async Task GetPosProductsAsync_RejectsMissingLookupText()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.GetPosProductsAsync(new PosProductLookupQuery
+        {
+            MarketId = 1
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Barcode or product search is required.", result.Message);
+        Assert.False(tenantQueryService.GetPosProductsWasCalled);
+    }
+
+    [Fact]
+    public async Task GetPosProductsAsync_RejectsInvalidLimit()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.GetPosProductsAsync(new PosProductLookupQuery
+        {
+            MarketId = 1,
+            Search = "milk",
+            Limit = 51
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Limit must be between 1 and 50.", result.Message);
+        Assert.False(tenantQueryService.GetPosProductsWasCalled);
+    }
+
+    [Fact]
+    public async Task GetPosProductsAsync_PassesTrimmedLookupToTenantQueryService()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.GetPosProductsAsync(new PosProductLookupQuery
+        {
+            MarketId = 1,
+            Search = " milk ",
+            Limit = 5
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.True(tenantQueryService.GetPosProductsWasCalled);
+        Assert.Equal("milk", tenantQueryService.LastPosProductLookupQuery?.Search);
+        Assert.Equal(5, tenantQueryService.LastPosProductLookupQuery?.Limit);
+        var product = Assert.Single(result.Data!);
+        Assert.Equal(10, product.ProductId);
+        Assert.Equal(7, product.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task GetPosProductsAsync_ReturnsFailureWhenLookupIsOutsideScope()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            PosLookupResult = null
+        };
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.GetPosProductsAsync(new PosProductLookupQuery
+        {
+            MarketId = 99,
+            Barcode = "123"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("POS lookup market is outside the current user's inventory scope.", result.Message);
+        Assert.True(tenantQueryService.GetPosProductsWasCalled);
+    }
+
+    [Fact]
     public async Task AdjustInventoryItemAsync_UpdatesQuantityAndRecordsAdjustment()
     {
         var tenantQueryService = new RecordingTenantQueryService
@@ -277,11 +369,15 @@ public sealed class InventoryServiceTests
 
         public bool GetLowStockInventoryWasCalled { get; private set; }
 
+        public bool GetPosProductsWasCalled { get; private set; }
+
         public bool AdjustInventoryWasCalled { get; private set; }
 
         public bool TransferInventoryWasCalled { get; private set; }
 
         public InventoryListQuery? LastInventoryListQuery { get; private set; }
+
+        public PosProductLookupQuery? LastPosProductLookupQuery { get; private set; }
 
         public int LastAdjustedInventoryId { get; private set; }
 
@@ -300,6 +396,18 @@ public sealed class InventoryServiceTests
         public bool ReturnNullFromSecondInventoryRead { get; init; }
 
         public bool TransferResult { get; init; }
+
+        public IReadOnlyCollection<PosProductLookupItemDto>? PosLookupResult { get; init; } =
+        [
+            new PosProductLookupItemDto
+            {
+                ProductId = 10,
+                ProductName = "Milk",
+                Barcode = "123",
+                UnitPrice = 1.25m,
+                AvailableQuantity = 7
+            }
+        ];
 
         private int _inventoryReadCount;
 
@@ -340,6 +448,16 @@ public sealed class InventoryServiceTests
                     IsLowStock = true
                 }
             ]);
+        }
+
+        public Task<IReadOnlyCollection<PosProductLookupItemDto>?> GetPosProductsAsync(
+            PosProductLookupQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            GetPosProductsWasCalled = true;
+            LastPosProductLookupQuery = query;
+
+            return Task.FromResult(PosLookupResult);
         }
 
         public Task<PagedResult<ProductDto>> GetProductsAsync(ProductListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
