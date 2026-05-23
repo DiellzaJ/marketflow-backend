@@ -28,6 +28,8 @@ public sealed partial class StockAlertJob
         {
             try
             {
+                await EnsureLowStockAlertsTableAsync(tenant, cancellationToken);
+
                 var createdAlertCount = await CreateLowStockAlertsAsync(tenant, cancellationToken);
 
                 if (createdAlertCount > 0)
@@ -68,6 +70,74 @@ public sealed partial class StockAlertJob
         }
 
         return tenants;
+    }
+
+    private async Task EnsureLowStockAlertsTableAsync(
+        TenantScanTarget tenant,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var command = await CreateCommandAsync(
+                "SELECT public.ensure_tenant_low_stock_alerts_table(@schema_name);",
+                cancellationToken);
+
+            command.Parameters.AddWithValue("schema_name", tenant.SchemaName);
+
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsUndefinedFunction(exception))
+        {
+            await EnsureLowStockAlertsTableInlineAsync(tenant, cancellationToken);
+        }
+    }
+
+    private async Task EnsureLowStockAlertsTableInlineAsync(
+        TenantScanTarget tenant,
+        CancellationToken cancellationToken)
+    {
+        var schemaName = QuoteTenantSchemaName(tenant.SchemaName);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+
+        await using (var lockCommand = await CreateCommandAsync(
+            "SELECT pg_advisory_xact_lock(hashtext(@lock_key));",
+            cancellationToken,
+            transaction))
+        {
+            lockCommand.Parameters.AddWithValue(
+                "lock_key",
+                $"tenant:{tenant.SchemaName}:low_stock_alerts");
+
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var command = await CreateCommandAsync($"""
+            CREATE TABLE IF NOT EXISTS {schemaName}.low_stock_alerts (
+                id                BIGSERIAL PRIMARY KEY,
+                inventory_id      INT         NOT NULL REFERENCES {schemaName}.inventory(id) ON DELETE CASCADE,
+                product_id        INT         NOT NULL REFERENCES {schemaName}.products(id) ON DELETE CASCADE,
+                market_id         INT         NOT NULL REFERENCES {schemaName}.markets(id) ON DELETE CASCADE,
+                department_id     INT         REFERENCES {schemaName}.departments(id) ON DELETE SET NULL,
+                quantity          INT         NOT NULL,
+                min_stock_alert   INT         NOT NULL,
+                status            VARCHAR(20) NOT NULL DEFAULT 'Active'
+                    CHECK (status IN ('Active', 'Resolved')),
+                first_detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_detected_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                resolved_at       TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS idx_low_stock_alerts_inventory
+                ON {schemaName}.low_stock_alerts(inventory_id);
+            CREATE INDEX IF NOT EXISTS idx_low_stock_alerts_status
+                ON {schemaName}.low_stock_alerts(status);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_low_stock_alerts_active_product_location
+                ON {schemaName}.low_stock_alerts(product_id, market_id, (COALESCE(department_id, -1)))
+                WHERE status = 'Active';
+            """, cancellationToken, transaction);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task<int> CreateLowStockAlertsAsync(
@@ -224,6 +294,11 @@ public sealed partial class StockAlertJob
             "3F000" or // undefined_schema
             "42P01" or // undefined_table
             "42703";   // undefined_column
+    }
+
+    private static bool IsUndefinedFunction(PostgresException exception)
+    {
+        return exception.SqlState == "42883";
     }
 
     [GeneratedRegex("^[a-zA-Z_][a-zA-Z0-9_]{0,62}$", RegexOptions.CultureInvariant)]

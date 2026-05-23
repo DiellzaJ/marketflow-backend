@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
@@ -25,6 +26,9 @@ namespace MarketFlow.Infrastructure.Persistence;
 public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IDepartmentQueryService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
+    private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
+
+    private static readonly ConcurrentDictionary<string, byte> InventoryMovementTableRepairCache = new();
 
     private readonly ApplicationDbContext _dbContext;
     private readonly TenantProvider _tenantProvider;
@@ -193,17 +197,26 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var excludedProductCondition = excludedProductId.HasValue
+            ? " AND id <> @excluded_product_id"
+            : string.Empty;
 
         await using var command = await CreateCommandAsync($"""
             SELECT EXISTS (
                 SELECT 1
                 FROM {schemaName}.products
-                WHERE barcode = @barcode
-                  AND (@excluded_product_id IS NULL OR id <> @excluded_product_id)
+                WHERE barcode = @barcode{excludedProductCondition}
             );
             """, cancellationToken);
         command.Parameters.AddWithValue("barcode", barcode.Trim());
-        command.Parameters.AddWithValue("excluded_product_id", DbValue(excludedProductId));
+
+        if (excludedProductId.HasValue)
+        {
+            command.Parameters.Add(new NpgsqlParameter("excluded_product_id", NpgsqlTypes.NpgsqlDbType.Integer)
+            {
+                Value = excludedProductId.Value
+            });
+        }
 
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
@@ -1795,6 +1808,92 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         string? reason = null,
         string? note = null)
     {
+        var savepointCreated = false;
+
+        if (InventoryMovementTableRepairCache.ContainsKey(quotedSchemaName))
+        {
+            await transaction.SaveAsync(InventoryMovementSavepointName, cancellationToken);
+            savepointCreated = true;
+
+            try
+            {
+                await InsertInventoryMovementAsync(
+                    quotedSchemaName,
+                    inventoryId,
+                    movementType,
+                    quantityChanged,
+                    createdByUserId,
+                    referenceNumber,
+                    cancellationToken,
+                    transaction,
+                    reason,
+                    note);
+
+                return;
+            }
+            catch (PostgresException exception) when (IsMissingInventoryMovementObject(exception))
+            {
+                await transaction.RollbackAsync(InventoryMovementSavepointName, cancellationToken);
+                InventoryMovementTableRepairCache.TryRemove(quotedSchemaName, out _);
+            }
+        }
+
+        if (!savepointCreated)
+        {
+            await transaction.SaveAsync(InventoryMovementSavepointName, cancellationToken);
+        }
+
+        try
+        {
+            await InsertInventoryMovementAsync(
+                quotedSchemaName,
+                inventoryId,
+                movementType,
+                quantityChanged,
+                createdByUserId,
+                referenceNumber,
+                cancellationToken,
+                transaction,
+                reason,
+                note);
+
+            InventoryMovementTableRepairCache.TryAdd(quotedSchemaName, 0);
+        }
+        catch (PostgresException exception) when (IsMissingInventoryMovementObject(exception))
+        {
+            await transaction.RollbackAsync(InventoryMovementSavepointName, cancellationToken);
+            await EnsureInventoryMovementsTableAsync(
+                quotedSchemaName,
+                cancellationToken,
+                transaction);
+            await InsertInventoryMovementAsync(
+                quotedSchemaName,
+                inventoryId,
+                movementType,
+                quantityChanged,
+                createdByUserId,
+                referenceNumber,
+                cancellationToken,
+                transaction,
+                reason,
+                note);
+
+            InventoryMovementTableRepairCache.TryAdd(quotedSchemaName, 0);
+        }
+    }
+
+    private async Task InsertInventoryMovementAsync(
+        string quotedSchemaName,
+        int inventoryId,
+        string movementType,
+        int quantityChanged,
+        int? createdByUserId,
+        string referenceNumber,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction,
+        string? reason,
+        string? note)
+    {
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {quotedSchemaName}.inventory_movements (
                 inventory_id,
@@ -1822,6 +1921,54 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("created_by_user_id", DbValue(createdByUserId));
 
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task EnsureInventoryMovementsTableAsync(
+        string quotedSchemaName,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using (var lockCommand = await CreateCommandAsync(
+            "SELECT pg_advisory_xact_lock(hashtext(@lock_key));",
+            cancellationToken,
+            transaction))
+        {
+            lockCommand.Parameters.AddWithValue(
+                "lock_key",
+                $"tenant:{quotedSchemaName}:inventory_movements");
+
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var command = await CreateCommandAsync($"""
+            CREATE TABLE IF NOT EXISTS {quotedSchemaName}.inventory_movements (
+                id                  SERIAL PRIMARY KEY,
+                inventory_id        INT         NOT NULL REFERENCES {quotedSchemaName}.inventory(id) ON DELETE CASCADE,
+                movement_type       VARCHAR(30) NOT NULL,
+                quantity_changed    INT         NOT NULL,
+                reference_number    VARCHAR(100),
+                reason              VARCHAR(100),
+                note                TEXT,
+                created_by_user_id  INT,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            ALTER TABLE {quotedSchemaName}.inventory_movements
+                ADD COLUMN IF NOT EXISTS reason VARCHAR(100),
+                ADD COLUMN IF NOT EXISTS note TEXT;
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_inventory
+                ON {quotedSchemaName}.inventory_movements(inventory_id);
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_created
+                ON {quotedSchemaName}.inventory_movements(created_at);
+            """, cancellationToken, transaction);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static bool IsMissingInventoryMovementObject(PostgresException exception)
+    {
+        return exception.SqlState is
+            "42P01" or // undefined_table
+            "42703";   // undefined_column
     }
 
     private async Task InsertSaleItemAsync(

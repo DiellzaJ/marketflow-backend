@@ -72,7 +72,7 @@ public sealed class MarketsLookupIntegrationTests
         Assert.Equal("Market Street 1", market.Address);
         Assert.True(market.IsActive);
         Assert.DoesNotContain(markets, x => x.Id == inactiveMarket.Id);
-        Assert.DoesNotContain(markets, x => x.Id == otherTenantMarket.Id);
+        Assert.DoesNotContain(markets, x => x.Name == otherTenantMarket.Name);
         Assert.DoesNotContain(companyA.SchemaName, responseBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(companyB.SchemaName, responseBody, StringComparison.OrdinalIgnoreCase);
     }

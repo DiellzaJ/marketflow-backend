@@ -1,4 +1,5 @@
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Services;
 using MarketFlow.Infrastructure.MultiTenancy;
 using MarketFlow.Infrastructure.Persistence;
@@ -10,6 +11,132 @@ namespace MarketFlow.Api.Tests.Products;
 public sealed class ProductLiveSmokeTests
 {
     private const string TestConnectionStringEnvironmentVariable = "MARKETFLOW_TEST_DB_CONNECTION_STRING";
+
+    [Fact]
+    public async Task CreateProductAsync_WithUniqueBarcodeAndNoExcludedProductId_Succeeds()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(TestConnectionStringEnvironmentVariable);
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return;
+        }
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schemaName = $"mf_test_product_create_{suffix}";
+
+        await using var setupConnection = new NpgsqlConnection(connectionString);
+        await setupConnection.OpenAsync();
+
+        try
+        {
+            await ExecuteAsync(
+                setupConnection,
+                "SELECT public.create_tenant_schema(@schema_name);",
+                new NpgsqlParameter("schema_name", schemaName));
+
+            var categoryId = await ExecuteScalarAsync<int>(
+                setupConnection,
+                $"INSERT INTO {QuoteIdentifier(schemaName)}.categories (name) VALUES ('Smoke Category') RETURNING id;");
+
+            var productServiceContext = CreateProductService(connectionString, schemaName);
+            await using var dbContext = productServiceContext.DbContext;
+            var productService = productServiceContext.ProductService;
+            var request = new CreateProductRequest
+            {
+                Name = "Smoke Product",
+                Barcode = $"CREATE-{suffix}",
+                CategoryId = categoryId,
+                UnitPrice = 2.25m,
+                CostPrice = 1.15m
+            };
+
+            var result = await productService.CreateProductAsync(request);
+
+            Assert.True(result.Succeeded, result.Message);
+            Assert.Equal($"CREATE-{suffix}", result.Data?.Barcode);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                setupConnection,
+                $"DROP SCHEMA IF EXISTS {QuoteIdentifier(schemaName)} CASCADE;");
+        }
+    }
+
+    [Fact]
+    public async Task CreateProductAsync_WithDuplicateBarcode_ReturnsConflict()
+    {
+        var connectionString = Environment.GetEnvironmentVariable(TestConnectionStringEnvironmentVariable);
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return;
+        }
+
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var schemaName = $"mf_test_product_dup_{suffix}";
+        var barcode = $"DUP-{suffix}";
+
+        await using var setupConnection = new NpgsqlConnection(connectionString);
+        await setupConnection.OpenAsync();
+
+        try
+        {
+            await ExecuteAsync(
+                setupConnection,
+                "SELECT public.create_tenant_schema(@schema_name);",
+                new NpgsqlParameter("schema_name", schemaName));
+
+            var categoryId = await ExecuteScalarAsync<int>(
+                setupConnection,
+                $"INSERT INTO {QuoteIdentifier(schemaName)}.categories (name) VALUES ('Smoke Category') RETURNING id;");
+
+            await ExecuteAsync(
+                setupConnection,
+                $"""
+                INSERT INTO {QuoteIdentifier(schemaName)}.products (
+                    name,
+                    barcode,
+                    category_id,
+                    unit_price,
+                    cost_price
+                )
+                VALUES (
+                    'Existing Product',
+                    @barcode,
+                    @category_id,
+                    1.25,
+                    0.75
+                );
+                """,
+                new NpgsqlParameter("barcode", barcode),
+                new NpgsqlParameter("category_id", categoryId));
+
+            var productServiceContext = CreateProductService(connectionString, schemaName);
+            await using var dbContext = productServiceContext.DbContext;
+            var productService = productServiceContext.ProductService;
+            var request = new CreateProductRequest
+            {
+                Name = "Duplicate Product",
+                Barcode = barcode,
+                CategoryId = categoryId,
+                UnitPrice = 2.25m,
+                CostPrice = 1.15m
+            };
+
+            var result = await productService.CreateProductAsync(request);
+
+            Assert.False(result.Succeeded);
+            Assert.Equal("Barcode is already used by another product.", result.Message);
+        }
+        finally
+        {
+            await ExecuteAsync(
+                setupConnection,
+                $"DROP SCHEMA IF EXISTS {QuoteIdentifier(schemaName)} CASCADE;");
+        }
+    }
 
     [Fact]
     public async Task DeactivateProductAsync_PreservesSalesPurchasesAndInventoryReferences()
@@ -162,17 +289,9 @@ public sealed class ProductLiveSmokeTests
                 new NpgsqlParameter("sale_id", saleId),
                 new NpgsqlParameter("product_id", productId));
 
-            var dbContextOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseNpgsql(connectionString)
-                .Options;
-            await using var dbContext = new ApplicationDbContext(dbContextOptions);
-            var currentUser = new TestCurrentUserService(schemaName);
-            var tenantContextStore = new TestTenantContextStore(schemaName);
-            var tenantQueryService = new TenantQueryService(
-                dbContext,
-                new TenantProvider(currentUser, tenantContextStore),
-                currentUser);
-            var productService = new ProductService(tenantQueryService);
+            var productServiceContext = CreateProductService(connectionString, schemaName);
+            await using var dbContext = productServiceContext.DbContext;
+            var productService = productServiceContext.ProductService;
 
             var result = await productService.DeactivateProductAsync(productId);
 
@@ -201,6 +320,26 @@ public sealed class ProductLiveSmokeTests
                 $"DROP SCHEMA IF EXISTS {QuoteIdentifier(schemaName)} CASCADE;");
         }
     }
+
+    private static ProductServiceContext CreateProductService(string connectionString, string schemaName)
+    {
+        var dbContextOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseNpgsql(connectionString)
+            .Options;
+        var dbContext = new ApplicationDbContext(dbContextOptions);
+        var currentUser = new TestCurrentUserService(schemaName);
+        var tenantContextStore = new TestTenantContextStore(schemaName);
+        var tenantQueryService = new TenantQueryService(
+            dbContext,
+            new TenantProvider(currentUser, tenantContextStore),
+            currentUser);
+
+        return new ProductServiceContext(new ProductService(tenantQueryService), dbContext);
+    }
+
+    private sealed record ProductServiceContext(
+        ProductService ProductService,
+        ApplicationDbContext DbContext);
 
     private static async Task ExecuteAsync(
         NpgsqlConnection connection,
