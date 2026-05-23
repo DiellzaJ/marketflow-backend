@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using MarketFlow.Application.Features.Auth.DTOs;
 using MarketFlow.Application.Features.Auth.Interfaces;
 using MarketFlow.Domain.Entities;
 using Microsoft.Extensions.Configuration;
@@ -18,7 +19,7 @@ public class JwtTokenService : IJwtTokenService
         _configuration = configuration;
     }
 
-    public string GenerateAccessToken(User user)
+    public string GenerateAccessToken(User user, AuthUserAssignmentDto? assignment = null)
     {
         var issuer = _configuration["Jwt:Issuer"];
         var audience = _configuration["Jwt:Audience"];
@@ -44,6 +45,16 @@ public class JwtTokenService : IJwtTokenService
             new Claim("company_id", user.CompanyId.ToString()),
             new Claim("schema_name", user.Company.SchemaName)
         };
+
+        if (assignment is not null)
+        {
+            claims.Add(new Claim("assigned_market_id", assignment.MarketId.ToString()));
+
+            if (assignment.DepartmentId.HasValue)
+            {
+                claims.Add(new Claim("assigned_department_id", assignment.DepartmentId.Value.ToString()));
+            }
+        }
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

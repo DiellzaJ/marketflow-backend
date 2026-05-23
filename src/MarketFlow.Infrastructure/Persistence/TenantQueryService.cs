@@ -803,6 +803,88 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return inventory;
     }
 
+    public async Task<IReadOnlyCollection<PosProductLookupItemDto>?> GetPosProductsAsync(
+        PosProductLookupQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        if (!query.MarketId.HasValue)
+        {
+            return null;
+        }
+
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var target = GetPosInventoryTarget(scope, query.MarketId.Value);
+
+        if (target is null)
+        {
+            return null;
+        }
+
+        var products = new List<PosProductLookupItemDto>();
+        var searchCondition = !string.IsNullOrWhiteSpace(query.Barcode)
+            ? "p.barcode = @barcode"
+            : "p.name ILIKE @search ESCAPE '\\'";
+        var departmentCondition = target.DepartmentId.HasValue
+            ? "AND i.department_id = @department_id"
+            : "AND i.department_id IS NULL";
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT p.id,
+                   p.name,
+                   p.barcode,
+                   p.unit_price,
+                   GREATEST(COALESCE(SUM(i.quantity - i.reserved_quantity), 0), 0)::int AS available_quantity
+            FROM {schemaName}.products p
+            LEFT JOIN {schemaName}.inventory i
+                ON i.product_id = p.id
+               AND i.market_id = @market_id
+               {departmentCondition}
+            WHERE p.is_active = TRUE
+              AND {searchCondition}
+            GROUP BY p.id, p.name, p.barcode, p.unit_price
+            ORDER BY
+                CASE WHEN p.barcode = @exact_lookup THEN 0 ELSE 1 END,
+                p.name ASC,
+                p.id ASC
+            LIMIT @limit;
+            """, cancellationToken);
+
+        command.Parameters.AddWithValue("market_id", target.MarketId);
+        command.Parameters.AddWithValue("exact_lookup", query.Barcode ?? string.Empty);
+        command.Parameters.AddWithValue("limit", query.Limit);
+
+        if (target.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("department_id", target.DepartmentId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Barcode))
+        {
+            command.Parameters.AddWithValue("barcode", query.Barcode);
+        }
+        else
+        {
+            command.Parameters.AddWithValue("search", LikePattern(query.Search!));
+        }
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            products.Add(new PosProductLookupItemDto
+            {
+                ProductId = reader.GetInt32(0),
+                ProductName = reader.GetString(1),
+                Barcode = reader.IsDBNull(2) ? null : reader.GetString(2),
+                UnitPrice = reader.GetDecimal(3),
+                AvailableQuantity = reader.GetInt32(4)
+            });
+        }
+
+        return products;
+    }
+
     public async Task<InventoryItemDto?> CreateInventoryItemAsync(
         CreateInventoryItemRequest request,
         int? updatedByUserId,
@@ -1923,6 +2005,20 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             InventoryScopeKind.Market => scope.MarketId == marketId,
             InventoryScopeKind.Department => scope.MarketId == marketId && scope.DepartmentId == departmentId,
             _ => false
+        };
+    }
+
+    private static PosInventoryTarget? GetPosInventoryTarget(
+        InventoryScope scope,
+        int marketId)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => new PosInventoryTarget(marketId),
+            InventoryScopeKind.Market when scope.MarketId == marketId => new PosInventoryTarget(marketId),
+            InventoryScopeKind.Department when scope.MarketId == marketId && scope.DepartmentId.HasValue =>
+                new PosInventoryTarget(marketId, scope.DepartmentId.Value),
+            _ => null
         };
     }
 
@@ -3097,6 +3193,8 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
     }
 
     private sealed record StaffAssignmentScope(int MarketId, int? DepartmentId);
+
+    private sealed record PosInventoryTarget(int MarketId, int? DepartmentId = null);
 
     private sealed record PurchaseReceiptState(string Status, int MarketId);
 

@@ -77,6 +77,8 @@ public class AuthController : ControllerBase
     [HttpGet("me")]
     public IActionResult Me()
     {
+        var assignedMarketId = GetIntClaim("assigned_market_id");
+
         return Ok(new
         {
             UserId = User.FindFirstValue(ClaimTypes.NameIdentifier),
@@ -84,8 +86,24 @@ public class AuthController : ControllerBase
             FullName = User.FindFirstValue(ClaimTypes.Name),
             Role = User.FindFirstValue(ClaimTypes.Role),
             CompanyId = User.FindFirstValue("company_id"),
-            SchemaName = User.FindFirstValue("schema_name")
+            SchemaName = User.FindFirstValue("schema_name"),
+            Assignment = assignedMarketId.HasValue
+                ? new AuthUserAssignmentDto
+                {
+                    MarketId = assignedMarketId.Value,
+                    DepartmentId = GetIntClaim("assigned_department_id")
+                }
+                : null
         });
+    }
+
+    private int? GetIntClaim(string claimType)
+    {
+        var claimValue = User.FindFirstValue(claimType);
+
+        return int.TryParse(claimValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
     }
 
     private static bool TryParseUnixTimeSeconds(string? value, out DateTimeOffset dateTimeOffset)

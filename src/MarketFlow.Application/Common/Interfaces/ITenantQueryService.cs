@@ -45,6 +45,10 @@ public interface ITenantQueryService
     Task<IReadOnlyCollection<InventoryItemDto>> GetLowStockInventoryAsync(
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyCollection<PosProductLookupItemDto>?> GetPosProductsAsync(
+        PosProductLookupQuery query,
+        CancellationToken cancellationToken = default);
+
     Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default);
 
     Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(

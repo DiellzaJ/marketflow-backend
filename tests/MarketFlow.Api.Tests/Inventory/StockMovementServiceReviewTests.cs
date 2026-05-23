@@ -97,6 +97,7 @@ public sealed class StockMovementServiceReviewTests
         public Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PagedResult<InventoryItemDto>> GetInventoryAsync(InventoryListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<InventoryItemDto>> GetLowStockInventoryAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyCollection<PosProductLookupItemDto>?> GetPosProductsAsync(PosProductLookupQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(InventoryMovementListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsForInventoryAsync(int inventoryId, InventoryMovementListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
