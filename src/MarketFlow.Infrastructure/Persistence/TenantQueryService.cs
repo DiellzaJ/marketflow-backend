@@ -1808,24 +1808,40 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         string? reason = null,
         string? note = null)
     {
+        var savepointCreated = false;
+
         if (InventoryMovementTableRepairCache.ContainsKey(quotedSchemaName))
         {
-            await InsertInventoryMovementAsync(
-                quotedSchemaName,
-                inventoryId,
-                movementType,
-                quantityChanged,
-                createdByUserId,
-                referenceNumber,
-                cancellationToken,
-                transaction,
-                reason,
-                note);
+            await transaction.SaveAsync(InventoryMovementSavepointName, cancellationToken);
+            savepointCreated = true;
 
-            return;
+            try
+            {
+                await InsertInventoryMovementAsync(
+                    quotedSchemaName,
+                    inventoryId,
+                    movementType,
+                    quantityChanged,
+                    createdByUserId,
+                    referenceNumber,
+                    cancellationToken,
+                    transaction,
+                    reason,
+                    note);
+
+                return;
+            }
+            catch (PostgresException exception) when (IsMissingInventoryMovementObject(exception))
+            {
+                await transaction.RollbackAsync(InventoryMovementSavepointName, cancellationToken);
+                InventoryMovementTableRepairCache.TryRemove(quotedSchemaName, out _);
+            }
         }
 
-        await transaction.SaveAsync(InventoryMovementSavepointName, cancellationToken);
+        if (!savepointCreated)
+        {
+            await transaction.SaveAsync(InventoryMovementSavepointName, cancellationToken);
+        }
 
         try
         {

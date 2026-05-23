@@ -39,7 +39,9 @@ public sealed class ProductLiveSmokeTests
                 setupConnection,
                 $"INSERT INTO {QuoteIdentifier(schemaName)}.categories (name) VALUES ('Smoke Category') RETURNING id;");
 
-            var productService = CreateProductService(connectionString, schemaName);
+            var productServiceContext = CreateProductService(connectionString, schemaName);
+            await using var dbContext = productServiceContext.DbContext;
+            var productService = productServiceContext.ProductService;
             var request = new CreateProductRequest
             {
                 Name = "Smoke Product",
@@ -111,7 +113,9 @@ public sealed class ProductLiveSmokeTests
                 new NpgsqlParameter("barcode", barcode),
                 new NpgsqlParameter("category_id", categoryId));
 
-            var productService = CreateProductService(connectionString, schemaName);
+            var productServiceContext = CreateProductService(connectionString, schemaName);
+            await using var dbContext = productServiceContext.DbContext;
+            var productService = productServiceContext.ProductService;
             var request = new CreateProductRequest
             {
                 Name = "Duplicate Product",
@@ -285,7 +289,9 @@ public sealed class ProductLiveSmokeTests
                 new NpgsqlParameter("sale_id", saleId),
                 new NpgsqlParameter("product_id", productId));
 
-            var productService = CreateProductService(connectionString, schemaName);
+            var productServiceContext = CreateProductService(connectionString, schemaName);
+            await using var dbContext = productServiceContext.DbContext;
+            var productService = productServiceContext.ProductService;
 
             var result = await productService.DeactivateProductAsync(productId);
 
@@ -315,7 +321,7 @@ public sealed class ProductLiveSmokeTests
         }
     }
 
-    private static ProductService CreateProductService(string connectionString, string schemaName)
+    private static ProductServiceContext CreateProductService(string connectionString, string schemaName)
     {
         var dbContextOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseNpgsql(connectionString)
@@ -328,8 +334,12 @@ public sealed class ProductLiveSmokeTests
             new TenantProvider(currentUser, tenantContextStore),
             currentUser);
 
-        return new ProductService(tenantQueryService);
+        return new ProductServiceContext(new ProductService(tenantQueryService), dbContext);
     }
+
+    private sealed record ProductServiceContext(
+        ProductService ProductService,
+        ApplicationDbContext DbContext);
 
     private static async Task ExecuteAsync(
         NpgsqlConnection connection,
