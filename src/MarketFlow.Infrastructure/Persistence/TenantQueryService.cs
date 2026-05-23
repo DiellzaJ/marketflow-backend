@@ -827,7 +827,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             : "p.name ILIKE @search ESCAPE '\\'";
         var departmentCondition = target.DepartmentId.HasValue
             ? "AND i.department_id = @department_id"
-            : string.Empty;
+            : "AND i.department_id IS NULL";
 
         await using var command = await CreateCommandAsync($"""
             SELECT p.id,

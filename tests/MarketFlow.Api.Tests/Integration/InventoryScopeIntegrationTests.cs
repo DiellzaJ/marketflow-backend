@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Inventory.DTOs;
+using MarketFlow.Application.Features.Sales.DTOs;
 
 namespace MarketFlow.Api.Tests.Integration;
 
@@ -249,7 +250,7 @@ public sealed class InventoryScopeIntegrationTests
         Assert.Equal("POS Lookup Milk", product.ProductName);
         Assert.Equal("POS-LOOKUP-123", product.Barcode);
         Assert.Equal(2.50m, product.UnitPrice);
-        Assert.Equal(14, product.AvailableQuantity);
+        Assert.Equal(7, product.AvailableQuantity);
         Assert.DoesNotContain(searchResults, item => item.ProductId == inactiveProduct.Id);
         Assert.Contains(searchResults, item =>
             item.ProductId == otherMarketProduct.Id &&
@@ -260,11 +261,139 @@ public sealed class InventoryScopeIntegrationTests
             $"marketId={marketA.Id}&barcode=POS-LOOKUP-123");
         var barcodeProduct = Assert.Single(barcodeResults);
         Assert.Equal(activeProduct.Id, barcodeProduct.ProductId);
-        Assert.Equal(14, barcodeProduct.AvailableQuantity);
+        Assert.Equal(7, barcodeProduct.AvailableQuantity);
 
         var outsideScopeResponse = await client.GetAsync(
             $"/api/inventory/pos-products?marketId={marketB.Id}&search=POS%20Lookup");
         Assert.Equal(HttpStatusCode.BadRequest, outsideScopeResponse.StatusCode);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task PosProducts_ForMarketScopedCheckoutDoesNotReportDepartmentOnlyStock()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("pos_lookup_sellable_scope"),
+            name: "POS Lookup Sellable Scope",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var department = await database.InsertDepartmentAsync(company.SchemaName, market.Id, "Department A");
+        var product = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "POS Sellable Department Only",
+            barcode: "POS-SELLABLE-DEPT");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            department.Id,
+            quantity: 12);
+        var seller = await database.CreateUserAsync(company, roleName: "Seller");
+        await database.InsertStaffAssignmentAsync(company.SchemaName, seller.Id, market.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, seller);
+
+        var products = await GetPosProductsAsync(
+            client,
+            $"marketId={market.Id}&barcode=POS-SELLABLE-DEPT");
+
+        var lookupProduct = Assert.Single(products);
+        Assert.Equal(product.Id, lookupProduct.ProductId);
+        Assert.Equal(0, lookupProduct.AvailableQuantity);
+
+        var saleResponse = await client.PostAsJsonAsync("/api/sales", new CreateSaleRequest
+        {
+            MarketId = market.Id,
+            PaymentMethod = "Cash",
+            TotalAmount = 5,
+            Items =
+            [
+                new CreateSaleItemRequest
+                {
+                    ProductId = product.Id,
+                    Quantity = 1,
+                    UnitPrice = 5
+                }
+            ]
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, saleResponse.StatusCode);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task PosProducts_ForMarketScopedCheckoutMatchesCreateSaleDeductionScope()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("pos_lookup_sale_scope"),
+            name: "POS Lookup Sale Scope",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var department = await database.InsertDepartmentAsync(company.SchemaName, market.Id, "Department A");
+        var product = await database.InsertProductAsync(
+            company.SchemaName,
+            name: "POS Sale Scope Product",
+            barcode: "POS-SALE-SCOPE");
+        var marketInventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 9,
+            reservedQuantity: 2);
+        var departmentInventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            department.Id,
+            quantity: 20);
+        var seller = await database.CreateUserAsync(company, roleName: "Seller");
+        await database.InsertStaffAssignmentAsync(company.SchemaName, seller.Id, market.Id);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, seller);
+
+        var products = await GetPosProductsAsync(
+            client,
+            $"marketId={market.Id}&barcode=POS-SALE-SCOPE");
+
+        var lookupProduct = Assert.Single(products);
+        Assert.Equal(7, lookupProduct.AvailableQuantity);
+
+        var saleResponse = await client.PostAsJsonAsync("/api/sales", new CreateSaleRequest
+        {
+            MarketId = market.Id,
+            PaymentMethod = "Cash",
+            TotalAmount = 15,
+            Items =
+            [
+                new CreateSaleItemRequest
+                {
+                    ProductId = product.Id,
+                    Quantity = 3,
+                    UnitPrice = 5
+                }
+            ]
+        });
+        saleResponse.EnsureSuccessStatusCode();
+
+        var updatedMarketInventory = await database.GetInventoryDetailsAsync(
+            company.SchemaName,
+            marketInventory.Id);
+        var updatedDepartmentInventory = await database.GetInventoryDetailsAsync(
+            company.SchemaName,
+            departmentInventory.Id);
+
+        Assert.Equal(6, updatedMarketInventory?.Quantity);
+        Assert.Equal(20, updatedDepartmentInventory?.Quantity);
     }
 
     [PostgresIntegrationFact]
