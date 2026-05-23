@@ -193,17 +193,26 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var excludedProductCondition = excludedProductId.HasValue
+            ? " AND id <> @excluded_product_id"
+            : string.Empty;
 
         await using var command = await CreateCommandAsync($"""
             SELECT EXISTS (
                 SELECT 1
                 FROM {schemaName}.products
-                WHERE barcode = @barcode
-                  AND (@excluded_product_id IS NULL OR id <> @excluded_product_id)
+                WHERE barcode = @barcode{excludedProductCondition}
             );
             """, cancellationToken);
         command.Parameters.AddWithValue("barcode", barcode.Trim());
-        command.Parameters.AddWithValue("excluded_product_id", DbValue(excludedProductId));
+
+        if (excludedProductId.HasValue)
+        {
+            command.Parameters.Add(new NpgsqlParameter("excluded_product_id", NpgsqlTypes.NpgsqlDbType.Integer)
+            {
+                Value = excludedProductId.Value
+            });
+        }
 
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
@@ -1795,6 +1804,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         string? reason = null,
         string? note = null)
     {
+        await EnsureInventoryMovementsTableAsync(
+            quotedSchemaName,
+            cancellationToken,
+            transaction);
+
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {quotedSchemaName}.inventory_movements (
                 inventory_id,
@@ -1820,6 +1834,35 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("reason", DbValue(reason));
         command.Parameters.AddWithValue("note", DbValue(note));
         command.Parameters.AddWithValue("created_by_user_id", DbValue(createdByUserId));
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task EnsureInventoryMovementsTableAsync(
+        string quotedSchemaName,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            CREATE TABLE IF NOT EXISTS {quotedSchemaName}.inventory_movements (
+                id                  SERIAL PRIMARY KEY,
+                inventory_id        INT         NOT NULL REFERENCES {quotedSchemaName}.inventory(id) ON DELETE CASCADE,
+                movement_type       VARCHAR(30) NOT NULL,
+                quantity_changed    INT         NOT NULL,
+                reference_number    VARCHAR(100),
+                reason              VARCHAR(100),
+                note                TEXT,
+                created_by_user_id  INT,
+                created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            ALTER TABLE {quotedSchemaName}.inventory_movements
+                ADD COLUMN IF NOT EXISTS reason VARCHAR(100),
+                ADD COLUMN IF NOT EXISTS note TEXT;
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_inventory
+                ON {quotedSchemaName}.inventory_movements(inventory_id);
+            CREATE INDEX IF NOT EXISTS idx_inventory_movements_created
+                ON {quotedSchemaName}.inventory_movements(created_at);
+            """, cancellationToken, transaction);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

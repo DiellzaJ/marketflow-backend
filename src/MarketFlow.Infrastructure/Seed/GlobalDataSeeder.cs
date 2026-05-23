@@ -199,6 +199,7 @@ public static class GlobalDataSeeder
         try
         {
             var createTenantSchemaFunctionExists = await CreateTenantSchemaFunctionExistsAsync(connection);
+            var ensureLowStockAlertsFunctionExists = await EnsureLowStockAlertsFunctionExistsAsync(connection);
 
             if (!createTenantSchemaFunctionExists)
             {
@@ -227,6 +228,17 @@ public static class GlobalDataSeeder
 
                         createSchemaCommand.Parameters.AddWithValue("schema_name", schemaName);
                         await createSchemaCommand.ExecuteNonQueryAsync();
+                    }
+
+                    if (ensureLowStockAlertsFunctionExists)
+                    {
+                        await using var ensureLowStockAlertsCommand = new NpgsqlCommand(
+                            "SELECT public.ensure_tenant_low_stock_alerts_table(@schema_name);",
+                            connection,
+                            transaction);
+
+                        ensureLowStockAlertsCommand.Parameters.AddWithValue("schema_name", schemaName);
+                        await ensureLowStockAlertsCommand.ExecuteNonQueryAsync();
                     }
 
                     var categoriesTableExists = await TenantTableExistsAsync(
@@ -333,6 +345,17 @@ public static class GlobalDataSeeder
     {
         await using var command = new NpgsqlCommand(
             "SELECT to_regprocedure('public.create_tenant_schema(text)') IS NOT NULL;",
+            connection);
+
+        var result = await command.ExecuteScalarAsync();
+
+        return result is bool exists && exists;
+    }
+
+    private static async Task<bool> EnsureLowStockAlertsFunctionExistsAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT to_regprocedure('public.ensure_tenant_low_stock_alerts_table(text)') IS NOT NULL;",
             connection);
 
         var result = await command.ExecuteScalarAsync();

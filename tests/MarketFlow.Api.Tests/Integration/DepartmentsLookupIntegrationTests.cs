@@ -80,7 +80,7 @@ public sealed class DepartmentsLookupIntegrationTests
         Assert.Contains(departments, x => x.Id == otherMarketDepartment.Id);
         Assert.Contains(departments, x => x.Id == nullDescriptionDepartment.Id);
         Assert.DoesNotContain(departments, x => x.Id == inactiveDepartment.Id);
-        Assert.DoesNotContain(departments, x => x.Id == otherTenantDepartment.Id);
+        Assert.DoesNotContain(departments, x => x.Name == otherTenantDepartment.Name);
         Assert.DoesNotContain(companyA.SchemaName, responseBody, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(companyB.SchemaName, responseBody, StringComparison.OrdinalIgnoreCase);
 

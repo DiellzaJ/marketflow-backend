@@ -18,6 +18,7 @@ public sealed class TenantSchemaProvisioningIntegrationTests
         "categories",
         "products",
         "inventory",
+        "low_stock_alerts",
         "purchases",
         "purchase_items",
         "sales",

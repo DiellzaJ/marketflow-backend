@@ -74,6 +74,32 @@ public sealed class StockAlertJobTests
         Assert.Equal(1, await CountResolvedLowStockAlertsAsync(options.ConnectionString, company.SchemaName));
     }
 
+    [PostgresIntegrationFact]
+    public async Task ExecuteAsync_WhenLowStockAlertsTableIsMissing_RecreatesTableBeforeScanning()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+        await using var database = new TenantIntegrationTestDatabase(options);
+        var company = await database.CreateCompanyAsync();
+        await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+        var market = await database.InsertMarketAsync(company.SchemaName);
+        var product = await database.InsertProductAsync(
+            company.SchemaName,
+            minStockAlert: 5);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 2);
+        await DropLowStockAlertsTableAsync(options.ConnectionString, company.SchemaName);
+        await using var dbContext = CreateDbContext(options.ConnectionString);
+        var job = new StockAlertJob(dbContext, NullLogger<StockAlertJob>.Instance);
+
+        await job.ExecuteAsync();
+
+        Assert.True(await database.TableExistsAsync(company.SchemaName, "low_stock_alerts"));
+        Assert.Equal(1, await CountActiveLowStockAlertsAsync(options.ConnectionString, company.SchemaName));
+    }
+
     private static ApplicationDbContext CreateDbContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -157,6 +183,20 @@ public sealed class StockAlertJobTests
             connection);
         command.Parameters.AddWithValue("inventory_id", inventoryId);
         command.Parameters.AddWithValue("quantity", quantity);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task DropLowStockAlertsTableAsync(
+        string connectionString,
+        string schemaName)
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(
+            $"DROP TABLE IF EXISTS {QuoteIdentifier(schemaName)}.low_stock_alerts;",
+            connection);
 
         await command.ExecuteNonQueryAsync();
     }
