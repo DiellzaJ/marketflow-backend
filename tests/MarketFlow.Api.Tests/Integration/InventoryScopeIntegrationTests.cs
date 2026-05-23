@@ -190,6 +190,8 @@ public sealed class InventoryScopeIntegrationTests
             dropSchemaOnDispose: true);
         var marketA = await database.InsertMarketAsync(company.SchemaName, "Market A");
         var marketB = await database.InsertMarketAsync(company.SchemaName, "Market B");
+        var produceDepartment = await database.InsertDepartmentAsync(company.SchemaName, marketA.Id, "Produce");
+        var dairyDepartment = await database.InsertDepartmentAsync(company.SchemaName, marketA.Id, "Dairy");
         var activeProduct = await database.InsertProductAsync(
             company.SchemaName,
             name: "POS Lookup Milk",
@@ -210,6 +212,20 @@ public sealed class InventoryScopeIntegrationTests
             marketA.Id,
             quantity: 11,
             reservedQuantity: 4);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            activeProduct.Id,
+            marketA.Id,
+            produceDepartment.Id,
+            quantity: 5,
+            reservedQuantity: 1);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            activeProduct.Id,
+            marketA.Id,
+            dairyDepartment.Id,
+            quantity: 4,
+            reservedQuantity: 1);
         await database.InsertInventoryAsync(
             company.SchemaName,
             inactiveProduct.Id,
@@ -233,7 +249,7 @@ public sealed class InventoryScopeIntegrationTests
         Assert.Equal("POS Lookup Milk", product.ProductName);
         Assert.Equal("POS-LOOKUP-123", product.Barcode);
         Assert.Equal(2.50m, product.UnitPrice);
-        Assert.Equal(7, product.AvailableQuantity);
+        Assert.Equal(14, product.AvailableQuantity);
         Assert.DoesNotContain(searchResults, item => item.ProductId == inactiveProduct.Id);
         Assert.Contains(searchResults, item =>
             item.ProductId == otherMarketProduct.Id &&
@@ -242,7 +258,9 @@ public sealed class InventoryScopeIntegrationTests
         var barcodeResults = await GetPosProductsAsync(
             client,
             $"marketId={marketA.Id}&barcode=POS-LOOKUP-123");
-        Assert.Equal(activeProduct.Id, Assert.Single(barcodeResults).ProductId);
+        var barcodeProduct = Assert.Single(barcodeResults);
+        Assert.Equal(activeProduct.Id, barcodeProduct.ProductId);
+        Assert.Equal(14, barcodeProduct.AvailableQuantity);
 
         var outsideScopeResponse = await client.GetAsync(
             $"/api/inventory/pos-products?marketId={marketB.Id}&search=POS%20Lookup");
@@ -264,6 +282,7 @@ public sealed class InventoryScopeIntegrationTests
             dropSchemaOnDispose: true);
         var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
         var department = await database.InsertDepartmentAsync(company.SchemaName, market.Id, "Produce");
+        var otherDepartment = await database.InsertDepartmentAsync(company.SchemaName, market.Id, "Dairy");
         var marketProduct = await database.InsertProductAsync(
             company.SchemaName,
             name: "POS Department Apple",
@@ -284,6 +303,13 @@ public sealed class InventoryScopeIntegrationTests
             department.Id,
             quantity: 9,
             reservedQuantity: 2);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            departmentProduct.Id,
+            market.Id,
+            otherDepartment.Id,
+            quantity: 30,
+            reservedQuantity: 5);
         var seller = await database.CreateUserAsync(company, roleName: "Seller");
         await database.InsertStaffAssignmentAsync(company.SchemaName, seller.Id, market.Id, department.Id);
 

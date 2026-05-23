@@ -826,8 +826,8 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             ? "p.barcode = @barcode"
             : "p.name ILIKE @search ESCAPE '\\'";
         var departmentCondition = target.DepartmentId.HasValue
-            ? "i.department_id = @department_id"
-            : "i.department_id IS NULL";
+            ? "AND i.department_id = @department_id"
+            : string.Empty;
 
         await using var command = await CreateCommandAsync($"""
             SELECT p.id,
@@ -839,7 +839,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             LEFT JOIN {schemaName}.inventory i
                 ON i.product_id = p.id
                AND i.market_id = @market_id
-               AND {departmentCondition}
+               {departmentCondition}
             WHERE p.is_active = TRUE
               AND {searchCondition}
             GROUP BY p.id, p.name, p.barcode, p.unit_price
