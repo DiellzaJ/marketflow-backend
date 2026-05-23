@@ -4,6 +4,8 @@ using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.Configuration;
 using MarketFlow.Application.Features.Inventory.DTOs;
+using MarketFlow.Application.Features.Markets.DTOs;
+using MarketFlow.Application.Features.Markets.Interfaces;
 using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Exceptions;
@@ -18,7 +20,7 @@ using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
-public sealed class TenantQueryService : ITenantQueryService
+public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
 
@@ -417,6 +419,36 @@ public sealed class TenantQueryService : ITenantQueryService
         }
 
         return categories;
+    }
+
+    public async Task<IReadOnlyCollection<MarketDto>> GetMarketsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var markets = new List<MarketDto>();
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id, name, city, address, is_active
+            FROM {schemaName}.markets
+            WHERE is_active = TRUE
+            ORDER BY name, id;
+            """, cancellationToken);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            markets.Add(new MarketDto
+            {
+                Id = reader.GetInt32(0),
+                Name = reader.GetString(1),
+                City = reader.IsDBNull(2) ? null : reader.GetString(2),
+                Address = reader.IsDBNull(3) ? null : reader.GetString(3),
+                IsActive = reader.GetBoolean(4)
+            });
+        }
+
+        return markets;
     }
 
     public async Task<PagedResult<InventoryItemDto>> GetInventoryAsync(

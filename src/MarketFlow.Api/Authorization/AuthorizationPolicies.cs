@@ -33,6 +33,8 @@ public static class AuthorizationPolicies
     public const string ReadInventoryMovements = "ReadInventoryMovements";
     public const string TransferInventory = "TransferInventory";
 
+    public const string ReadMarkets = "ReadMarkets";
+
     public const string UpdateInventoryStock = UpdateInventory;
     public const string AdjustInventoryStock = AdjustInventory;
     public const string TransferInventoryStock = TransferInventory;
