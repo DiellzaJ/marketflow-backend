@@ -23,11 +23,11 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         new Dictionary<string, (string Description, string Permissions)>
     {
         ["RootAdmin"] = ("Platform administrator", "{\"company\": true, \"companies:read\": true, \"companies:create\": true, \"companies:update\": true, \"companies:delete\": true, \"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true}"),
-        ["CompanyAdmin"] = ("Company-level administrator", "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
-        ["MainOperator"] = ("Market-level manager", "{\"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
-        ["DepartmentManager"] = ("Department-level manager", "{\"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"),
-        ["InventoryEmployee"] = ("Stock and inventory employee", "{\"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true}"),
-        ["Seller"] = ("Creates sales and handles POS operations", "{\"products:read\": true, \"sales:create\": true, \"inventory:read\": true}")
+        ["CompanyAdmin"] = ("Company-level administrator", "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"markets:read\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
+        ["MainOperator"] = ("Market-level manager", "{\"markets:read\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
+        ["DepartmentManager"] = ("Department-level manager", "{\"markets:read\": true, \"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"),
+        ["InventoryEmployee"] = ("Stock and inventory employee", "{\"markets:read\": true, \"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true}"),
+        ["Seller"] = ("Creates sales and handles POS operations", "{\"markets:read\": true, \"products:read\": true, \"sales:create\": true, \"inventory:read\": true}")
     };
 
     private readonly TenantIntegrationTestOptions _options;
@@ -278,6 +278,9 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
     public async Task<TenantTestMarket> InsertMarketAsync(
         string schemaName,
         string? name = null,
+        string? city = "Test City",
+        string? address = null,
+        bool isActive = true,
         CancellationToken cancellationToken = default)
     {
         name ??= $"Market {Guid.NewGuid():N}"[..22];
@@ -286,13 +289,21 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         var marketId = await ExecuteScalarAsync<int>(
             connection,
             $"""
-            INSERT INTO {QuoteIdentifier(schemaName)}.markets (name, city, is_active)
-            VALUES (@name, @city, TRUE)
+            INSERT INTO {QuoteIdentifier(schemaName)}.markets (name, city, address, is_active)
+            VALUES (@name, @city, @address, @is_active)
             RETURNING id;
             """,
             cancellationToken,
             new NpgsqlParameter("name", name),
-            new NpgsqlParameter("city", "Test City"));
+            new NpgsqlParameter("city", NpgsqlDbType.Varchar)
+            {
+                Value = city is null ? DBNull.Value : city
+            },
+            new NpgsqlParameter("address", NpgsqlDbType.Text)
+            {
+                Value = address is null ? DBNull.Value : address
+            },
+            new NpgsqlParameter("is_active", isActive));
 
         return new TenantTestMarket(marketId, name);
     }

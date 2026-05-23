@@ -11,6 +11,8 @@ using MarketFlow.Application.Features.Companies.Interfaces;
 using MarketFlow.Application.Features.Companies.Services;
 using MarketFlow.Application.Features.Inventory.Interfaces;
 using MarketFlow.Application.Features.Inventory.Services;
+using MarketFlow.Application.Features.Markets.Interfaces;
+using MarketFlow.Application.Features.Markets.Services;
 using MarketFlow.Application.Features.Products.Interfaces;
 using MarketFlow.Application.Features.Products.Services;
 using MarketFlow.Application.Features.Purchases.Interfaces;
@@ -184,19 +186,27 @@ public static class ServiceCollectionExtensions
 
             options.AddPolicy(AuthorizationPolicies.TransferInventory, policy =>
                 policy.Requirements.Add(new PermissionRequirement("stock", "transfer")));
+
+            options.AddPolicy(AuthorizationPolicies.ReadMarkets, policy =>
+                policy.Requirements.Add(new PermissionRequirement("markets", "read")));
         });
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<ICompanyStore, CompanyStore>();
         services.AddScoped<ITenantContextStore, TenantContextStore>();
-        services.AddScoped<ITenantQueryService, TenantQueryService>();
+        services.AddScoped<TenantQueryService>();
+        services.AddScoped<ITenantQueryService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IMarketQueryService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<ICategoryService, CategoryService>();
+        services.AddScoped<IMarketService, MarketService>();
         services.AddScoped<IUserCreationValidator, UserCreationValidator>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IProductService, ProductService>();
