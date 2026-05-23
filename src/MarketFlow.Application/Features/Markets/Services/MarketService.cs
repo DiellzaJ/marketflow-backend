@@ -83,21 +83,7 @@ public class MarketService : IMarketService
             return ServiceResult<MarketDto>.Failure(ActiveStateChangeMessage);
         }
 
-        var currentMarket = await _marketStore.GetMarketAsync(
-            id,
-            includeInactive: true,
-            cancellationToken);
-
-        if (currentMarket is null)
-        {
-            return ServiceResult<MarketDto>.Failure("Market was not found.", ServiceResultFailureType.NotFound);
-        }
-
-        var validationError = await ValidateMarketAsync(
-            request.Name,
-            request.City,
-            id,
-            cancellationToken);
+        var validationError = ValidateMarketShape(request.Name, request.City);
 
         if (validationError is not null)
         {
@@ -218,6 +204,23 @@ public class MarketService : IMarketService
         int? excludedMarketId,
         CancellationToken cancellationToken)
     {
+        var validationError = ValidateMarketShape(name, city);
+
+        if (validationError is not null)
+        {
+            return validationError;
+        }
+
+        if (await _marketStore.MarketNameExistsAsync(name.Trim(), excludedMarketId, cancellationToken))
+        {
+            return NameConflict();
+        }
+
+        return null;
+    }
+
+    private static ServiceResult<MarketDto>? ValidateMarketShape(string name, string? city)
+    {
         if (string.IsNullOrWhiteSpace(name))
         {
             return ServiceResult<MarketDto>.Failure("Market name is required.");
@@ -231,11 +234,6 @@ public class MarketService : IMarketService
         if (!string.IsNullOrWhiteSpace(city) && city.Trim().Length > MaxCityLength)
         {
             return ServiceResult<MarketDto>.Failure($"Market city cannot exceed {MaxCityLength} characters.");
-        }
-
-        if (await _marketStore.MarketNameExistsAsync(name.Trim(), excludedMarketId, cancellationToken))
-        {
-            return NameConflict();
         }
 
         return null;

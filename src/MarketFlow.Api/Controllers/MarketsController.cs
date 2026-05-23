@@ -29,7 +29,7 @@ public class MarketsController(IMarketService marketService) : ControllerBase
         CancellationToken cancellationToken)
     {
         var result = await marketService.GetMarketAsync(id, cancellationToken);
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return result.Succeeded ? Ok(result) : MarketFailure(result);
     }
 
     [HttpPost]

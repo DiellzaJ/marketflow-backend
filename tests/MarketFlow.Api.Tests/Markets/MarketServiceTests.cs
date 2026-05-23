@@ -121,7 +121,7 @@ public sealed class MarketServiceTests
         Assert.False(result.Succeeded);
         Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
         Assert.Equal("Market was not found.", result.Message);
-        Assert.False(store.UpdateMarketWasCalled);
+        Assert.True(store.UpdateMarketWasCalled);
     }
 
     [Fact]

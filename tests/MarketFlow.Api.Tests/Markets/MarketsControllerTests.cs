@@ -35,6 +35,35 @@ public sealed class MarketsControllerTests
     }
 
     [Fact]
+    public async Task GetByIdAsync_WhenServiceReturnsConflict_ReturnsConflict()
+    {
+        var result = ServiceResult<MarketDto>.Failure(
+            "Market conflict.",
+            ServiceResultFailureType.Conflict);
+        var controller = new MarketsController(new StubMarketService(result));
+
+        var response = await controller.GetByIdAsync(10, CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(response.Result);
+        Assert.Same(result, conflict.Value);
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenServiceFails_PropagatesFailureResult()
+    {
+        var result = ServiceResult<MarketDto>.Failure("Market lookup failed.");
+        var controller = new MarketsController(new StubMarketService(result));
+
+        var response = await controller.GetAsync(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var listResult = Assert.IsType<ServiceResult<IReadOnlyCollection<MarketDto>>>(ok.Value);
+        Assert.False(listResult.Succeeded);
+        Assert.Equal(result.Message, listResult.Message);
+        Assert.Equal(result.FailureType, listResult.FailureType);
+    }
+
+    [Fact]
     public async Task CreateAsync_ReturnsCreatedAtNamedMarketRoute()
     {
         var market = CreateMarket();
@@ -132,6 +161,13 @@ public sealed class MarketsControllerTests
         public Task<ServiceResult<IReadOnlyCollection<MarketDto>>> GetMarketsAsync(
             CancellationToken cancellationToken = default)
         {
+            if (!_result.Succeeded)
+            {
+                return Task.FromResult(ServiceResult<IReadOnlyCollection<MarketDto>>.Failure(
+                    _result.Message,
+                    _result.FailureType));
+            }
+
             IReadOnlyCollection<MarketDto> markets = _result.Data is null ? [] : [_result.Data];
             return Task.FromResult(ServiceResult<IReadOnlyCollection<MarketDto>>.Success(markets));
         }

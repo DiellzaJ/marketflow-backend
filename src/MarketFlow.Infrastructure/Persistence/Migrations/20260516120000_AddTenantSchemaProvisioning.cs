@@ -35,6 +35,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                             is_active  BOOLEAN     NOT NULL DEFAULT TRUE,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         );
+                        CREATE INDEX IF NOT EXISTS idx_markets_name_lower ON %1$I.markets (lower(name));
 
                         CREATE TABLE IF NOT EXISTS %1$I.departments (
                             id          SERIAL PRIMARY KEY,

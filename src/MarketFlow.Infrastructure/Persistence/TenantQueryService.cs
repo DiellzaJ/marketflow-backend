@@ -526,6 +526,12 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         await LockMarketsTableAsync(schemaName, transaction, cancellationToken);
 
+        if (!await MarketExistsAsync(schemaName, id, cancellationToken, transaction))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
         if (await MarketNameExistsAsync(schemaName, request.Name, id, cancellationToken, transaction))
         {
             await transaction.RollbackAsync(cancellationToken);
@@ -2390,6 +2396,24 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             """, cancellationToken, transaction);
         command.Parameters.AddWithValue("name", name.Trim());
         command.Parameters.AddWithValue("excluded_market_id", DbValue(excludedMarketId));
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    private async Task<bool> MarketExistsAsync(
+        string schemaName,
+        int id,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.markets
+                WHERE id = @id
+            );
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("id", id);
 
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
