@@ -5,6 +5,8 @@ using MarketFlow.Application.Features.Auth.Interfaces;
 using MarketFlow.Domain.Entities;
 using MarketFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 
 namespace MarketFlow.Infrastructure.Services.Auth;
 
@@ -242,7 +244,8 @@ public class AuthService : IAuthService
 
     private async Task<AuthResponse> GenerateAuthResponseAsync(User user)
     {
-        var accessToken = _jwtTokenService.GenerateAccessToken(user);
+        var assignment = await GetActiveStaffAssignmentAsync(user);
+        var accessToken = _jwtTokenService.GenerateAccessToken(user, assignment);
         var refreshToken = _jwtTokenService.GenerateRefreshToken();
 
         user.RefreshTokenHash = _jwtTokenService.HashRefreshToken(refreshToken);
@@ -257,13 +260,88 @@ public class AuthService : IAuthService
             Role = user.Role.Name,
             CompanyId = user.CompanyId,
             SchemaName = user.Company.SchemaName,
+            Assignment = assignment,
             AccessToken = accessToken,
             RefreshToken = refreshToken
         };
     }
 
+    private async Task<AuthUserAssignmentDto?> GetActiveStaffAssignmentAsync(User user)
+    {
+        var schemaName = user.Company.SchemaName;
+
+        if (string.IsNullOrWhiteSpace(schemaName))
+        {
+            return null;
+        }
+
+        var connection = (NpgsqlConnection)_dbContext.Database.GetDbConnection();
+        var closeConnection = connection.State != System.Data.ConnectionState.Open;
+
+        if (closeConnection)
+        {
+            await connection.OpenAsync();
+        }
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            var currentTransaction = _dbContext.Database.CurrentTransaction?.GetDbTransaction();
+
+            if (currentTransaction is NpgsqlTransaction npgsqlTransaction)
+            {
+                command.Transaction = npgsqlTransaction;
+            }
+
+            command.CommandText = $"""
+                SELECT sa.market_id,
+                       sa.department_id
+                FROM {QuoteIdentifier(schemaName)}.staff_assignments sa
+                WHERE sa.is_active = TRUE
+                  AND sa.user_id = @user_id
+                ORDER BY sa.assigned_at DESC, sa.id DESC
+                LIMIT 1;
+                """;
+            command.Parameters.AddWithValue("user_id", user.Id);
+
+            await using var reader = await command.ExecuteReaderAsync();
+
+            return await reader.ReadAsync()
+                ? new AuthUserAssignmentDto
+                {
+                    MarketId = reader.GetInt32(0),
+                    DepartmentId = reader.IsDBNull(1) ? null : reader.GetInt32(1)
+                }
+                : null;
+        }
+        catch (PostgresException exception) when (IsRecoverableAssignmentLookupException(exception))
+        {
+            return null;
+        }
+        finally
+        {
+            if (closeConnection)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
     private static string NormalizeEmail(string email)
     {
         return email.Trim().ToLowerInvariant();
+    }
+
+    private static string QuoteIdentifier(string identifier)
+    {
+        return "\"" + identifier.Replace("\"", "\"\"") + "\"";
+    }
+
+    private static bool IsRecoverableAssignmentLookupException(PostgresException exception)
+    {
+        return exception.SqlState is
+            "3F000" or // undefined_schema
+            "42P01" or // undefined_table
+            "42501"; // insufficient_privilege
     }
 }
