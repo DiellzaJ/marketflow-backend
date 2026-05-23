@@ -49,6 +49,10 @@ public sealed class DepartmentsLookupIntegrationTests
             companyA.SchemaName,
             otherMarketA.Id,
             name: "Tenant A Other Market Department");
+        var nullDescriptionDepartment = await database.InsertDepartmentAsync(
+            companyA.SchemaName,
+            marketA.Id,
+            name: "Tenant A Null Description Department");
         var inactiveDepartment = await database.InsertDepartmentAsync(
             companyA.SchemaName,
             marketA.Id,
@@ -74,6 +78,7 @@ public sealed class DepartmentsLookupIntegrationTests
         var departments = Assert.IsAssignableFrom<IReadOnlyCollection<DepartmentDto>>(result.Data);
         Assert.Contains(departments, x => x.Id == activeDepartment.Id);
         Assert.Contains(departments, x => x.Id == otherMarketDepartment.Id);
+        Assert.Contains(departments, x => x.Id == nullDescriptionDepartment.Id);
         Assert.DoesNotContain(departments, x => x.Id == inactiveDepartment.Id);
         Assert.DoesNotContain(departments, x => x.Id == otherTenantDepartment.Id);
         Assert.DoesNotContain(companyA.SchemaName, responseBody, StringComparison.OrdinalIgnoreCase);
@@ -84,6 +89,9 @@ public sealed class DepartmentsLookupIntegrationTests
         Assert.Equal(activeDepartment.Name, department.Name);
         Assert.Equal(activeDepartment.Description, department.Description);
         Assert.True(department.IsActive);
+
+        var departmentWithNullDescription = departments.Single(x => x.Id == nullDescriptionDepartment.Id);
+        Assert.Null(departmentWithNullDescription.Description);
     }
 
     [PostgresIntegrationFact]

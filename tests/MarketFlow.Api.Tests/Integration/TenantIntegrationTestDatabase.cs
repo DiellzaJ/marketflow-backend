@@ -317,7 +317,6 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         name ??= $"Department {Guid.NewGuid():N}"[..26];
-        description ??= $"{name} integration test department";
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
         var departmentId = await ExecuteScalarAsync<int>(
