@@ -23,7 +23,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         new Dictionary<string, (string Description, string Permissions)>
     {
         ["RootAdmin"] = ("Platform administrator", "{\"company\": true, \"companies:read\": true, \"companies:create\": true, \"companies:update\": true, \"companies:delete\": true, \"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true}"),
-        ["CompanyAdmin"] = ("Company-level administrator", "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
+        ["CompanyAdmin"] = ("Company-level administrator", "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"markets:read\": true, \"markets:create\": true, \"markets:update\": true, \"markets:delete\": true, \"departments:read\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
         ["MainOperator"] = ("Market-level manager", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
         ["DepartmentManager"] = ("Department-level manager", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"),
         ["InventoryEmployee"] = ("Stock and inventory employee", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true}"),
@@ -306,6 +306,58 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             new NpgsqlParameter("is_active", isActive));
 
         return new TenantTestMarket(marketId, name);
+    }
+
+    public async Task<int> CountMarketsByNameAsync(
+        string schemaName,
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        return await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            SELECT COUNT(*)::int
+            FROM {QuoteIdentifier(schemaName)}.markets
+            WHERE lower(name) = lower(@name);
+            """,
+            cancellationToken,
+            new NpgsqlParameter("name", name));
+    }
+
+    public async Task<TenantTestMarketDetails?> GetMarketDetailsAsync(
+        string schemaName,
+        int marketId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"""
+            SELECT id,
+                   name,
+                   city,
+                   address,
+                   is_active
+            FROM {QuoteIdentifier(schemaName)}.markets
+            WHERE id = @market_id;
+            """,
+            connection);
+        command.Parameters.Add(new NpgsqlParameter("market_id", NpgsqlDbType.Integer)
+        {
+            Value = marketId
+        });
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken)
+            ? new TenantTestMarketDetails(
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.GetBoolean(4))
+            : null;
     }
 
     public async Task<TenantTestDepartment> InsertDepartmentAsync(

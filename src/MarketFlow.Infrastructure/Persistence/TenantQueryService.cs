@@ -8,6 +8,7 @@ using MarketFlow.Application.Features.Departments.Interfaces;
 using MarketFlow.Application.Features.Inventory.Configuration;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Markets.DTOs;
+using MarketFlow.Application.Features.Markets.Exceptions;
 using MarketFlow.Application.Features.Markets.Interfaces;
 using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
@@ -23,7 +24,7 @@ using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
-public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IDepartmentQueryService
+public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IMarketStore, IDepartmentQueryService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -464,6 +465,135 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
 
         return markets;
+    }
+
+    public async Task<MarketDto?> GetMarketAsync(
+        int id,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var activeCondition = includeInactive ? string.Empty : " AND is_active = TRUE";
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id, name, city, address, is_active
+            FROM {schemaName}.markets
+            WHERE id = @id{activeCondition};
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+
+        return await ReadMarketAsync(command, cancellationToken);
+    }
+
+    public async Task<bool> MarketNameExistsAsync(
+        string name,
+        int? excludedMarketId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        return await MarketNameExistsAsync(schemaName, name, excludedMarketId, cancellationToken);
+    }
+
+    public async Task<MarketDto> CreateMarketAsync(
+        CreateMarketRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+
+        await LockMarketsTableAsync(schemaName, transaction, cancellationToken);
+
+        if (await MarketNameExistsAsync(schemaName, request.Name, excludedMarketId: null, cancellationToken, transaction))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new MarketNameConflictException();
+        }
+
+        await using var command = await CreateCommandAsync($"""
+            INSERT INTO {schemaName}.markets (name, city, address)
+            VALUES (@name, @city, @address)
+            RETURNING id;
+            """, cancellationToken, transaction);
+
+        AddMarketParameters(command, request);
+
+        var createdIdValue = await command.ExecuteScalarAsync(cancellationToken);
+        var createdId = createdIdValue is int value
+            ? value
+            : throw new InvalidOperationException("Market was not created.");
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return await GetMarketAsync(createdId, includeInactive: true, cancellationToken)
+            ?? throw new InvalidOperationException("Market was not found after creation.");
+    }
+
+    public async Task<MarketDto?> UpdateMarketAsync(
+        int id,
+        UpdateMarketRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+
+        await LockMarketsTableAsync(schemaName, transaction, cancellationToken);
+
+        if (!await MarketExistsAsync(schemaName, id, cancellationToken, transaction))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        if (await MarketNameExistsAsync(schemaName, request.Name, id, cancellationToken, transaction))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new MarketNameConflictException();
+        }
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.markets
+            SET name = @name,
+                city = @city,
+                address = @address
+            WHERE id = @id
+            RETURNING id;
+            """, cancellationToken, transaction);
+
+        command.Parameters.AddWithValue("id", id);
+        AddMarketParameters(command, request);
+
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return updatedId is null
+            ? null
+            : await GetMarketAsync(id, includeInactive: true, cancellationToken);
+    }
+
+    public async Task<MarketDto?> SetMarketActiveStateAsync(
+        int id,
+        bool isActive,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.markets
+            SET is_active = @is_active
+            WHERE id = @id
+              AND is_active <> @is_active
+            RETURNING id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("is_active", isActive);
+
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return updatedId is null
+            ? null
+            : await GetMarketAsync(id, includeInactive: true, cancellationToken);
     }
 
     public async Task<IReadOnlyCollection<DepartmentDto>> GetDepartmentsAsync(
@@ -2387,6 +2517,67 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return await reader.ReadAsync(cancellationToken) ? ReadProduct(reader) : null;
     }
 
+    private static async Task<MarketDto?> ReadMarketAsync(
+        NpgsqlCommand command,
+        CancellationToken cancellationToken)
+    {
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? ReadMarket(reader) : null;
+    }
+
+    private async Task<bool> MarketNameExistsAsync(
+        string schemaName,
+        string name,
+        int? excludedMarketId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.markets
+                WHERE lower(name) = lower(@name)
+                  AND (@excluded_market_id IS NULL OR id <> @excluded_market_id)
+            );
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("name", name.Trim());
+        command.Parameters.AddWithValue("excluded_market_id", DbValue(excludedMarketId));
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    private async Task<bool> MarketExistsAsync(
+        string schemaName,
+        int id,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.markets
+                WHERE id = @id
+            );
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("id", id);
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    private async Task LockMarketsTableAsync(
+        string schemaName,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = await CreateCommandAsync(
+            $"LOCK TABLE {schemaName}.markets IN SHARE ROW EXCLUSIVE MODE;",
+            cancellationToken,
+            transaction);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static string BuildProductWhereClause(ProductListQuery query)
     {
         var conditions = new List<string>();
@@ -2769,6 +2960,18 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         };
     }
 
+    private static MarketDto ReadMarket(NpgsqlDataReader reader)
+    {
+        return new MarketDto
+        {
+            Id = reader.GetInt32(0),
+            Name = reader.GetString(1),
+            City = reader.IsDBNull(2) ? null : reader.GetString(2),
+            Address = reader.IsDBNull(3) ? null : reader.GetString(3),
+            IsActive = reader.GetBoolean(4)
+        };
+    }
+
     private static async Task<SaleDto?> ReadSaleAsync(
         NpgsqlCommand command,
         CancellationToken cancellationToken)
@@ -2830,6 +3033,20 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("tax_rate", request.TaxRate);
         command.Parameters.AddWithValue("image_url", DbValue(request.ImageUrl));
         command.Parameters.AddWithValue("min_stock_alert", request.MinStockAlert);
+    }
+
+    private static void AddMarketParameters(NpgsqlCommand command, CreateMarketRequest request)
+    {
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("city", DbValue(request.City));
+        command.Parameters.AddWithValue("address", DbValue(request.Address));
+    }
+
+    private static void AddMarketParameters(NpgsqlCommand command, UpdateMarketRequest request)
+    {
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("city", DbValue(request.City));
+        command.Parameters.AddWithValue("address", DbValue(request.Address));
     }
 
     private static object DbValue<T>(T? value)

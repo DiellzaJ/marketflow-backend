@@ -34,6 +34,10 @@ public static class AuthorizationPolicies
     public const string TransferInventory = "TransferInventory";
 
     public const string ReadMarkets = "ReadMarkets";
+    public const string CreateMarkets = "CreateMarkets";
+    public const string UpdateMarkets = "UpdateMarkets";
+    public const string DeleteMarkets = "DeleteMarkets";
+
     public const string ReadDepartments = "ReadDepartments";
 
     public const string UpdateInventoryStock = UpdateInventory;
