@@ -215,6 +215,119 @@ public sealed class SaleCompletionIntegrationTests
     }
 
     [PostgresIntegrationFact]
+    public async Task UpdateSale_WhenCachedTenantReferenceSchemaDrifts_RepairsAndRetries()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_update_drift"),
+            name: "sale_reference_update_drift",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Update Drift Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var sale = await CreateSaleAsync(client, market.Id, product.Id);
+        Assert.NotEmpty(sale.ReferenceNumber);
+
+        await database.RemoveSaleReferenceNumbersAsync(company.SchemaName);
+
+        var driftedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.False(driftedState.ColumnExists);
+        Assert.False(driftedState.TriggerExists);
+        Assert.False(driftedState.UniqueIndexExists);
+
+        var response = await client.PutAsJsonAsync($"/api/sales/{sale.Id}", new UpdateSaleRequest
+        {
+            MarketId = market.Id,
+            SaleDate = sale.SaleDate,
+            PaymentMethod = "Card",
+            DiscountAmount = 0,
+            TotalAmount = 7,
+            Notes = "updated after drift"
+        });
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<SaleDto>>();
+        Assert.NotNull(result?.Data);
+        Assert.NotEmpty(result.Data.ReferenceNumber);
+        Assert.Equal("Card", result.Data.PaymentMethod);
+
+        var repairedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(repairedState.ColumnExists);
+        Assert.True(repairedState.TriggerExists);
+        Assert.True(repairedState.UniqueIndexExists);
+        Assert.True(repairedState.TriggerFunctionExists);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task PatchSale_WhenCachedTenantReferenceSchemaDrifts_RepairsAndRetries()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_patch_drift"),
+            name: "sale_reference_patch_drift",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Patch Drift Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var sale = await CreateSaleAsync(client, market.Id, product.Id);
+        Assert.NotEmpty(sale.ReferenceNumber);
+
+        await database.RemoveSaleReferenceNumbersAsync(company.SchemaName);
+
+        var driftedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.False(driftedState.ColumnExists);
+        Assert.False(driftedState.TriggerExists);
+        Assert.False(driftedState.UniqueIndexExists);
+
+        var response = await client.PatchAsJsonAsync($"/api/sales/{sale.Id}", new PatchSaleRequest
+        {
+            PaymentMethod = "Card",
+            TotalAmount = 8,
+            Notes = "patched after drift"
+        });
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<SaleDto>>();
+        Assert.NotNull(result?.Data);
+        Assert.NotEmpty(result.Data.ReferenceNumber);
+        Assert.Equal("Card", result.Data.PaymentMethod);
+
+        var repairedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(repairedState.ColumnExists);
+        Assert.True(repairedState.TriggerExists);
+        Assert.True(repairedState.UniqueIndexExists);
+        Assert.True(repairedState.TriggerFunctionExists);
+    }
+
+    [PostgresIntegrationFact]
     public async Task CreateSale_WhenRepairTransactionAborts_ReturnsHandledRepairFailure()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();

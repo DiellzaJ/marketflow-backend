@@ -1712,8 +1712,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
 
+        return await ExecuteWithSaleReferenceNumberRecoveryAsync(
+            schemaName,
+            () => UpdateSaleCoreAsync(schemaName, id, request, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<SaleDto?> UpdateSaleCoreAsync(
+        string schemaName,
+        int id,
+        UpdateSaleRequest request,
+        CancellationToken cancellationToken)
+    {
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.sales
             SET market_id = @market_id,
@@ -1743,8 +1754,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
 
+        return await ExecuteWithSaleReferenceNumberRecoveryAsync(
+            schemaName,
+            () => PatchSaleCoreAsync(schemaName, id, request, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<SaleDto?> PatchSaleCoreAsync(
+        string schemaName,
+        int id,
+        PatchSaleRequest request,
+        CancellationToken cancellationToken)
+    {
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.sales
             SET market_id = COALESCE(@market_id, market_id),
