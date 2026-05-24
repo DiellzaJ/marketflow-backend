@@ -2503,6 +2503,14 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             quotedSchemaName,
             preState);
 
+        if (preState.HasCompleteInfrastructure)
+        {
+            _logger.LogDebug(
+                "Skipping sale reference number repair for tenant schema {SchemaName} because it is already healthy.",
+                quotedSchemaName);
+            return;
+        }
+
         await using var transaction = await BeginTransactionAsync(cancellationToken);
 
         await using var lockCommand = await CreateCommandAsync(
@@ -2519,79 +2527,105 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         try
         {
-            currentRepairStep = "CreateReferenceNumberTriggerFunction";
-            await ExecuteSchemaRepairCommandAsync(
+            var lockedState = await GetSaleReferenceNumberSchemaDiagnosticsAsync(
                 quotedSchemaName,
-                currentRepairStep,
-                $"CREATE OR REPLACE FUNCTION public.assign_sale_reference_number()\n" +
-                "RETURNS trigger\n" +
-                "LANGUAGE plpgsql\n" +
-                "AS $$\n" +
-                "BEGIN\n" +
-                "    IF NEW.reference_number IS NULL OR btrim(NEW.reference_number) = '' THEN\n" +
-                "        NEW.reference_number := 'SALE-' || lpad(NEW.id::text, 6, '0');\n" +
-                "    END IF;\n" +
-                "    RETURN NEW;\n" +
-                "END;\n" +
-                "$$;\n",
-                transaction,
-                cancellationToken);
+                cancellationToken,
+                transaction);
 
-            currentRepairStep = "AddReferenceNumberColumn";
-            await ExecuteSchemaRepairCommandAsync(
-                quotedSchemaName,
-                currentRepairStep,
-                $"ALTER TABLE {quotedSchemaName}.sales\n" +
-                "    ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);\n",
-                transaction,
-                cancellationToken);
+            if (lockedState.HasCompleteInfrastructure)
+            {
+                _logger.LogDebug(
+                    "Skipping sale reference number repair for tenant schema {SchemaName} because it became healthy before the repair lock was acquired.",
+                    quotedSchemaName);
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
 
-            currentRepairStep = "BackfillReferenceNumbers";
-            await ExecuteSchemaRepairCommandAsync(
-                quotedSchemaName,
-                currentRepairStep,
-                $"UPDATE {quotedSchemaName}.sales\n" +
-                "SET reference_number = 'SALE-' || lpad(id::text, 6, '0')\n" +
-                "WHERE reference_number IS NULL OR btrim(reference_number) = '';\n",
-                transaction,
-                cancellationToken);
+            var referenceNumberColumnWasMissing = !lockedState.ColumnExists;
+            var shouldBackfillReferenceNumbers =
+                referenceNumberColumnWasMissing ||
+                !lockedState.UniqueIndexExists;
 
-            currentRepairStep = "SetReferenceNumberNotNull";
-            await ExecuteSchemaRepairCommandAsync(
-                quotedSchemaName,
-                currentRepairStep,
-                $"ALTER TABLE {quotedSchemaName}.sales\n" +
-                "    ALTER COLUMN reference_number SET NOT NULL;\n",
-                transaction,
-                cancellationToken);
+            if (!lockedState.TriggerFunctionExists)
+            {
+                currentRepairStep = "CreateReferenceNumberTriggerFunction";
+                await ExecuteSchemaRepairCommandAsync(
+                    quotedSchemaName,
+                    currentRepairStep,
+                    $"CREATE FUNCTION public.assign_sale_reference_number()\n" +
+                    "RETURNS trigger\n" +
+                    "LANGUAGE plpgsql\n" +
+                    "AS $$\n" +
+                    "BEGIN\n" +
+                    "    IF NEW.reference_number IS NULL OR btrim(NEW.reference_number) = '' THEN\n" +
+                    "        NEW.reference_number := 'SALE-' || lpad(NEW.id::text, 6, '0');\n" +
+                    "    END IF;\n" +
+                    "    RETURN NEW;\n" +
+                    "END;\n" +
+                    "$$;\n",
+                    transaction,
+                    cancellationToken);
+            }
 
-            currentRepairStep = "CreateUniqueReferenceNumberIndex";
-            await ExecuteSchemaRepairCommandAsync(
-                quotedSchemaName,
-                currentRepairStep,
-                $"CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number\n" +
-                $"    ON {quotedSchemaName}.sales(reference_number);\n",
-                transaction,
-                cancellationToken);
+            if (referenceNumberColumnWasMissing)
+            {
+                currentRepairStep = "AddReferenceNumberColumn";
+                await ExecuteSchemaRepairCommandAsync(
+                    quotedSchemaName,
+                    currentRepairStep,
+                    $"ALTER TABLE {quotedSchemaName}.sales\n" +
+                    "    ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);\n",
+                    transaction,
+                    cancellationToken);
+            }
 
-            currentRepairStep = "DropExistingTrigger";
-            await ExecuteSchemaRepairCommandAsync(
-                quotedSchemaName,
-                currentRepairStep,
-                $"DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {quotedSchemaName}.sales;\n",
-                transaction,
-                cancellationToken);
+            if (shouldBackfillReferenceNumbers)
+            {
+                currentRepairStep = "BackfillReferenceNumbers";
+                await ExecuteSchemaRepairCommandAsync(
+                    quotedSchemaName,
+                    currentRepairStep,
+                    $"UPDATE {quotedSchemaName}.sales\n" +
+                    "SET reference_number = 'SALE-' || lpad(id::text, 6, '0')\n" +
+                    "WHERE reference_number IS NULL OR btrim(reference_number) = '';\n",
+                    transaction,
+                    cancellationToken);
 
-            currentRepairStep = "CreateTrigger";
-            await ExecuteSchemaRepairCommandAsync(
-                quotedSchemaName,
-                currentRepairStep,
-                $"CREATE TRIGGER trg_sales_assign_reference_number\n" +
-                $"    BEFORE INSERT ON {quotedSchemaName}.sales\n" +
-                $"    FOR EACH ROW\n" +
-                $"    EXECUTE FUNCTION public.assign_sale_reference_number();\n",
-                transaction,
-                cancellationToken);
+                currentRepairStep = "SetReferenceNumberNotNull";
+                await ExecuteSchemaRepairCommandAsync(
+                    quotedSchemaName,
+                    currentRepairStep,
+                    $"ALTER TABLE {quotedSchemaName}.sales\n" +
+                    "    ALTER COLUMN reference_number SET NOT NULL;\n",
+                    transaction,
+                    cancellationToken);
+            }
+
+            if (!lockedState.UniqueIndexExists)
+            {
+                currentRepairStep = "CreateUniqueReferenceNumberIndex";
+                await ExecuteSchemaRepairCommandAsync(
+                    quotedSchemaName,
+                    currentRepairStep,
+                    $"CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number\n" +
+                    $"    ON {quotedSchemaName}.sales(reference_number);\n",
+                    transaction,
+                    cancellationToken);
+            }
+
+            if (!lockedState.TriggerExists)
+            {
+                currentRepairStep = "CreateTrigger";
+                await ExecuteSchemaRepairCommandAsync(
+                    quotedSchemaName,
+                    currentRepairStep,
+                    $"CREATE TRIGGER trg_sales_assign_reference_number\n" +
+                    $"    BEFORE INSERT ON {quotedSchemaName}.sales\n" +
+                    $"    FOR EACH ROW\n" +
+                    $"    EXECUTE FUNCTION public.assign_sale_reference_number();\n",
+                    transaction,
+                    cancellationToken);
+            }
 
             await transaction.CommitAsync(cancellationToken);
             SaleReferenceNumberRepairCache.TryAdd(quotedSchemaName, 0);
@@ -2662,7 +2696,8 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
     private async Task<SaleReferenceNumberSchemaDiagnostics> GetSaleReferenceNumberSchemaDiagnosticsAsync(
         string quotedSchemaName,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
     {
         var actualSchemaName = quotedSchemaName.Trim('"');
 
@@ -2686,7 +2721,8 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                    to_regclass(format('%I.ux_sales_reference_number', @schema_name)) IS NOT NULL AS unique_index_exists,
                    to_regprocedure('public.assign_sale_reference_number()') IS NOT NULL AS trigger_function_exists;
             """,
-            cancellationToken);
+            cancellationToken,
+            transaction);
         command.Parameters.AddWithValue("schema_name", actualSchemaName);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -2703,7 +2739,14 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         bool ColumnExists,
         bool TriggerExists,
         bool UniqueIndexExists,
-        bool TriggerFunctionExists);
+        bool TriggerFunctionExists)
+    {
+        public bool HasCompleteInfrastructure =>
+            ColumnExists &&
+            TriggerExists &&
+            UniqueIndexExists &&
+            TriggerFunctionExists;
+    }
 
     private async Task InsertSaleItemAsync(
         string quotedSchemaName,

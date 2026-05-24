@@ -2,16 +2,21 @@ using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace MarketFlow.Api.Tests.Integration;
 
 public sealed class TenantApiFactory : WebApplicationFactory<Program>
 {
     private readonly TenantIntegrationTestOptions _options;
+    private readonly ILoggerProvider? _loggerProvider;
 
-    public TenantApiFactory(TenantIntegrationTestOptions options)
+    public TenantApiFactory(
+        TenantIntegrationTestOptions options,
+        ILoggerProvider? loggerProvider = null)
     {
         _options = options;
+        _loggerProvider = loggerProvider;
     }
 
     public HttpClient CreateAuthenticatedClient(TenantIntegrationTestDatabase database, TenantTestUser user)
@@ -42,5 +47,14 @@ public sealed class TenantApiFactory : WebApplicationFactory<Program>
                 ["Jwt:AccessTokenMinutes"] = _options.AccessTokenMinutes.ToString()
             });
         });
+
+        if (_loggerProvider is not null)
+        {
+            builder.ConfigureLogging(logging =>
+            {
+                logging.SetMinimumLevel(LogLevel.Debug);
+                logging.AddProvider(_loggerProvider);
+            });
+        }
     }
 }

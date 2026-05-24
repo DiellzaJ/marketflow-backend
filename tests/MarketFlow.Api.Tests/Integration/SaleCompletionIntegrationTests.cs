@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace MarketFlow.Api.Tests.Integration;
@@ -105,6 +106,65 @@ public sealed class SaleCompletionIntegrationTests
                 user.Id,
                 firstSale.ReferenceNumber));
         Assert.Equal(PostgresErrorCodes.UniqueViolation, duplicateException.SqlState);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task CreateSale_WhenTenantReferenceSchemaIsHealthy_DoesNotExecuteRepairDdl()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+        using var loggerProvider = new CollectingLoggerProvider();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options, loggerProvider);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_healthy"),
+            name: "sale_reference_healthy",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Healthy Receipt Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        var initialState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(initialState.ColumnExists);
+        Assert.True(initialState.TriggerExists);
+        Assert.True(initialState.UniqueIndexExists);
+        Assert.True(initialState.TriggerFunctionExists);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var sale = await CreateSaleAsync(client, market.Id, product.Id);
+
+        Assert.NotEmpty(sale.ReferenceNumber);
+
+        var salesResponse = await client.GetAsync("/api/sales");
+        salesResponse.EnsureSuccessStatusCode();
+
+        var salesResult = await salesResponse.Content
+            .ReadFromJsonAsync<ServiceResult<IReadOnlyCollection<SaleDto>>>();
+        Assert.NotNull(salesResult?.Data);
+        Assert.Equal(sale.ReferenceNumber, Assert.Single(salesResult.Data).ReferenceNumber);
+
+        var detailsResponse = await client.GetAsync($"/api/sales/{sale.Id}");
+        detailsResponse.EnsureSuccessStatusCode();
+
+        var detailsResult = await detailsResponse.Content
+            .ReadFromJsonAsync<ServiceResult<SaleDetailsResponse>>();
+        Assert.NotNull(detailsResult?.Data);
+        Assert.Equal(sale.ReferenceNumber, detailsResult.Data.ReferenceNumber);
+
+        Assert.DoesNotContain(
+            loggerProvider.Messages,
+            message => message.Contains(
+                "Executing sale reference number repair step",
+                StringComparison.Ordinal));
     }
 
     [PostgresIntegrationFact]
@@ -443,6 +503,65 @@ public sealed class SaleCompletionIntegrationTests
         Assert.NotNull(result.Data);
 
         return result.Data.Items.ToList();
+    }
+
+    private sealed class CollectingLoggerProvider : ILoggerProvider
+    {
+        private readonly object _syncRoot = new();
+        private readonly List<string> _messages = [];
+
+        public IReadOnlyCollection<string> Messages
+        {
+            get
+            {
+                lock (_syncRoot)
+                {
+                    return _messages.ToArray();
+                }
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName) => new CollectingLogger(this);
+
+        public void Dispose()
+        {
+        }
+
+        private void Add(string message)
+        {
+            lock (_syncRoot)
+            {
+                _messages.Add(message);
+            }
+        }
+
+        private sealed class CollectingLogger(CollectingLoggerProvider provider) : ILogger
+        {
+            public IDisposable BeginScope<TState>(TState state)
+                where TState : notnull =>
+                NullScope.Instance;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                provider.Add(formatter(state, exception));
+            }
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
+        }
     }
 
     private static async Task<IReadOnlyList<PosProductLookupItemDto>> GetPosProductsAsync(
