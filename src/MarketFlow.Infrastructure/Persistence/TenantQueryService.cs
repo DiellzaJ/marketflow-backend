@@ -1653,16 +1653,24 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         var whereClause = BuildSalesSummaryWhereClause(query, scope);
 
         await using var command = await CreateCommandAsync($"""
-            SELECT COALESCE(SUM(s.total_amount), 0) AS total_revenue,
+            WITH filtered_sales AS (
+                SELECT s.id,
+                       s.total_amount
+                FROM {schemaName}.sales s
+                {whereClause}
+            ),
+            filtered_sale_items AS (
+                SELECT si.sale_id,
+                       SUM(si.quantity)::bigint AS total_quantity
+                FROM {schemaName}.sale_items si
+                INNER JOIN filtered_sales fs ON fs.id = si.sale_id
+                GROUP BY si.sale_id
+            )
+            SELECT COALESCE(SUM(fs.total_amount), 0) AS total_revenue,
                    COUNT(*)::bigint AS total_sales,
                    COALESCE(SUM(COALESCE(items.total_quantity, 0)), 0)::bigint AS total_items_sold
-            FROM {schemaName}.sales s
-            LEFT JOIN (
-                SELECT sale_id, SUM(quantity)::bigint AS total_quantity
-                FROM {schemaName}.sale_items
-                GROUP BY sale_id
-            ) items ON items.sale_id = s.id
-            {whereClause};
+            FROM filtered_sales fs
+            LEFT JOIN filtered_sale_items items ON items.sale_id = fs.id;
             """, cancellationToken);
         AddSalesSummaryParameters(command, query);
         AddInventoryScopeParameters(command, scope);
