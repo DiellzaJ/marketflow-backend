@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using MarketFlow.Api.Authorization;
 using MarketFlow.Api.Controllers;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Profile.DTOs;
@@ -38,8 +39,13 @@ public sealed class ProfileControllerTests
     [Fact]
     public void Controller_HasAuthorizeAttribute()
     {
-        var attr = typeof(ProfileController).GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute), inherit: true);
-        Assert.NotEmpty(attr);
+        var attr = Assert.Single(
+            typeof(ProfileController).GetCustomAttributes(
+                typeof(Microsoft.AspNetCore.Authorization.AuthorizeAttribute),
+                inherit: true));
+
+        var authorizeAttribute = Assert.IsType<Microsoft.AspNetCore.Authorization.AuthorizeAttribute>(attr);
+        Assert.Equal(AuthorizationPolicies.ActiveUser, authorizeAttribute.Policy);
     }
 
     [Fact]

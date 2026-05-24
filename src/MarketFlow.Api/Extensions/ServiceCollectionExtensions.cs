@@ -117,6 +117,7 @@ public static class ServiceCollectionExtensions
             });
 
         services.AddAuthorization(options => options.AddMarketFlowPolicies());
+        services.AddScoped<IAuthorizationHandler, ActiveUserAuthorizationHandler>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
@@ -169,6 +170,12 @@ public static class ServiceCollectionExtensions
 
     public static AuthorizationOptions AddMarketFlowPolicies(this AuthorizationOptions options)
     {
+        options.AddPolicy(AuthorizationPolicies.ActiveUser, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
         options.AddPolicy(AuthorizationPolicies.RootAdminOnly, policy =>
             policy.RequireRole("RootAdmin"));
 

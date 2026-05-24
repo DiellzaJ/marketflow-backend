@@ -1,6 +1,7 @@
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Profile.DTOs;
 using MarketFlow.Application.Features.Profile.Interfaces;
+using MarketFlow.Api.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,7 @@ namespace MarketFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
+[Authorize(Policy = AuthorizationPolicies.ActiveUser)]
 public class ProfileController : ControllerBase
 {
     private readonly IProfileService _profileService;
