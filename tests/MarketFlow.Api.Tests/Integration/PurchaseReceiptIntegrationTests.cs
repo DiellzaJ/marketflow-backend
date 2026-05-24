@@ -143,6 +143,68 @@ public sealed class PurchaseReceiptIntegrationTests
             movement.ReferenceNumber == $"purchase:{purchase.Id}");
     }
 
+    [PostgresIntegrationFact]
+    public async Task ReceivePurchaseEndpoint_AllowsPartialThenFullReceipt()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("purchase_receive_endpoint"),
+            name: "purchase_receive_endpoint",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var supplier = await database.InsertSupplierAsync(company.SchemaName, "Receipt Supplier");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Endpoint Receipt Product");
+        var inventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 2);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var purchase = await database.InsertPurchaseAsync(
+            company.SchemaName,
+            supplier.Id,
+            market.Id,
+            user.Id,
+            totalAmount: 40);
+        await database.InsertPurchaseItemAsync(company.SchemaName, purchase.Id, product.Id, quantity: 5, unitCost: 8);
+
+        var partialResponse = await client.PostAsJsonAsync(
+            $"/api/purchases/{purchase.Id}/receive",
+            new ReceivePurchaseRequest
+            {
+                Items = [new ReceivePurchaseItemRequest { ProductId = product.Id, Quantity = 2 }]
+            });
+        partialResponse.EnsureSuccessStatusCode();
+
+        var partialResult = await partialResponse.Content.ReadFromJsonAsync<ServiceResult<PurchaseDto>>();
+        Assert.Equal("PartiallyReceived", partialResult?.Data?.Status);
+        Assert.Equal(2, partialResult?.Data?.ReceivedQuantity);
+
+        var partiallyReceivedInventory = await database.GetInventoryDetailsAsync(company.SchemaName, inventory.Id);
+        Assert.Equal(4, partiallyReceivedInventory?.Quantity);
+
+        var fullResponse = await client.PostAsJsonAsync(
+            $"/api/purchases/{purchase.Id}/receive",
+            new ReceivePurchaseRequest());
+        fullResponse.EnsureSuccessStatusCode();
+
+        var fullResult = await fullResponse.Content.ReadFromJsonAsync<ServiceResult<PurchaseDto>>();
+        Assert.Equal("Received", fullResult?.Data?.Status);
+        Assert.Equal(5, fullResult?.Data?.ReceivedQuantity);
+
+        var fullyReceivedInventory = await database.GetInventoryDetailsAsync(company.SchemaName, inventory.Id);
+        Assert.Equal(7, fullyReceivedInventory?.Quantity);
+    }
+
     private static async Task<IReadOnlyList<InventoryMovementDto>> GetInventoryMovementsAsync(
         HttpClient client,
         int inventoryId)
