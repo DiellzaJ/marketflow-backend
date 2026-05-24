@@ -1959,27 +1959,42 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         var purchases = new List<PurchaseDto>();
 
         await using var command = await CreateCommandAsync($"""
-            SELECT id, supplier_id, market_id, purchase_date, status, total_amount
-            FROM {schemaName}.purchases
-            ORDER BY purchase_date DESC, id DESC;
+            SELECT p.id,
+                   p.supplier_id,
+                   COALESCE(s.name, '') AS supplier_name,
+                   p.market_id,
+                   COALESCE(m.name, '') AS market_name,
+                   p.purchase_date,
+                   p.status,
+                   p.total_amount,
+                   p.notes,
+                   COUNT(pi.id)::int AS item_count,
+                   COALESCE(SUM(pi.quantity), 0)::int AS total_quantity,
+                   COALESCE(SUM(pi.received_quantity), 0)::int AS received_quantity
+            FROM {schemaName}.purchases p
+            LEFT JOIN {schemaName}.suppliers s ON s.id = p.supplier_id
+            LEFT JOIN {schemaName}.markets m ON m.id = p.market_id
+            LEFT JOIN {schemaName}.purchase_items pi ON pi.purchase_id = p.id
+            GROUP BY p.id, p.supplier_id, s.name, p.market_id, m.name, p.purchase_date, p.status, p.total_amount, p.notes
+            ORDER BY p.purchase_date DESC, p.id DESC;
             """, cancellationToken);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
         while (await reader.ReadAsync(cancellationToken))
         {
-            purchases.Add(new PurchaseDto
-            {
-                Id = reader.GetInt32(0),
-                SupplierId = reader.GetInt32(1),
-                MarketId = reader.GetInt32(2),
-                PurchaseDate = reader.GetFieldValue<DateOnly>(3),
-                Status = reader.GetString(4),
-                TotalAmount = reader.GetDecimal(5)
-            });
+            purchases.Add(ReadPurchaseSummary(reader));
         }
 
         return purchases;
+    }
+
+    public async Task<PurchaseDto?> GetPurchaseAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        return await GetPurchaseWithItemsAsync(schemaName, id, cancellationToken);
     }
 
     public async Task<PurchaseDto?> CreatePurchaseAsync(
@@ -1988,7 +2003,8 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        var receivesPurchase = string.Equals(request.Status, "Received", StringComparison.OrdinalIgnoreCase);
+        var status = NormalizePurchaseStatus(request.Status);
+        var receivesPurchase = string.Equals(status, "Received", StringComparison.OrdinalIgnoreCase);
 
         if (receivesPurchase)
         {
@@ -2001,6 +2017,12 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
+
+        if (!await PurchaseReferencesExistAsync(schemaName, request.SupplierId, request.MarketId, request.Items, cancellationToken, transaction))
+        {
+            return null;
+        }
+
         await using var command = await CreateCommandAsync($"""
             INSERT INTO {schemaName}.purchases (
                 supplier_id,
@@ -2025,7 +2047,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("market_id", request.MarketId);
         command.Parameters.AddWithValue("created_by_user_id", createdByUserId);
         command.Parameters.AddWithValue("purchase_date", request.PurchaseDate ?? DateOnly.FromDateTime(DateTime.UtcNow));
-        command.Parameters.AddWithValue("status", request.Status.Trim());
+        command.Parameters.AddWithValue("status", status);
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
@@ -2046,6 +2068,16 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         {
             foreach (var item in request.Items)
             {
+                await using var updateItemCommand = await CreateCommandAsync($"""
+                    UPDATE {schemaName}.purchase_items
+                    SET received_quantity = quantity
+                    WHERE purchase_id = @purchase_id
+                      AND product_id = @product_id;
+                    """, cancellationToken, transaction);
+                updateItemCommand.Parameters.AddWithValue("purchase_id", purchase.Id);
+                updateItemCommand.Parameters.AddWithValue("product_id", item.ProductId);
+                await updateItemCommand.ExecuteNonQueryAsync(cancellationToken);
+
                 await ApplyInventoryQuantityChangeByProductAsync(
                     schemaName,
                     item.ProductId,
@@ -2062,7 +2094,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         await transaction.CommitAsync(cancellationToken);
 
-        return purchase;
+        return await GetPurchaseWithItemsAsync(schemaName, purchase.Id, cancellationToken);
     }
 
     public async Task<PurchaseDto?> UpdatePurchaseAsync(
@@ -2072,6 +2104,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var status = NormalizePurchaseStatus(request.Status);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
@@ -2081,7 +2114,23 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             return null;
         }
 
-        if (ShouldReceivePurchase(currentPurchase.Status, request.Status, request.MarketId))
+        if (!CanUpdatePurchase(currentPurchase.Status))
+        {
+            return null;
+        }
+
+        var itemsToValidate = request.Items ?? await GetPurchaseItemsAsCreateRequestsAsync(
+            schemaName,
+            id,
+            cancellationToken,
+            transaction);
+
+        if (!await PurchaseReferencesExistAsync(schemaName, request.SupplierId, request.MarketId, itemsToValidate, cancellationToken, transaction))
+        {
+            return null;
+        }
+
+        if (ShouldReceivePurchase(currentPurchase.Status, status, request.MarketId))
         {
             var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
 
@@ -2107,7 +2156,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("supplier_id", request.SupplierId);
         command.Parameters.AddWithValue("market_id", request.MarketId);
         command.Parameters.AddWithValue("purchase_date", request.PurchaseDate);
-        command.Parameters.AddWithValue("status", request.Status.Trim());
+        command.Parameters.AddWithValue("status", status);
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
@@ -2115,6 +2164,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         if (purchase is not null)
         {
+            if (request.Items is not null)
+            {
+                await ReplacePurchaseItemsAsync(schemaName, id, request.Items, cancellationToken, transaction);
+            }
+
             await ApplyPurchaseReceiptIfNeededAsync(
                 schemaName,
                 purchase,
@@ -2126,7 +2180,9 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         await transaction.CommitAsync(cancellationToken);
 
-        return purchase;
+        return purchase is null
+            ? null
+            : await GetPurchaseWithItemsAsync(schemaName, purchase.Id, cancellationToken);
     }
 
     public async Task<PurchaseDto?> PatchPurchaseAsync(
@@ -2146,7 +2202,13 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
 
         var effectiveStatus = request.Status?.Trim() ?? currentPurchase.Status;
+        effectiveStatus = NormalizePurchaseStatus(effectiveStatus);
         var effectiveMarketId = request.MarketId ?? currentPurchase.MarketId;
+
+        if (!CanPatchPurchase(currentPurchase.Status, effectiveStatus))
+        {
+            return null;
+        }
 
         if (ShouldReceivePurchase(currentPurchase.Status, effectiveStatus, effectiveMarketId))
         {
@@ -2174,7 +2236,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("supplier_id", DbValue(request.SupplierId));
         command.Parameters.AddWithValue("market_id", DbValue(request.MarketId));
         command.Parameters.AddWithValue("purchase_date", DbValue(request.PurchaseDate));
-        command.Parameters.AddWithValue("status", DbValue(request.Status?.Trim()));
+        command.Parameters.AddWithValue("status", DbValue(request.Status is null ? null : effectiveStatus));
         command.Parameters.AddWithValue("total_amount", DbValue(request.TotalAmount));
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
 
@@ -2193,7 +2255,137 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         await transaction.CommitAsync(cancellationToken);
 
-        return purchase;
+        return purchase is null
+            ? null
+            : await GetPurchaseWithItemsAsync(schemaName, purchase.Id, cancellationToken);
+    }
+
+    public async Task<PurchaseDto?> ReceivePurchaseAsync(
+        int id,
+        ReceivePurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+        var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
+
+        if (currentPurchase is null ||
+            string.Equals(currentPurchase.Status, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(currentPurchase.Status, "Received", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+        if (!CanAccessInventoryTarget(scope, currentPurchase.MarketId, departmentId: null))
+        {
+            return null;
+        }
+
+        var items = await GetPurchaseItemsForReceivingAsync(schemaName, id, cancellationToken, transaction);
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        var receiptQuantities = BuildReceiptQuantities(request, items);
+        if (receiptQuantities.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var (productId, quantityToReceive) in receiptQuantities)
+        {
+            var matchingItems = items
+                .Where(candidate => candidate.ProductId == productId)
+                .ToList();
+            var remainingForProduct = matchingItems.Sum(item => item.Quantity - item.ReceivedQuantity);
+
+            if (matchingItems.Count == 0 || quantityToReceive <= 0 || quantityToReceive > remainingForProduct)
+            {
+                return null;
+            }
+
+            var quantityLeftToAllocate = quantityToReceive;
+            foreach (var item in matchingItems)
+            {
+                if (quantityLeftToAllocate == 0)
+                {
+                    break;
+                }
+
+                var itemRemaining = item.Quantity - item.ReceivedQuantity;
+                var itemReceiptQuantity = Math.Min(itemRemaining, quantityLeftToAllocate);
+
+                if (itemReceiptQuantity == 0)
+                {
+                    continue;
+                }
+
+                await using var updateItemCommand = await CreateCommandAsync($"""
+                    UPDATE {schemaName}.purchase_items
+                    SET received_quantity = received_quantity + @quantity_to_receive
+                    WHERE id = @item_id;
+                    """, cancellationToken, transaction);
+                updateItemCommand.Parameters.AddWithValue("item_id", item.Id);
+                updateItemCommand.Parameters.AddWithValue("quantity_to_receive", itemReceiptQuantity);
+                await updateItemCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                quantityLeftToAllocate -= itemReceiptQuantity;
+            }
+
+            await ApplyInventoryQuantityChangeByProductAsync(
+                schemaName,
+                productId,
+                currentPurchase.MarketId,
+                departmentId: null,
+                quantityToReceive,
+                "PurchaseReceived",
+                updatedByUserId,
+                $"purchase:{id}",
+                cancellationToken,
+                transaction);
+        }
+
+        var newStatus = await GetPurchaseReceiptStatusAsync(schemaName, id, cancellationToken, transaction);
+        await using var updatePurchaseCommand = await CreateCommandAsync($"""
+            UPDATE {schemaName}.purchases
+            SET status = @status,
+                received_at = CASE WHEN @status = 'Received' THEN COALESCE(received_at, NOW()) ELSE received_at END
+            WHERE id = @id;
+            """, cancellationToken, transaction);
+        updatePurchaseCommand.Parameters.AddWithValue("id", id);
+        updatePurchaseCommand.Parameters.AddWithValue("status", newStatus);
+        await updatePurchaseCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return await GetPurchaseWithItemsAsync(schemaName, id, cancellationToken);
+    }
+
+    public async Task<PurchaseDto?> CancelPurchaseAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.purchases
+            SET status = 'Cancelled'
+            WHERE id = @id
+              AND status IN ('Draft', 'Ordered', 'PartiallyReceived')
+            RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+
+        var purchase = await ReadPurchaseAsync(command, cancellationToken);
+
+        return purchase is null
+            ? null
+            : await GetPurchaseWithItemsAsync(schemaName, id, cancellationToken);
     }
 
     public async Task<bool> DeletePurchaseAsync(
@@ -3324,6 +3516,56 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private async Task ReplacePurchaseItemsAsync(
+        string quotedSchemaName,
+        int purchaseId,
+        IReadOnlyCollection<CreatePurchaseItemRequest> items,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var deleteCommand = await CreateCommandAsync($"""
+            DELETE FROM {quotedSchemaName}.purchase_items
+            WHERE purchase_id = @purchase_id;
+            """, cancellationToken, transaction);
+        deleteCommand.Parameters.AddWithValue("purchase_id", purchaseId);
+        await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        foreach (var item in items)
+        {
+            await InsertPurchaseItemAsync(
+                quotedSchemaName,
+                purchaseId,
+                item,
+                cancellationToken,
+                transaction);
+        }
+    }
+
+    private async Task<bool> PurchaseReferencesExistAsync(
+        string quotedSchemaName,
+        int supplierId,
+        int marketId,
+        IReadOnlyCollection<CreatePurchaseItemRequest> items,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (SELECT 1 FROM {quotedSchemaName}.suppliers WHERE id = @supplier_id AND is_active = TRUE)
+               AND EXISTS (SELECT 1 FROM {quotedSchemaName}.markets WHERE id = @market_id AND is_active = TRUE)
+               AND (
+                   SELECT COUNT(DISTINCT product_id)::int
+                   FROM UNNEST(@product_ids) AS requested(product_id)
+                   JOIN {quotedSchemaName}.products p ON p.id = requested.product_id AND p.is_active = TRUE
+               ) = @product_count;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("supplier_id", supplierId);
+        command.Parameters.AddWithValue("market_id", marketId);
+        command.Parameters.AddWithValue("product_ids", items.Select(item => item.ProductId).Distinct().ToArray());
+        command.Parameters.AddWithValue("product_count", items.Select(item => item.ProductId).Distinct().Count());
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
     private async Task<bool> ApplyInventoryQuantityChangeByProductAsync(
         string quotedSchemaName,
         int productId,
@@ -3507,6 +3749,16 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         foreach (var item in items)
         {
+            await using var updateItemCommand = await CreateCommandAsync($"""
+                UPDATE {quotedSchemaName}.purchase_items
+                SET received_quantity = quantity
+                WHERE purchase_id = @purchase_id
+                  AND product_id = @product_id;
+                """, cancellationToken, transaction);
+            updateItemCommand.Parameters.AddWithValue("purchase_id", purchase.Id);
+            updateItemCommand.Parameters.AddWithValue("product_id", item.ProductId);
+            await updateItemCommand.ExecuteNonQueryAsync(cancellationToken);
+
             await ApplyInventoryQuantityChangeByProductAsync(
                 quotedSchemaName,
                 item.ProductId,
@@ -3547,6 +3799,114 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
 
         return items;
+    }
+
+    private async Task<IReadOnlyCollection<CreatePurchaseItemRequest>> GetPurchaseItemsAsCreateRequestsAsync(
+        string quotedSchemaName,
+        int purchaseId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        var items = new List<CreatePurchaseItemRequest>();
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT product_id,
+                   quantity,
+                   unit_cost
+            FROM {quotedSchemaName}.purchase_items
+            WHERE purchase_id = @purchase_id;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("purchase_id", purchaseId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            items.Add(new CreatePurchaseItemRequest
+            {
+                ProductId = reader.GetInt32(0),
+                Quantity = reader.GetInt32(1),
+                UnitCost = reader.GetDecimal(2)
+            });
+        }
+
+        return items;
+    }
+
+    private async Task<IReadOnlyCollection<PurchaseReceivingItem>> GetPurchaseItemsForReceivingAsync(
+        string quotedSchemaName,
+        int purchaseId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        var items = new List<PurchaseReceivingItem>();
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id,
+                   product_id,
+                   quantity,
+                   received_quantity
+            FROM {quotedSchemaName}.purchase_items
+            WHERE purchase_id = @purchase_id
+            ORDER BY id
+            FOR UPDATE;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("purchase_id", purchaseId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            items.Add(new PurchaseReceivingItem(
+                reader.GetInt32(0),
+                reader.GetInt32(1),
+                reader.GetInt32(2),
+                reader.GetInt32(3)));
+        }
+
+        return items;
+    }
+
+    private static IReadOnlyDictionary<int, int> BuildReceiptQuantities(
+        ReceivePurchaseRequest request,
+        IReadOnlyCollection<PurchaseReceivingItem> items)
+    {
+        if (request.Items.Count == 0)
+        {
+            return items
+                .GroupBy(item => item.ProductId)
+                .Select(group => new
+                {
+                    ProductId = group.Key,
+                    Quantity = group.Sum(item => item.Quantity - item.ReceivedQuantity)
+                })
+                .Where(item => item.Quantity > 0)
+                .ToDictionary(item => item.ProductId, item => item.Quantity);
+        }
+
+        return request.Items
+            .GroupBy(item => item.ProductId)
+            .ToDictionary(group => group.Key, group => group.Sum(item => item.Quantity));
+    }
+
+    private async Task<string> GetPurchaseReceiptStatusAsync(
+        string quotedSchemaName,
+        int purchaseId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction transaction)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT CASE
+                WHEN COALESCE(SUM(quantity), 0) = COALESCE(SUM(received_quantity), 0) THEN 'Received'
+                WHEN COALESCE(SUM(received_quantity), 0) > 0 THEN 'PartiallyReceived'
+                ELSE 'Ordered'
+            END
+            FROM {quotedSchemaName}.purchase_items
+            WHERE purchase_id = @purchase_id;
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("purchase_id", purchaseId);
+
+        return (string)(await command.ExecuteScalarAsync(cancellationToken) ?? "Ordered");
     }
 
     private async Task<string?> GetProductBarcodeByIdAsync(
@@ -3722,7 +4082,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("name", name.Trim());
         command.Parameters.Add(new NpgsqlParameter("excluded_market_id", NpgsqlTypes.NpgsqlDbType.Integer)
         {
-            Value = DbValue(excludedMarketId)
+            Value = excludedMarketId ?? (object)DBNull.Value
         });
 
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
@@ -3767,7 +4127,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("name", name.Trim());
         command.Parameters.Add(new NpgsqlParameter("excluded_department_id", NpgsqlTypes.NpgsqlDbType.Integer)
         {
-            Value = DbValue(excludedDepartmentId)
+            Value = excludedDepartmentId ?? (object)DBNull.Value
         });
 
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
@@ -4224,6 +4584,98 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             : null;
     }
 
+    private async Task<PurchaseDto?> GetPurchaseWithItemsAsync(
+        string quotedSchemaName,
+        int id,
+        CancellationToken cancellationToken)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT p.id,
+                   p.supplier_id,
+                   COALESCE(s.name, '') AS supplier_name,
+                   p.market_id,
+                   COALESCE(m.name, '') AS market_name,
+                   p.purchase_date,
+                   p.status,
+                   p.total_amount,
+                   p.notes,
+                   COUNT(pi.id)::int AS item_count,
+                   COALESCE(SUM(pi.quantity), 0)::int AS total_quantity,
+                   COALESCE(SUM(pi.received_quantity), 0)::int AS received_quantity
+            FROM {quotedSchemaName}.purchases p
+            LEFT JOIN {quotedSchemaName}.suppliers s ON s.id = p.supplier_id
+            LEFT JOIN {quotedSchemaName}.markets m ON m.id = p.market_id
+            LEFT JOIN {quotedSchemaName}.purchase_items pi ON pi.purchase_id = p.id
+            WHERE p.id = @id
+            GROUP BY p.id, p.supplier_id, s.name, p.market_id, m.name, p.purchase_date, p.status, p.total_amount, p.notes;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var purchase = ReadPurchaseSummary(reader);
+        await reader.DisposeAsync();
+
+        var items = new List<PurchaseItemDto>();
+        await using var itemsCommand = await CreateCommandAsync($"""
+            SELECT pi.id,
+                   pi.product_id,
+                   COALESCE(p.name, '') AS product_name,
+                   pi.quantity,
+                   pi.received_quantity,
+                   pi.unit_cost,
+                   pi.line_total
+            FROM {quotedSchemaName}.purchase_items pi
+            LEFT JOIN {quotedSchemaName}.products p ON p.id = pi.product_id
+            WHERE pi.purchase_id = @purchase_id
+            ORDER BY pi.id;
+            """, cancellationToken);
+        itemsCommand.Parameters.AddWithValue("purchase_id", id);
+
+        await using var itemsReader = await itemsCommand.ExecuteReaderAsync(cancellationToken);
+
+        while (await itemsReader.ReadAsync(cancellationToken))
+        {
+            items.Add(new PurchaseItemDto
+            {
+                Id = itemsReader.GetInt32(0),
+                ProductId = itemsReader.GetInt32(1),
+                ProductName = itemsReader.GetString(2),
+                Quantity = itemsReader.GetInt32(3),
+                ReceivedQuantity = itemsReader.GetInt32(4),
+                UnitCost = itemsReader.GetDecimal(5),
+                LineTotal = itemsReader.GetDecimal(6)
+            });
+        }
+
+        purchase.Items = items;
+        return purchase;
+    }
+
+    private static PurchaseDto ReadPurchaseSummary(NpgsqlDataReader reader)
+    {
+        return new PurchaseDto
+        {
+            Id = reader.GetInt32(0),
+            SupplierId = reader.GetInt32(1),
+            SupplierName = reader.GetString(2),
+            MarketId = reader.GetInt32(3),
+            MarketName = reader.GetString(4),
+            PurchaseDate = reader.GetFieldValue<DateOnly>(5),
+            Status = reader.GetString(6),
+            TotalAmount = reader.GetDecimal(7),
+            Notes = reader.IsDBNull(8) ? null : reader.GetString(8),
+            ItemCount = reader.GetInt32(9),
+            TotalQuantity = reader.GetInt32(10),
+            ReceivedQuantity = reader.GetInt32(11)
+        };
+    }
+
     private static async Task<PurchaseDto?> ReadPurchaseAsync(
         NpgsqlCommand command,
         CancellationToken cancellationToken)
@@ -4301,6 +4753,37 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return value is null ? DBNull.Value : value;
     }
 
+    private static string NormalizePurchaseStatus(string status)
+    {
+        var trimmed = status.Trim();
+        return string.Equals(trimmed, "Pending", StringComparison.OrdinalIgnoreCase)
+            ? "Ordered"
+            : trimmed;
+    }
+
+    private static bool CanUpdatePurchase(string currentStatus)
+    {
+        return string.Equals(currentStatus, "Draft", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(currentStatus, "Ordered", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(currentStatus, "Pending", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool CanPatchPurchase(string currentStatus, string effectiveStatus)
+    {
+        if (string.Equals(currentStatus, "PartiallyReceived", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.Equals(currentStatus, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(currentStatus, "Received", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(currentStatus, effectiveStatus, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return true;
+    }
+
     private static bool IsUniqueViolation(PostgresException exception)
     {
         return exception.SqlState == PostgresErrorCodes.UniqueViolation;
@@ -4355,6 +4838,8 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
     private sealed record PurchaseReceiptState(string Status, int MarketId);
 
     private sealed record PurchaseStockItem(int ProductId, int Quantity);
+
+    private sealed record PurchaseReceivingItem(int Id, int ProductId, int Quantity, int ReceivedQuantity);
 
     private sealed class BarcodeLookupCacheEntry
     {

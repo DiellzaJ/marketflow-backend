@@ -122,8 +122,8 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                             market_id           INT           NOT NULL REFERENCES %1$I.markets(id) ON DELETE CASCADE,
                             created_by_user_id  INT           NOT NULL,
                             purchase_date       DATE          NOT NULL DEFAULT CURRENT_DATE,
-                            status              VARCHAR(20)   NOT NULL DEFAULT 'Pending'
-                                CHECK (status IN ('Pending', 'Received', 'Cancelled')),
+                            status              VARCHAR(20)   NOT NULL DEFAULT 'Draft'
+                                CHECK (status IN ('Pending', 'Draft', 'Ordered', 'PartiallyReceived', 'Received', 'Cancelled')),
                             total_amount        DECIMAL(12,2) NOT NULL DEFAULT 0,
                             notes               TEXT,
                             received_at         TIMESTAMPTZ,
@@ -138,6 +138,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                             purchase_id INT           NOT NULL REFERENCES %1$I.purchases(id) ON DELETE CASCADE,
                             product_id  INT           NOT NULL REFERENCES %1$I.products(id),
                             quantity    INT           NOT NULL CHECK (quantity > 0),
+                            received_quantity INT     NOT NULL DEFAULT 0 CHECK (received_quantity >= 0 AND received_quantity <= quantity),
                             unit_cost   DECIMAL(10,2) NOT NULL,
                             line_total  DECIMAL(12,2) GENERATED ALWAYS AS (quantity * unit_cost) STORED
                         );

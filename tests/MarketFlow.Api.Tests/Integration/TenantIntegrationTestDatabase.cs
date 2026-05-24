@@ -16,6 +16,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
     private const int SchemaSeparatorLength = 1;
 
     private static readonly SemaphoreSlim RequiredRolesLock = new(1, 1);
+    private static readonly SemaphoreSlim SaleReferenceNumberSetupLock = new(1, 1);
     private static readonly ConcurrentDictionary<string, byte> RequiredRolesEnsuredConnectionStrings =
         new(StringComparer.Ordinal);
 
@@ -171,6 +172,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         await EnsureLowStockAlertsTableAsync(connection, schemaName, cancellationToken);
         await EnsureSaleReferenceNumbersAsync(connection, schemaName, cancellationToken);
         await EnsureSalesStatusAsync(connection, schemaName, cancellationToken);
+        await EnsurePurchaseReceivingWorkflowAsync(connection, schemaName, cancellationToken);
 
         if (generatedSchemaName || dropSchemaOnDispose)
         {
@@ -1255,40 +1257,80 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         string schemaName,
         CancellationToken cancellationToken)
     {
+        await SaleReferenceNumberSetupLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            await ExecuteAsync(
+                connection,
+                $"""
+                CREATE OR REPLACE FUNCTION public.assign_sale_reference_number()
+                RETURNS trigger
+                LANGUAGE plpgsql
+                AS $$
+                BEGIN
+                    IF NEW.reference_number IS NULL OR btrim(NEW.reference_number) = '' THEN
+                        NEW.reference_number := 'SALE-' || lpad(NEW.id::text, 6, '0');
+                    END IF;
+
+                    RETURN NEW;
+                END;
+                $$;
+
+                ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                    ADD COLUMN IF NOT EXISTS department_id INT;
+                CREATE INDEX IF NOT EXISTS idx_sales_department
+                    ON {QuoteIdentifier(schemaName)}.sales(department_id);
+                ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                    ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);
+                UPDATE {QuoteIdentifier(schemaName)}.sales
+                SET reference_number = 'SALE-' || lpad(id::text, 6, '0')
+                WHERE reference_number IS NULL OR btrim(reference_number) = '';
+                ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                    ALTER COLUMN reference_number SET NOT NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number
+                    ON {QuoteIdentifier(schemaName)}.sales(reference_number);
+                DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {QuoteIdentifier(schemaName)}.sales;
+                CREATE TRIGGER trg_sales_assign_reference_number
+                    BEFORE INSERT ON {QuoteIdentifier(schemaName)}.sales
+                    FOR EACH ROW
+                    EXECUTE FUNCTION public.assign_sale_reference_number();
+                """,
+                cancellationToken);
+        }
+        finally
+        {
+            SaleReferenceNumberSetupLock.Release();
+        }
+    }
+
+    private static async Task EnsurePurchaseReceivingWorkflowAsync(
+        NpgsqlConnection connection,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
         await ExecuteAsync(
             connection,
             $"""
-            CREATE OR REPLACE FUNCTION public.assign_sale_reference_number()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            AS $$
-            BEGIN
-                IF NEW.reference_number IS NULL OR btrim(NEW.reference_number) = '' THEN
-                    NEW.reference_number := 'SALE-' || lpad(NEW.id::text, 6, '0');
-                END IF;
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchase_items
+                ADD COLUMN IF NOT EXISTS received_quantity INT NOT NULL DEFAULT 0;
 
-                RETURN NEW;
-            END;
-            $$;
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchase_items
+                DROP CONSTRAINT IF EXISTS purchase_items_received_quantity_check;
 
-            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
-                ADD COLUMN IF NOT EXISTS department_id INT;
-            CREATE INDEX IF NOT EXISTS idx_sales_department
-                ON {QuoteIdentifier(schemaName)}.sales(department_id);
-            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
-                ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);
-            UPDATE {QuoteIdentifier(schemaName)}.sales
-            SET reference_number = 'SALE-' || lpad(id::text, 6, '0')
-            WHERE reference_number IS NULL OR btrim(reference_number) = '';
-            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
-                ALTER COLUMN reference_number SET NOT NULL;
-            CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number
-                ON {QuoteIdentifier(schemaName)}.sales(reference_number);
-            DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {QuoteIdentifier(schemaName)}.sales;
-            CREATE TRIGGER trg_sales_assign_reference_number
-                BEFORE INSERT ON {QuoteIdentifier(schemaName)}.sales
-                FOR EACH ROW
-                EXECUTE FUNCTION public.assign_sale_reference_number();
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchase_items
+                ADD CONSTRAINT purchase_items_received_quantity_check
+                CHECK (received_quantity >= 0 AND received_quantity <= quantity);
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchases
+                ALTER COLUMN status SET DEFAULT 'Draft';
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchases
+                DROP CONSTRAINT IF EXISTS purchases_status_check;
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchases
+                ADD CONSTRAINT purchases_status_check
+                CHECK (status IN ('Pending', 'Draft', 'Ordered', 'PartiallyReceived', 'Received', 'Cancelled'));
             """,
             cancellationToken);
     }

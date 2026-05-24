@@ -51,10 +51,87 @@ public sealed class StockMovementServiceReviewTests
         Assert.Equal(42, tenantQueryService.LastPatchPurchaseUpdatedByUserId);
     }
 
+    [Fact]
+    public async Task UpdatePurchaseAsync_WhenExistingPurchaseCannotBeUpdated_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            PurchaseResult = null,
+            ExistingPurchase = new PurchaseDto { Id = 5, SupplierId = 1, MarketId = 2, Status = "Received" }
+        };
+        var service = new PurchaseService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.UpdatePurchaseAsync(5, new UpdatePurchaseRequest
+        {
+            SupplierId = 1,
+            MarketId = 2,
+            PurchaseDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            Status = "Ordered"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+    }
+
+    [Fact]
+    public async Task PatchPurchaseAsync_WhenExistingPurchaseCannotBePatched_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            PurchaseResult = null,
+            ExistingPurchase = new PurchaseDto { Id = 5, SupplierId = 1, MarketId = 2, Status = "Received" }
+        };
+        var service = new PurchaseService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.PatchPurchaseAsync(5, new PatchPurchaseRequest { Status = "Ordered" });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+    }
+
+    [Fact]
+    public async Task ReceivePurchaseAsync_WhenItemsCollectionIsNull_ReturnsValidationFailure()
+    {
+        var service = new PurchaseService(new RecordingTenantQueryService(), new FakeCurrentUserService());
+
+        var result = await service.ReceivePurchaseAsync(5, new ReceivePurchaseRequest { Items = null! });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+    }
+
+    [Fact]
+    public async Task CancelPurchaseAsync_WhenPurchaseDoesNotExist_ReturnsNotFound()
+    {
+        var service = new PurchaseService(new RecordingTenantQueryService(), new FakeCurrentUserService());
+
+        var result = await service.CancelPurchaseAsync(5);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+    }
+
+    [Fact]
+    public async Task CancelPurchaseAsync_WhenExistingPurchaseCannotBeCancelled_ReturnsConflict()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            ExistingPurchase = new PurchaseDto { Id = 5, SupplierId = 1, MarketId = 2, Status = "Received" }
+        };
+        var service = new PurchaseService(tenantQueryService, new FakeCurrentUserService());
+
+        var result = await service.CancelPurchaseAsync(5);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result.FailureType);
+    }
+
     private sealed class RecordingTenantQueryService : ITenantQueryService
     {
         public SaleDto? SaleCreateResult { get; init; }
         public PurchaseDto? PurchaseResult { get; init; }
+        public PurchaseDto? CancelPurchaseResult { get; init; }
+        public PurchaseDto? ExistingPurchase { get; init; }
         public int? LastUpdatePurchaseUpdatedByUserId { get; private set; }
         public int? LastPatchPurchaseUpdatedByUserId { get; private set; }
 
@@ -84,6 +161,16 @@ public sealed class StockMovementServiceReviewTests
         {
             LastPatchPurchaseUpdatedByUserId = updatedByUserId;
             return Task.FromResult(PurchaseResult);
+        }
+
+        public Task<PurchaseDto?> GetPurchaseAsync(int id, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(ExistingPurchase);
+        }
+
+        public Task<PurchaseDto?> CancelPurchaseAsync(int id, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(CancelPurchaseResult);
         }
 
         public Task<PagedResult<ProductDto>> GetProductsAsync(ProductListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
