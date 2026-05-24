@@ -3,6 +3,7 @@ using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
+using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
 
 namespace MarketFlow.Application.Common.Interfaces;
@@ -94,6 +95,10 @@ public interface ITenantQueryService
 
     Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(
         SaleHistoryQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<SalesSummaryDto> GetSalesSummaryAsync(
+        SalesSummaryQuery query,
         CancellationToken cancellationToken = default);
 
     Task<SaleDetailsResponse?> GetSaleDetailsAsync(

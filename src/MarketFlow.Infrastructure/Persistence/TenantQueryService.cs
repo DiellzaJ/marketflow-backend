@@ -3,6 +3,7 @@ using System.Data;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Departments.DTOs;
 using MarketFlow.Application.Features.Departments.Exceptions;
 using MarketFlow.Application.Features.Departments.Interfaces;
@@ -1631,6 +1632,69 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         };
     }
 
+    public async Task<SalesSummaryDto> GetSalesSummaryAsync(
+        SalesSummaryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        return await ExecuteWithSaleReferenceNumberRecoveryAsync(
+            schemaName,
+            () => GetSalesSummaryCoreAsync(schemaName, query, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<SalesSummaryDto> GetSalesSummaryCoreAsync(
+        string schemaName,
+        SalesSummaryQuery query,
+        CancellationToken cancellationToken)
+    {
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var whereClause = BuildSalesSummaryWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            WITH filtered_sales AS (
+                SELECT s.id,
+                       s.total_amount
+                FROM {schemaName}.sales s
+                {whereClause}
+            ),
+            filtered_sale_items AS (
+                SELECT si.sale_id,
+                       SUM(si.quantity)::bigint AS total_quantity
+                FROM {schemaName}.sale_items si
+                INNER JOIN filtered_sales fs ON fs.id = si.sale_id
+                GROUP BY si.sale_id
+            )
+            SELECT COALESCE(SUM(fs.total_amount), 0) AS total_revenue,
+                   COUNT(*)::bigint AS total_sales,
+                   COALESCE(SUM(COALESCE(items.total_quantity, 0)), 0)::bigint AS total_items_sold
+            FROM filtered_sales fs
+            LEFT JOIN filtered_sale_items items ON items.sale_id = fs.id;
+            """, cancellationToken);
+        AddSalesSummaryParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new SalesSummaryDto();
+        }
+
+        var totalRevenue = reader.GetDecimal(0);
+        var totalSales = reader.GetInt64(1);
+        var totalItemsSold = reader.GetInt64(2);
+
+        return new SalesSummaryDto
+        {
+            TotalRevenue = totalRevenue,
+            TotalSales = totalSales,
+            TotalItemsSold = totalItemsSold,
+            AverageSaleAmount = totalSales == 0 ? 0 : totalRevenue / totalSales
+        };
+    }
+
     public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
@@ -2724,6 +2788,41 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             : $"WHERE {string.Join(" AND ", conditions)}";
     }
 
+    private static string BuildSalesSummaryWhereClause(SalesSummaryQuery query, InventoryScope scope)
+    {
+        var conditions = new List<string>();
+
+        switch (scope.Kind)
+        {
+            case InventoryScopeKind.Company:
+                break;
+            case InventoryScopeKind.Market:
+                conditions.Add("s.market_id = @scope_market_id");
+                break;
+            case InventoryScopeKind.Department:
+                conditions.Add("s.market_id = @scope_market_id");
+                conditions.Add("s.department_id = @scope_department_id");
+                break;
+            default:
+                conditions.Add("FALSE");
+                break;
+        }
+
+        if (query.From.HasValue)
+        {
+            conditions.Add("s.sale_date >= @from");
+        }
+
+        if (query.To.HasValue)
+        {
+            conditions.Add("s.sale_date <= @to");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
     private static void AddSalesHistoryParameters(NpgsqlCommand command, SaleHistoryQuery query)
     {
         if (query.DateFrom.HasValue)
@@ -2749,6 +2848,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         if (!string.IsNullOrWhiteSpace(query.Status))
         {
             command.Parameters.AddWithValue("status", query.Status.Trim());
+        }
+    }
+
+    private static void AddSalesSummaryParameters(NpgsqlCommand command, SalesSummaryQuery query)
+    {
+        if (query.From.HasValue)
+        {
+            command.Parameters.AddWithValue("from", query.From.Value);
+        }
+
+        if (query.To.HasValue)
+        {
+            command.Parameters.AddWithValue("to", query.To.Value);
         }
     }
 

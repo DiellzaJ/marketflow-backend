@@ -40,6 +40,17 @@ For companies with large user counts, monitor the user list assignment lookup qu
 
 Controller tests cover the user API response shape for assignment summaries. Add database-backed integration or E2E coverage when a test Postgres tenant schema is available in CI.
 
+## Dashboard API
+
+`GET /api/dashboard/sales-summary` returns the current user's scoped sales totals for dashboard surfaces:
+
+- `totalRevenue`
+- `totalSales`
+- `totalItemsSold`
+- `averageSaleAmount`
+
+Optional `from` and `to` query parameters filter by inclusive sale date, for example `/api/dashboard/sales-summary?from=2026-05-01&to=2026-05-31`. The endpoint uses the same `sales:read` authorization policy, tenant schema resolution, and role assignment scoping as the sales endpoints.
+
 ## Products API
 
 Product removal uses soft-deactivation. `DELETE /api/products/{id}` remains supported for existing clients, but it marks the product inactive instead of deleting the row. New clients should prefer the explicit state endpoints:

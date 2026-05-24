@@ -1,6 +1,7 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Inventory.Services;
 using MarketFlow.Application.Features.Products.DTOs;
@@ -515,6 +516,7 @@ public sealed class InventoryServiceTests
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(SaleHistoryQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<SalesSummaryDto> GetSalesSummaryAsync(SalesSummaryQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDetailsResponse?> GetSaleDetailsAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto?> CreateSaleAsync(CreateSaleRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto?> UpdateSaleAsync(int id, UpdateSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
