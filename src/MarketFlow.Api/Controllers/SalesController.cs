@@ -20,6 +20,16 @@ public class SalesController(ISalesService salesService) : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("{id:int}")]
+    [Authorize(Policy = AuthorizationPolicies.ReadSales)]
+    public async Task<ActionResult<ServiceResult<SaleDetailsResponse>>> GetByIdAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await salesService.GetSaleDetailsAsync(id, cancellationToken);
+        return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
     [HttpPost]
     [Authorize(Policy = AuthorizationPolicies.CreateSales)]
     public async Task<ActionResult<ServiceResult<SaleDto>>> CreateAsync(

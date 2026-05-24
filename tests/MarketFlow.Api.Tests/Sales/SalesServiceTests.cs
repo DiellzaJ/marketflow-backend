@@ -4,87 +4,96 @@ using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
-using MarketFlow.Application.Features.Purchases.Services;
 using MarketFlow.Application.Features.Sales.DTOs;
 using MarketFlow.Application.Features.Sales.Services;
 
-namespace MarketFlow.Api.Tests.Inventory;
+namespace MarketFlow.Api.Tests.Sales;
 
-public sealed class StockMovementServiceReviewTests
+public sealed class SalesServiceTests
 {
     [Fact]
-    public async Task CreateSaleAsync_ReturnsValidationFailureWhenStockCannotBeApplied()
+    public async Task GetSaleDetailsAsync_WhenSaleIsMissing_ReturnsNotFound()
     {
-        var tenantQueryService = new RecordingTenantQueryService { SaleCreateResult = null };
-        var service = new SalesService(tenantQueryService, new FakeCurrentUserService());
+        var service = CreateService(new StubTenantQueryService { SaleDetailsResult = null });
 
-        var result = await service.CreateSaleAsync(new CreateSaleRequest
+        var result = await service.GetSaleDetailsAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Sale was not found.", result.Message);
+    }
+
+    [Fact]
+    public async Task UpdateSaleAsync_WhenSaleIsMissing_ReturnsNotFound()
+    {
+        var service = CreateService(new StubTenantQueryService { SaleResult = null });
+
+        var result = await service.UpdateSaleAsync(10, new UpdateSaleRequest
         {
             MarketId = 1,
-            Items = [new CreateSaleItemRequest { ProductId = 10, Quantity = 3, UnitPrice = 2.50m }]
+            SaleDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            PaymentMethod = "Cash"
         });
 
         Assert.False(result.Succeeded);
-        Assert.Equal("Insufficient inventory stock for one or more sale items.", result.Message);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Sale was not found.", result.Message);
     }
 
     [Fact]
-    public async Task UpdateAndPatchPurchaseAsync_PassCurrentUserForReceiptStockAttribution()
+    public async Task PatchSaleAsync_WhenSaleIsMissing_ReturnsNotFound()
     {
-        var tenantQueryService = new RecordingTenantQueryService
-        {
-            PurchaseResult = new PurchaseDto { Id = 5, SupplierId = 1, MarketId = 2, Status = "Received" }
-        };
-        var service = new PurchaseService(tenantQueryService, new FakeCurrentUserService());
+        var service = CreateService(new StubTenantQueryService { SaleResult = null });
 
-        await service.UpdatePurchaseAsync(5, new UpdatePurchaseRequest
-        {
-            SupplierId = 1,
-            MarketId = 2,
-            PurchaseDate = DateOnly.FromDateTime(DateTime.UtcNow),
-            Status = "Received"
-        });
+        var result = await service.PatchSaleAsync(10, new PatchSaleRequest { PaymentMethod = "Cash" });
 
-        await service.PatchPurchaseAsync(5, new PatchPurchaseRequest { Status = "Received" });
-
-        Assert.Equal(42, tenantQueryService.LastUpdatePurchaseUpdatedByUserId);
-        Assert.Equal(42, tenantQueryService.LastPatchPurchaseUpdatedByUserId);
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Sale was not found.", result.Message);
     }
 
-    private sealed class RecordingTenantQueryService : ITenantQueryService
+    [Fact]
+    public async Task DeleteSaleAsync_WhenSaleIsMissing_ReturnsNotFound()
     {
-        public SaleDto? SaleCreateResult { get; init; }
-        public PurchaseDto? PurchaseResult { get; init; }
-        public int? LastUpdatePurchaseUpdatedByUserId { get; private set; }
-        public int? LastPatchPurchaseUpdatedByUserId { get; private set; }
+        var service = CreateService(new StubTenantQueryService { SaleWasDeleted = false });
 
-        public Task<SaleDto?> CreateSaleAsync(
-            CreateSaleRequest request,
-            int createdByUserId,
-            CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult(SaleCreateResult);
-        }
+        var result = await service.DeleteSaleAsync(10);
 
-        public Task<PurchaseDto?> UpdatePurchaseAsync(
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result.FailureType);
+        Assert.Equal("Sale was not found.", result.Message);
+    }
+
+    private static SalesService CreateService(ITenantQueryService tenantQueryService)
+    {
+        return new SalesService(tenantQueryService, new StubCurrentUserService());
+    }
+
+    private sealed class StubTenantQueryService : ITenantQueryService
+    {
+        public SaleDetailsResponse? SaleDetailsResult { get; init; }
+        public SaleDto? SaleResult { get; init; }
+        public bool SaleWasDeleted { get; init; }
+
+        public Task<SaleDetailsResponse?> GetSaleDetailsAsync(
             int id,
-            UpdatePurchaseRequest request,
-            int? updatedByUserId,
-            CancellationToken cancellationToken = default)
-        {
-            LastUpdatePurchaseUpdatedByUserId = updatedByUserId;
-            return Task.FromResult(PurchaseResult);
-        }
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(SaleDetailsResult);
 
-        public Task<PurchaseDto?> PatchPurchaseAsync(
+        public Task<SaleDto?> UpdateSaleAsync(
             int id,
-            PatchPurchaseRequest request,
-            int? updatedByUserId,
-            CancellationToken cancellationToken = default)
-        {
-            LastPatchPurchaseUpdatedByUserId = updatedByUserId;
-            return Task.FromResult(PurchaseResult);
-        }
+            UpdateSaleRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(SaleResult);
+
+        public Task<SaleDto?> PatchSaleAsync(
+            int id,
+            PatchSaleRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(SaleResult);
+
+        public Task<bool> DeleteSaleAsync(int id, CancellationToken cancellationToken = default) =>
+            Task.FromResult(SaleWasDeleted);
 
         public Task<PagedResult<ProductDto>> GetProductsAsync(ProductListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ProductDto?> GetProductAsync(int id, bool includeInactive = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -108,20 +117,19 @@ public sealed class StockMovementServiceReviewTests
         public Task<bool> TransferInventoryAsync(TransferInventoryRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<SaleDetailsResponse?> GetSaleDetailsAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<SaleDto?> UpdateSaleAsync(int id, UpdateSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<SaleDto?> PatchSaleAsync(int id, PatchSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<bool> DeleteSaleAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<SaleDto?> CreateSaleAsync(CreateSaleRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PurchaseDto?> CreatePurchaseAsync(CreatePurchaseRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PurchaseDto?> UpdatePurchaseAsync(int id, UpdatePurchaseRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PurchaseDto?> PatchPurchaseAsync(int id, PatchPurchaseRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeletePurchaseAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     }
 
-    private sealed class FakeCurrentUserService : ICurrentUserService
+    private sealed class StubCurrentUserService : ICurrentUserService
     {
         public int? UserId => 42;
         public int? CompanyId => 1;
-        public string? Email => "review@example.test";
+        public string? Email => "sales-service@example.test";
         public string? Role => "CompanyAdmin";
         public string? SchemaName => "tenant_test";
     }

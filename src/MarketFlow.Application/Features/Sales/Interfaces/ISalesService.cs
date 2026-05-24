@@ -12,6 +12,10 @@ public interface ISalesService
         CreateSaleRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<ServiceResult<SaleDetailsResponse>> GetSaleDetailsAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
     Task<ServiceResult<SaleDto>> UpdateSaleAsync(
         int id,
         UpdateSaleRequest request,

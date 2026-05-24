@@ -51,6 +51,17 @@ public class SalesService : ISalesService
             : ServiceResult<SaleDto>.Success(sale, "Sale created.");
     }
 
+    public async Task<ServiceResult<SaleDetailsResponse>> GetSaleDetailsAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var sale = await _tenantQueryService.GetSaleDetailsAsync(id, cancellationToken);
+
+        return sale is null
+            ? ServiceResult<SaleDetailsResponse>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
+            : ServiceResult<SaleDetailsResponse>.Success(sale);
+    }
+
     public async Task<ServiceResult<SaleDto>> UpdateSaleAsync(
         int id,
         UpdateSaleRequest request,
@@ -64,7 +75,7 @@ public class SalesService : ISalesService
         var sale = await _tenantQueryService.UpdateSaleAsync(id, request, cancellationToken);
 
         return sale is null
-            ? ServiceResult<SaleDto>.Failure("Sale was not found.")
+            ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
             : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
     }
 
@@ -76,7 +87,7 @@ public class SalesService : ISalesService
         var sale = await _tenantQueryService.PatchSaleAsync(id, request, cancellationToken);
 
         return sale is null
-            ? ServiceResult<SaleDto>.Failure("Sale was not found.")
+            ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
             : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
     }
 
@@ -88,6 +99,6 @@ public class SalesService : ISalesService
 
         return deleted
             ? ServiceResult<bool>.Success(true, "Sale deleted.")
-            : ServiceResult<bool>.Failure("Sale was not found.");
+            : ServiceResult<bool>.Failure("Sale was not found.", ServiceResultFailureType.NotFound);
     }
 }

@@ -92,6 +92,10 @@ public interface ITenantQueryService
 
     Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default);
 
+    Task<SaleDetailsResponse?> GetSaleDetailsAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
     Task<SaleDto?> CreateSaleAsync(
         CreateSaleRequest request,
         int createdByUserId,
