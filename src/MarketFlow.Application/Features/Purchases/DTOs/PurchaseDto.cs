@@ -14,6 +14,8 @@ public class PurchaseDto
 
     public DateOnly PurchaseDate { get; set; }
 
+    public DateOnly? ExpectedDate { get; set; }
+
     public string Status { get; set; } = string.Empty;
 
     public decimal TotalAmount { get; set; }

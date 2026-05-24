@@ -2020,6 +2020,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsurePurchaseExpectedDateColumnAsync(schemaName, cancellationToken);
         var purchases = new List<PurchaseDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -2029,6 +2030,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                    p.market_id,
                    COALESCE(m.name, '') AS market_name,
                    p.purchase_date,
+                   p.expected_date,
                    p.status,
                    p.total_amount,
                    p.notes,
@@ -2039,7 +2041,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             LEFT JOIN {schemaName}.suppliers s ON s.id = p.supplier_id
             LEFT JOIN {schemaName}.markets m ON m.id = p.market_id
             LEFT JOIN {schemaName}.purchase_items pi ON pi.purchase_id = p.id
-            GROUP BY p.id, p.supplier_id, s.name, p.market_id, m.name, p.purchase_date, p.status, p.total_amount, p.notes
+            GROUP BY p.id, p.supplier_id, s.name, p.market_id, m.name, p.purchase_date, p.expected_date, p.status, p.total_amount, p.notes
             ORDER BY p.purchase_date DESC, p.id DESC;
             """, cancellationToken);
 
@@ -2058,6 +2060,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsurePurchaseExpectedDateColumnAsync(schemaName, cancellationToken);
         return await GetPurchaseWithItemsAsync(schemaName, id, cancellationToken);
     }
 
@@ -2067,6 +2070,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsurePurchaseExpectedDateColumnAsync(schemaName, cancellationToken);
         var status = NormalizePurchaseStatus(request.Status);
         var receivesPurchase = string.Equals(status, "Received", StringComparison.OrdinalIgnoreCase);
 
@@ -2093,6 +2097,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 market_id,
                 created_by_user_id,
                 purchase_date,
+                expected_date,
                 status,
                 total_amount,
                 notes)
@@ -2101,16 +2106,18 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 @market_id,
                 @created_by_user_id,
                 @purchase_date,
+                @expected_date,
                 @status,
                 @total_amount,
                 @notes)
-            RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
+            RETURNING id, supplier_id, market_id, purchase_date, expected_date, status, total_amount;
             """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("supplier_id", request.SupplierId);
         command.Parameters.AddWithValue("market_id", request.MarketId);
         command.Parameters.AddWithValue("created_by_user_id", createdByUserId);
         command.Parameters.AddWithValue("purchase_date", request.PurchaseDate ?? DateOnly.FromDateTime(DateTime.UtcNow));
+        command.Parameters.AddWithValue("expected_date", DbValue(request.ExpectedDate));
         command.Parameters.AddWithValue("status", status);
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
@@ -2168,6 +2175,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsurePurchaseExpectedDateColumnAsync(schemaName, cancellationToken);
         var status = NormalizePurchaseStatus(request.Status);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -2209,17 +2217,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             SET supplier_id = @supplier_id,
                 market_id = @market_id,
                 purchase_date = @purchase_date,
+                expected_date = @expected_date,
                 status = @status,
                 total_amount = @total_amount,
                 notes = @notes
             WHERE id = @id
-            RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
+            RETURNING id, supplier_id, market_id, purchase_date, expected_date, status, total_amount;
             """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("supplier_id", request.SupplierId);
         command.Parameters.AddWithValue("market_id", request.MarketId);
         command.Parameters.AddWithValue("purchase_date", request.PurchaseDate);
+        command.Parameters.AddWithValue("expected_date", DbValue(request.ExpectedDate));
         command.Parameters.AddWithValue("status", status);
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
@@ -2256,6 +2266,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsurePurchaseExpectedDateColumnAsync(schemaName, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
@@ -2289,17 +2300,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             SET supplier_id = COALESCE(@supplier_id, supplier_id),
                 market_id = COALESCE(@market_id, market_id),
                 purchase_date = COALESCE(@purchase_date, purchase_date),
+                expected_date = COALESCE(@expected_date, expected_date),
                 status = COALESCE(@status, status),
                 total_amount = COALESCE(@total_amount, total_amount),
                 notes = COALESCE(@notes, notes)
             WHERE id = @id
-            RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
+            RETURNING id, supplier_id, market_id, purchase_date, expected_date, status, total_amount;
             """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("supplier_id", DbValue(request.SupplierId));
         command.Parameters.AddWithValue("market_id", DbValue(request.MarketId));
         command.Parameters.AddWithValue("purchase_date", DbValue(request.PurchaseDate));
+        command.Parameters.AddWithValue("expected_date", DbValue(request.ExpectedDate));
         command.Parameters.AddWithValue("status", DbValue(request.Status is null ? null : effectiveStatus));
         command.Parameters.AddWithValue("total_amount", DbValue(request.TotalAmount));
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
@@ -2331,6 +2344,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsurePurchaseExpectedDateColumnAsync(schemaName, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
@@ -2435,13 +2449,14 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsurePurchaseExpectedDateColumnAsync(schemaName, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.purchases
             SET status = 'Cancelled'
             WHERE id = @id
               AND status IN ('Draft', 'Ordered', 'PartiallyReceived')
-            RETURNING id, supplier_id, market_id, purchase_date, status, total_amount;
+            RETURNING id, supplier_id, market_id, purchase_date, expected_date, status, total_amount;
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
 
@@ -4701,6 +4716,8 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         int id,
         CancellationToken cancellationToken)
     {
+        await EnsurePurchaseExpectedDateColumnAsync(quotedSchemaName, cancellationToken);
+
         await using var command = await CreateCommandAsync($"""
             SELECT p.id,
                    p.supplier_id,
@@ -4708,6 +4725,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                    p.market_id,
                    COALESCE(m.name, '') AS market_name,
                    p.purchase_date,
+                   p.expected_date,
                    p.status,
                    p.total_amount,
                    p.notes,
@@ -4719,7 +4737,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             LEFT JOIN {quotedSchemaName}.markets m ON m.id = p.market_id
             LEFT JOIN {quotedSchemaName}.purchase_items pi ON pi.purchase_id = p.id
             WHERE p.id = @id
-            GROUP BY p.id, p.supplier_id, s.name, p.market_id, m.name, p.purchase_date, p.status, p.total_amount, p.notes;
+            GROUP BY p.id, p.supplier_id, s.name, p.market_id, m.name, p.purchase_date, p.expected_date, p.status, p.total_amount, p.notes;
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
 
@@ -4769,6 +4787,18 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return purchase;
     }
 
+    private async Task EnsurePurchaseExpectedDateColumnAsync(
+        string quotedSchemaName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = await CreateCommandAsync($"""
+            ALTER TABLE {quotedSchemaName}.purchases
+                ADD COLUMN IF NOT EXISTS expected_date DATE;
+            """, cancellationToken);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static PurchaseDto ReadPurchaseSummary(NpgsqlDataReader reader)
     {
         return new PurchaseDto
@@ -4779,12 +4809,13 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             MarketId = reader.GetInt32(3),
             MarketName = reader.GetString(4),
             PurchaseDate = reader.GetFieldValue<DateOnly>(5),
-            Status = reader.GetString(6),
-            TotalAmount = reader.GetDecimal(7),
-            Notes = reader.IsDBNull(8) ? null : reader.GetString(8),
-            ItemCount = reader.GetInt32(9),
-            TotalQuantity = reader.GetInt32(10),
-            ReceivedQuantity = reader.GetInt32(11)
+            ExpectedDate = reader.IsDBNull(6) ? null : reader.GetFieldValue<DateOnly>(6),
+            Status = reader.GetString(7),
+            TotalAmount = reader.GetDecimal(8),
+            Notes = reader.IsDBNull(9) ? null : reader.GetString(9),
+            ItemCount = reader.GetInt32(10),
+            TotalQuantity = reader.GetInt32(11),
+            ReceivedQuantity = reader.GetInt32(12)
         };
     }
 
@@ -4801,8 +4832,9 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 SupplierId = reader.GetInt32(1),
                 MarketId = reader.GetInt32(2),
                 PurchaseDate = reader.GetFieldValue<DateOnly>(3),
-                Status = reader.GetString(4),
-                TotalAmount = reader.GetDecimal(5)
+                ExpectedDate = reader.IsDBNull(4) ? null : reader.GetFieldValue<DateOnly>(4),
+                Status = reader.GetString(5),
+                TotalAmount = reader.GetDecimal(6)
             }
             : null;
     }
