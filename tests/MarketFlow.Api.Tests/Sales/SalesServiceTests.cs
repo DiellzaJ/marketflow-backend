@@ -1,3 +1,4 @@
+using MarketFlow.Application.Common.Exceptions;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
@@ -11,6 +12,94 @@ namespace MarketFlow.Api.Tests.Sales;
 
 public sealed class SalesServiceTests
 {
+    [Fact]
+    public async Task GetSalesAsync_WhenSaleReferenceRepairFails_ReturnsFailure()
+    {
+        var service = CreateService(new StubTenantQueryService { ThrowSaleReferenceRepairException = true });
+
+        var result = await service.GetSalesAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal(
+            "Sales could not be loaded because the tenant sales schema could not be repaired. See server logs for database diagnostics.",
+            result.Message);
+    }
+
+    [Fact]
+    public async Task CreateSaleAsync_WhenSaleReferenceRepairFails_ReturnsFailure()
+    {
+        var service = CreateService(new StubTenantQueryService { ThrowSaleReferenceRepairException = true });
+
+        var result = await service.CreateSaleAsync(new CreateSaleRequest
+        {
+            MarketId = 1,
+            PaymentMethod = "Cash",
+            Items =
+            [
+                new CreateSaleItemRequest
+                {
+                    ProductId = 1,
+                    Quantity = 1,
+                    UnitPrice = 5
+                }
+            ]
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal(
+            "Sale creation failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.",
+            result.Message);
+    }
+
+    [Fact]
+    public async Task GetSaleDetailsAsync_WhenSaleReferenceRepairFails_ReturnsFailure()
+    {
+        var service = CreateService(new StubTenantQueryService { ThrowSaleReferenceRepairException = true });
+
+        var result = await service.GetSaleDetailsAsync(10);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal(
+            "Sale details could not be loaded because the tenant sales schema could not be repaired. See server logs for database diagnostics.",
+            result.Message);
+    }
+
+    [Fact]
+    public async Task UpdateSaleAsync_WhenSaleReferenceRepairFails_ReturnsFailure()
+    {
+        var service = CreateService(new StubTenantQueryService { ThrowSaleReferenceRepairException = true });
+
+        var result = await service.UpdateSaleAsync(10, new UpdateSaleRequest
+        {
+            MarketId = 1,
+            SaleDate = DateOnly.FromDateTime(DateTime.UtcNow),
+            PaymentMethod = "Cash"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal(
+            "Sale update failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.",
+            result.Message);
+    }
+
+    [Fact]
+    public async Task PatchSaleAsync_WhenSaleReferenceRepairFails_ReturnsFailure()
+    {
+        var service = CreateService(new StubTenantQueryService { ThrowSaleReferenceRepairException = true });
+
+        var result = await service.PatchSaleAsync(10, new PatchSaleRequest { PaymentMethod = "Cash" });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal(
+            "Sale patch failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.",
+            result.Message);
+    }
+
     [Fact]
     public async Task GetSaleDetailsAsync_WhenSaleIsMissing_ReturnsNotFound()
     {
@@ -74,26 +163,62 @@ public sealed class SalesServiceTests
         public SaleDetailsResponse? SaleDetailsResult { get; init; }
         public SaleDto? SaleResult { get; init; }
         public bool SaleWasDeleted { get; init; }
+        public bool ThrowSaleReferenceRepairException { get; init; }
+
+        public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfSaleReferenceRepairFails();
+            return Task.FromResult<IReadOnlyCollection<SaleDto>>([]);
+        }
 
         public Task<SaleDetailsResponse?> GetSaleDetailsAsync(
             int id,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(SaleDetailsResult);
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfSaleReferenceRepairFails();
+            return Task.FromResult(SaleDetailsResult);
+        }
+
+        public Task<SaleDto?> CreateSaleAsync(
+            CreateSaleRequest request,
+            int createdByUserId,
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfSaleReferenceRepairFails();
+            return Task.FromResult(SaleResult);
+        }
 
         public Task<SaleDto?> UpdateSaleAsync(
             int id,
             UpdateSaleRequest request,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(SaleResult);
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfSaleReferenceRepairFails();
+            return Task.FromResult(SaleResult);
+        }
 
         public Task<SaleDto?> PatchSaleAsync(
             int id,
             PatchSaleRequest request,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(SaleResult);
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfSaleReferenceRepairFails();
+            return Task.FromResult(SaleResult);
+        }
 
         public Task<bool> DeleteSaleAsync(int id, CancellationToken cancellationToken = default) =>
             Task.FromResult(SaleWasDeleted);
+
+        private void ThrowIfSaleReferenceRepairFails()
+        {
+            if (ThrowSaleReferenceRepairException)
+            {
+                throw new SaleReferenceNumberRepairException(
+                    "tenant_test",
+                    "Tenant sales schema repair failed while creating or updating sale reference number infrastructure.");
+            }
+        }
 
         public Task<PagedResult<ProductDto>> GetProductsAsync(ProductListQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<ProductDto?> GetProductAsync(int id, bool includeInactive = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -116,8 +241,6 @@ public sealed class SalesServiceTests
         public Task<InventoryItemDto?> AdjustInventoryItemAsync(int id, AdjustInventoryRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> TransferInventoryAsync(TransferInventoryRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
-        public Task<SaleDto?> CreateSaleAsync(CreateSaleRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PurchaseDto?> CreatePurchaseAsync(CreatePurchaseRequest request, int createdByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PurchaseDto?> UpdatePurchaseAsync(int id, UpdatePurchaseRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();

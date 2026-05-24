@@ -1,3 +1,4 @@
+using MarketFlow.Application.Common.Exceptions;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Sales.DTOs;
@@ -21,8 +22,16 @@ public class SalesService : ISalesService
     public async Task<ServiceResult<IReadOnlyCollection<SaleDto>>> GetSalesAsync(
         CancellationToken cancellationToken = default)
     {
-        var sales = await _tenantQueryService.GetSalesAsync(cancellationToken);
-        return ServiceResult<IReadOnlyCollection<SaleDto>>.Success(sales);
+        try
+        {
+            var sales = await _tenantQueryService.GetSalesAsync(cancellationToken);
+            return ServiceResult<IReadOnlyCollection<SaleDto>>.Success(sales);
+        }
+        catch (SaleReferenceNumberRepairException)
+        {
+            return ServiceResult<IReadOnlyCollection<SaleDto>>.Failure(
+                "Sales could not be loaded because the tenant sales schema could not be repaired. See server logs for database diagnostics.");
+        }
     }
 
     public async Task<ServiceResult<SaleDto>> CreateSaleAsync(
@@ -44,22 +53,38 @@ public class SalesService : ISalesService
             return ServiceResult<SaleDto>.Failure("Sale items must include a product, positive quantity, and non-negative unit price.");
         }
 
-        var sale = await _tenantQueryService.CreateSaleAsync(request, userId, cancellationToken);
+        try
+        {
+            var sale = await _tenantQueryService.CreateSaleAsync(request, userId, cancellationToken);
 
-        return sale is null
-            ? ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.")
-            : ServiceResult<SaleDto>.Success(sale, "Sale created.");
+            return sale is null
+                ? ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.")
+                : ServiceResult<SaleDto>.Success(sale, "Sale created.");
+        }
+        catch (SaleReferenceNumberRepairException)
+        {
+            return ServiceResult<SaleDto>.Failure(
+                "Sale creation failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.");
+        }
     }
 
     public async Task<ServiceResult<SaleDetailsResponse>> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
     {
-        var sale = await _tenantQueryService.GetSaleDetailsAsync(id, cancellationToken);
+        try
+        {
+            var sale = await _tenantQueryService.GetSaleDetailsAsync(id, cancellationToken);
 
-        return sale is null
-            ? ServiceResult<SaleDetailsResponse>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<SaleDetailsResponse>.Success(sale);
+            return sale is null
+                ? ServiceResult<SaleDetailsResponse>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
+                : ServiceResult<SaleDetailsResponse>.Success(sale);
+        }
+        catch (SaleReferenceNumberRepairException)
+        {
+            return ServiceResult<SaleDetailsResponse>.Failure(
+                "Sale details could not be loaded because the tenant sales schema could not be repaired. See server logs for database diagnostics.");
+        }
     }
 
     public async Task<ServiceResult<SaleDto>> UpdateSaleAsync(
@@ -72,11 +97,19 @@ public class SalesService : ISalesService
             return ServiceResult<SaleDto>.Failure("Market is required.");
         }
 
-        var sale = await _tenantQueryService.UpdateSaleAsync(id, request, cancellationToken);
+        try
+        {
+            var sale = await _tenantQueryService.UpdateSaleAsync(id, request, cancellationToken);
 
-        return sale is null
-            ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
+            return sale is null
+                ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
+                : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
+        }
+        catch (SaleReferenceNumberRepairException)
+        {
+            return ServiceResult<SaleDto>.Failure(
+                "Sale update failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.");
+        }
     }
 
     public async Task<ServiceResult<SaleDto>> PatchSaleAsync(
@@ -84,11 +117,19 @@ public class SalesService : ISalesService
         PatchSaleRequest request,
         CancellationToken cancellationToken = default)
     {
-        var sale = await _tenantQueryService.PatchSaleAsync(id, request, cancellationToken);
+        try
+        {
+            var sale = await _tenantQueryService.PatchSaleAsync(id, request, cancellationToken);
 
-        return sale is null
-            ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
+            return sale is null
+                ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
+                : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
+        }
+        catch (SaleReferenceNumberRepairException)
+        {
+            return ServiceResult<SaleDto>.Failure(
+                "Sale patch failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.");
+        }
     }
 
     public async Task<ServiceResult<bool>> DeleteSaleAsync(

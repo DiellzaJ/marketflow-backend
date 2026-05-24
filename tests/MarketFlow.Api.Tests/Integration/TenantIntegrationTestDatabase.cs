@@ -169,6 +169,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
 
         await EnsureInventoryMovementsTableAsync(connection, schemaName, cancellationToken);
         await EnsureLowStockAlertsTableAsync(connection, schemaName, cancellationToken);
+        await EnsureSaleReferenceNumbersAsync(connection, schemaName, cancellationToken);
 
         if (generatedSchemaName || dropSchemaOnDispose)
         {
@@ -464,6 +465,164 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             new NpgsqlParameter("name", name));
 
         return new TenantTestSupplier(supplierId, name);
+    }
+
+    public async Task<int> InsertSaleWithReferenceNumberAsync(
+        string schemaName,
+        int marketId,
+        int createdByUserId,
+        string referenceNumber,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        return await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            INSERT INTO {QuoteIdentifier(schemaName)}.sales (
+                market_id,
+                created_by_user_id,
+                sale_date,
+                payment_method,
+                total_amount,
+                reference_number)
+            VALUES (
+                @market_id,
+                @created_by_user_id,
+                CURRENT_DATE,
+                'Cash',
+                0,
+                @reference_number)
+            RETURNING id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("market_id", marketId),
+            new NpgsqlParameter("created_by_user_id", createdByUserId),
+            new NpgsqlParameter("reference_number", referenceNumber));
+    }
+
+    public async Task RemoveSaleReferenceNumbersAsync(
+        string schemaName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        await ExecuteAsync(
+            connection,
+            $"""
+            DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {QuoteIdentifier(schemaName)}.sales;
+            DROP INDEX IF EXISTS {QuoteIdentifier(schemaName)}.ux_sales_reference_number;
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales DROP COLUMN IF EXISTS reference_number;
+            """,
+            cancellationToken);
+    }
+
+    public async Task RemoveSaleReferenceTriggerAsync(
+        string schemaName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        await ExecuteAsync(
+            connection,
+            $"""
+            DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {QuoteIdentifier(schemaName)}.sales;
+            DROP INDEX IF EXISTS {QuoteIdentifier(schemaName)}.ux_sales_reference_number;
+            """,
+            cancellationToken);
+    }
+
+    public async Task MakeSaleReferenceNumberNullableAndNullAsync(
+        string schemaName,
+        int saleId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        await ExecuteAsync(
+            connection,
+            $"""
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ALTER COLUMN reference_number DROP NOT NULL;
+            UPDATE {QuoteIdentifier(schemaName)}.sales
+            SET reference_number = NULL
+            WHERE id = @sale_id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("sale_id", saleId));
+    }
+
+    public async Task<TenantSaleReferenceSchemaState> GetSaleReferenceSchemaStateAsync(
+        string schemaName,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                       SELECT 1
+                       FROM information_schema.columns
+                       WHERE table_schema = @schema_name
+                         AND table_name = 'sales'
+                         AND column_name = 'reference_number'
+                   ) AS column_exists,
+                   EXISTS (
+                       SELECT 1
+                       FROM information_schema.columns
+                       WHERE table_schema = @schema_name
+                         AND table_name = 'sales'
+                         AND column_name = 'reference_number'
+                         AND is_nullable = 'YES'
+                   ) AS column_is_nullable,
+                   EXISTS (
+                       SELECT 1
+                       FROM pg_catalog.pg_trigger trigger
+                       INNER JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
+                       INNER JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+                       WHERE namespace.nspname = @schema_name
+                         AND relation.relname = 'sales'
+                         AND trigger.tgname = 'trg_sales_assign_reference_number'
+                   ) AS trigger_exists,
+                   to_regclass(format('%I.ux_sales_reference_number', @schema_name)) IS NOT NULL AS unique_index_exists,
+                   to_regprocedure('public.assign_sale_reference_number()') IS NOT NULL AS trigger_function_exists;
+            """,
+            connection);
+        command.Parameters.AddWithValue("schema_name", schemaName);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken)
+            ? new TenantSaleReferenceSchemaState(
+                reader.GetBoolean(0),
+                reader.GetBoolean(1),
+                reader.GetBoolean(2),
+                reader.GetBoolean(3),
+                reader.GetBoolean(4),
+                await HasSaleReferenceNumbersNeedingBackfillAsync(schemaName, reader.GetBoolean(0), cancellationToken))
+            : throw new InvalidOperationException("Sale reference schema state was not returned.");
+    }
+
+    private async Task<bool> HasSaleReferenceNumbersNeedingBackfillAsync(
+        string schemaName,
+        bool referenceNumberColumnExists,
+        CancellationToken cancellationToken)
+    {
+        if (!referenceNumberColumnExists)
+        {
+            return false;
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        return await ExecuteScalarAsync<bool>(
+            connection,
+            $"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {QuoteIdentifier(schemaName)}.sales
+                WHERE reference_number IS NULL OR btrim(reference_number) = ''
+            );
+            """,
+            cancellationToken);
     }
 
     public async Task<TenantTestStaffAssignment> InsertStaffAssignmentAsync(
@@ -1024,6 +1183,45 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             CREATE UNIQUE INDEX IF NOT EXISTS ux_low_stock_alerts_active_product_location
                 ON {QuoteIdentifier(schemaName)}.low_stock_alerts(product_id, market_id, (COALESCE(department_id, -1)))
                 WHERE status = 'Active';
+            """,
+            cancellationToken);
+    }
+
+    private static async Task EnsureSaleReferenceNumbersAsync(
+        NpgsqlConnection connection,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteAsync(
+            connection,
+            $"""
+            CREATE OR REPLACE FUNCTION public.assign_sale_reference_number()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.reference_number IS NULL OR btrim(NEW.reference_number) = '' THEN
+                    NEW.reference_number := 'SALE-' || lpad(NEW.id::text, 6, '0');
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$;
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);
+            UPDATE {QuoteIdentifier(schemaName)}.sales
+            SET reference_number = 'SALE-' || lpad(id::text, 6, '0')
+            WHERE reference_number IS NULL OR btrim(reference_number) = '';
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ALTER COLUMN reference_number SET NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number
+                ON {QuoteIdentifier(schemaName)}.sales(reference_number);
+            DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {QuoteIdentifier(schemaName)}.sales;
+            CREATE TRIGGER trg_sales_assign_reference_number
+                BEFORE INSERT ON {QuoteIdentifier(schemaName)}.sales
+                FOR EACH ROW
+                EXECUTE FUNCTION public.assign_sale_reference_number();
             """,
             cancellationToken);
     }
