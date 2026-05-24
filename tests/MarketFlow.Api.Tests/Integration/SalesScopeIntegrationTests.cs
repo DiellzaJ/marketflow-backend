@@ -70,7 +70,7 @@ public sealed class SalesScopeIntegrationTests
     }
 
     [PostgresIntegrationFact]
-    public async Task DepartmentManager_CanOnlyReadAssignedDepartmentSales()
+    public async Task DepartmentManager_CanReadAssignedDepartmentSalesAfterInventoryIsDeleted()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();
 
@@ -87,7 +87,12 @@ public sealed class SalesScopeIntegrationTests
         var departmentB = await database.InsertDepartmentAsync(company.SchemaName, market.Id, "Dairy");
         var productA = await database.InsertProductAsync(company.SchemaName, name: "Department A Sale Product");
         var productB = await database.InsertProductAsync(company.SchemaName, name: "Department B Sale Product");
-        await database.InsertInventoryAsync(company.SchemaName, productA.Id, market.Id, departmentA.Id, quantity: 10);
+        var departmentAInventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            productA.Id,
+            market.Id,
+            departmentA.Id,
+            quantity: 10);
         await database.InsertInventoryAsync(company.SchemaName, productB.Id, market.Id, departmentB.Id, quantity: 10);
 
         var sellerA = await database.CreateUserAsync(company, roleName: "Seller");
@@ -99,6 +104,11 @@ public sealed class SalesScopeIntegrationTests
         await database.InsertStaffAssignmentAsync(company.SchemaName, sellerB.Id, market.Id, departmentB.Id);
         using var sellerBClient = apiFactory.CreateAuthenticatedClient(database, sellerB);
         var departmentBSale = await CreateSaleAsync(sellerBClient, market.Id, productB.Id);
+
+        var inventoryDeleted = await database.DeleteInventoryAsync(
+            company.SchemaName,
+            departmentAInventory.Id);
+        Assert.True(inventoryDeleted);
 
         var departmentManager = await database.CreateUserAsync(company, roleName: "DepartmentManager");
         await database.InsertStaffAssignmentAsync(company.SchemaName, departmentManager.Id, market.Id, departmentA.Id);
