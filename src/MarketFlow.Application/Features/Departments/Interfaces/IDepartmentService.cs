@@ -11,4 +11,25 @@ public interface IDepartmentService
     Task<ServiceResult<IReadOnlyCollection<DepartmentDto>>> GetDepartmentsAsync(
         int? marketId = null,
         CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<DepartmentDto>> GetDepartmentAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<DepartmentDto>> CreateDepartmentAsync(
+        CreateDepartmentRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<DepartmentDto>> UpdateDepartmentAsync(
+        int id,
+        UpdateDepartmentRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<DepartmentDto>> DeactivateDepartmentAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
+    Task<ServiceResult<DepartmentDto>> ActivateDepartmentAsync(
+        int id,
+        CancellationToken cancellationToken = default);
 }

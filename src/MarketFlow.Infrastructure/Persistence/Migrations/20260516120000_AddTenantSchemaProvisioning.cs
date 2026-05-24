@@ -46,6 +46,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         );
                         CREATE INDEX IF NOT EXISTS idx_departments_market ON %1$I.departments(market_id);
+                        CREATE INDEX IF NOT EXISTS idx_departments_market_name_lower ON %1$I.departments(market_id, lower(name));
 
                         CREATE TABLE IF NOT EXISTS %1$I.staff_assignments (
                             id            SERIAL PRIMARY KEY,

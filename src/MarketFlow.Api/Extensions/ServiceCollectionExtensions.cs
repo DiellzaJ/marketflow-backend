@@ -127,6 +127,8 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IDepartmentQueryService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IDepartmentStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
@@ -250,6 +252,15 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.ReadDepartments, policy =>
             policy.Requirements.Add(new PermissionRequirement("departments", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateDepartments, policy =>
+            policy.Requirements.Add(new PermissionRequirement("departments", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateDepartments, policy =>
+            policy.Requirements.Add(new PermissionRequirement("departments", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteDepartments, policy =>
+            policy.Requirements.Add(new PermissionRequirement("departments", "delete")));
 
         return options;
     }
