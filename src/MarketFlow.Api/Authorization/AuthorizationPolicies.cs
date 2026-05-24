@@ -39,6 +39,9 @@ public static class AuthorizationPolicies
     public const string DeleteMarkets = "DeleteMarkets";
 
     public const string ReadDepartments = "ReadDepartments";
+    public const string CreateDepartments = "CreateDepartments";
+    public const string UpdateDepartments = "UpdateDepartments";
+    public const string DeleteDepartments = "DeleteDepartments";
 
     public const string UpdateInventoryStock = UpdateInventory;
     public const string AdjustInventoryStock = AdjustInventory;

@@ -205,6 +205,205 @@ public sealed class DepartmentsLookupIntegrationTests
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [PostgresIntegrationFact]
+    public async Task DepartmentCrud_UsesAuthenticatedUsersTenantSchema()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var companyA = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("departments_crud_a"),
+            name: "Departments Crud A",
+            dropSchemaOnDispose: true);
+        var companyB = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("departments_crud_b"),
+            name: "Departments Crud B",
+            dropSchemaOnDispose: true);
+        var userA = await database.CreateUserAsync(companyA, roleName: "CompanyAdmin");
+        var marketA = await database.InsertMarketAsync(companyA.SchemaName, name: "Tenant A Market");
+        var marketB = await database.InsertMarketAsync(companyB.SchemaName, name: "Tenant B Market");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, userA);
+        client.DefaultRequestHeaders.Add(TenantSchemaHeaderName, companyB.SchemaName);
+        client.DefaultRequestHeaders.Add(SchemaNameHeaderName, companyB.SchemaName);
+
+        var createResponse = await client.PostAsJsonAsync(
+            "/api/Departments",
+            new CreateDepartmentRequest
+            {
+                MarketId = marketA.Id,
+                Name = " Produce ",
+                Description = " Fresh section "
+            });
+
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var createResult = await createResponse.Content.ReadFromJsonAsync<ServiceResult<DepartmentDto>>(JsonOptions);
+        Assert.NotNull(createResult);
+        Assert.True(createResult.Succeeded);
+        Assert.Equal("Produce", createResult.Data?.Name);
+        Assert.Equal("Fresh section", createResult.Data?.Description);
+        Assert.True(createResult.Data?.IsActive);
+
+        var departmentId = createResult.Data!.Id;
+        Assert.Equal(1, await database.CountDepartmentsByNameAsync(companyA.SchemaName, marketA.Id, "Produce"));
+        Assert.Equal(0, await database.CountDepartmentsByNameAsync(companyB.SchemaName, marketB.Id, "Produce"));
+
+        var getResponse = await client.GetAsync($"/api/Departments/{departmentId}");
+        getResponse.EnsureSuccessStatusCode();
+        var getResult = await getResponse.Content.ReadFromJsonAsync<ServiceResult<DepartmentDto>>(JsonOptions);
+        Assert.Equal(departmentId, getResult?.Data?.Id);
+        Assert.Equal(marketA.Id, getResult?.Data?.MarketId);
+
+        var updateResponse = await client.PutAsJsonAsync(
+            $"/api/Departments/{departmentId}",
+            new UpdateDepartmentRequest
+            {
+                Name = "Produce Plus",
+                Description = "Updated section"
+            });
+        updateResponse.EnsureSuccessStatusCode();
+        var updateResult = await updateResponse.Content.ReadFromJsonAsync<ServiceResult<DepartmentDto>>(JsonOptions);
+        Assert.True(updateResult?.Succeeded);
+        Assert.Equal("Produce Plus", updateResult?.Data?.Name);
+        Assert.Equal("Updated section", updateResult?.Data?.Description);
+
+        var deactivateResponse = await client.PatchAsync($"/api/Departments/{departmentId}/deactivate", null);
+        deactivateResponse.EnsureSuccessStatusCode();
+        var deactivateResult = await deactivateResponse.Content.ReadFromJsonAsync<ServiceResult<DepartmentDto>>(JsonOptions);
+        Assert.False(deactivateResult?.Data?.IsActive);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/Departments/{departmentId}")).StatusCode);
+
+        var activateResponse = await client.PatchAsync($"/api/Departments/{departmentId}/activate", null);
+        activateResponse.EnsureSuccessStatusCode();
+        var activateResult = await activateResponse.Content.ReadFromJsonAsync<ServiceResult<DepartmentDto>>(JsonOptions);
+        Assert.True(activateResult?.Data?.IsActive);
+
+        var storedDepartment = await database.GetDepartmentDetailsAsync(companyA.SchemaName, departmentId);
+        Assert.NotNull(storedDepartment);
+        Assert.Equal(marketA.Id, storedDepartment.MarketId);
+        Assert.Equal("Produce Plus", storedDepartment.Name);
+        Assert.Equal("Updated section", storedDepartment.Description);
+        Assert.True(storedDepartment.IsActive);
+        Assert.Equal(0, await database.CountDepartmentsByNameAsync(companyB.SchemaName, marketB.Id, "Produce Plus"));
+    }
+
+    [PostgresIntegrationFact]
+    public async Task CreateDepartment_WithUnknownMarketReturnsNotFound()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("departments_missing_market"),
+            name: "Departments Missing Market",
+            dropSchemaOnDispose: true);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+        var response = await client.PostAsJsonAsync(
+            "/api/Departments",
+            new CreateDepartmentRequest
+            {
+                MarketId = 999999,
+                Name = "Produce"
+            });
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<DepartmentDto>>(JsonOptions);
+        Assert.False(result?.Succeeded);
+        Assert.Equal(ServiceResultFailureType.NotFound, result?.FailureType);
+        Assert.Equal("Department market was not found.", result?.Message);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task CreateDepartment_WithDuplicateNameInSameMarketReturnsConflict()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("departments_duplicate"),
+            name: "Departments Duplicate",
+            dropSchemaOnDispose: true);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+        var market = await database.InsertMarketAsync(company.SchemaName, name: "Duplicate Market");
+        await database.InsertDepartmentAsync(company.SchemaName, market.Id, name: "Produce");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+        var response = await client.PostAsJsonAsync(
+            "/api/Departments",
+            new CreateDepartmentRequest
+            {
+                MarketId = market.Id,
+                Name = " produce "
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<DepartmentDto>>(JsonOptions);
+        Assert.False(result?.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Conflict, result?.FailureType);
+        Assert.Equal(
+            "Department name is already used by another department in this market.",
+            result?.Message);
+        Assert.Equal(1, await database.CountDepartmentsByNameAsync(company.SchemaName, market.Id, "Produce"));
+    }
+
+    [PostgresIntegrationFact]
+    public async Task SellerCannotCreateUpdateDeactivateOrActivateDepartments()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("departments_seller_forbidden"),
+            name: "Departments Seller Forbidden",
+            dropSchemaOnDispose: true);
+        var seller = await database.CreateUserAsync(company, roleName: "Seller");
+        var market = await database.InsertMarketAsync(company.SchemaName, name: "Seller Market");
+        var department = await database.InsertDepartmentAsync(company.SchemaName, market.Id, name: "Produce");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, seller);
+
+        var createResponse = await client.PostAsJsonAsync(
+            "/api/Departments",
+            new CreateDepartmentRequest
+            {
+                MarketId = market.Id,
+                Name = "Blocked Department"
+            });
+        var updateResponse = await client.PutAsJsonAsync(
+            $"/api/Departments/{department.Id}",
+            new UpdateDepartmentRequest { Name = "Blocked Update" });
+        var deactivateResponse = await client.PatchAsync($"/api/Departments/{department.Id}/deactivate", null);
+        var activateResponse = await client.PatchAsync($"/api/Departments/{department.Id}/activate", null);
+
+        Assert.Equal(HttpStatusCode.Forbidden, createResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, updateResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, deactivateResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, activateResponse.StatusCode);
+
+        var storedDepartment = await database.GetDepartmentDetailsAsync(company.SchemaName, department.Id);
+        Assert.NotNull(storedDepartment);
+        Assert.Equal("Produce", storedDepartment.Name);
+        Assert.True(storedDepartment.IsActive);
+    }
+
     private static ServiceResult<IReadOnlyCollection<DepartmentDto>> DeserializeDepartments(string responseBody)
     {
         var result = JsonSerializer.Deserialize<ServiceResult<IReadOnlyCollection<DepartmentDto>>>(
