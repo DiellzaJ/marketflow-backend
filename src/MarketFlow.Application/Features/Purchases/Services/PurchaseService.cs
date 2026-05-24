@@ -140,7 +140,7 @@ public class PurchaseService : IPurchaseService
         var purchase = await _tenantQueryService.CancelPurchaseAsync(id, cancellationToken);
 
         return purchase is null
-            ? ServiceResult<PurchaseDto>.Failure("Purchase could not be cancelled.", ServiceResultFailureType.Conflict)
+            ? await ResolveMissingPurchaseCancelAsync(id, cancellationToken)
             : ServiceResult<PurchaseDto>.Success(purchase, "Purchase cancelled.");
     }
 
@@ -165,6 +165,19 @@ public class PurchaseService : IPurchaseService
             ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound)
             : ServiceResult<PurchaseDto>.Failure(
                 "Purchase could not be updated. Verify status transition, references, and access.",
+                ServiceResultFailureType.Conflict);
+    }
+
+    private async Task<ServiceResult<PurchaseDto>> ResolveMissingPurchaseCancelAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var existingPurchase = await _tenantQueryService.GetPurchaseAsync(id, cancellationToken);
+
+        return existingPurchase is null
+            ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound)
+            : ServiceResult<PurchaseDto>.Failure(
+                "Purchase could not be cancelled.",
                 ServiceResultFailureType.Conflict);
     }
 

@@ -4770,6 +4770,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
     private static bool CanPatchPurchase(string currentStatus, string effectiveStatus)
     {
+        if (string.Equals(currentStatus, "PartiallyReceived", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         if (string.Equals(currentStatus, "Cancelled", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(currentStatus, "Received", StringComparison.OrdinalIgnoreCase))
         {

@@ -104,6 +104,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                         EXECUTE format('ALTER TABLE %I.purchase_items DROP CONSTRAINT IF EXISTS purchase_items_received_quantity_check', tenant.schema_name);
                         EXECUTE format('ALTER TABLE %I.purchase_items DROP COLUMN IF EXISTS received_quantity', tenant.schema_name);
                         EXECUTE format('ALTER TABLE %I.purchases DROP CONSTRAINT IF EXISTS purchases_status_check', tenant.schema_name);
+                        EXECUTE format('UPDATE %I.purchases SET status = CASE status WHEN ''Received'' THEN ''Received'' WHEN ''Cancelled'' THEN ''Cancelled'' ELSE ''Pending'' END', tenant.schema_name);
                         EXECUTE format('ALTER TABLE %I.purchases ALTER COLUMN status SET DEFAULT ''Pending''', tenant.schema_name);
                         EXECUTE format('ALTER TABLE %I.purchases ADD CONSTRAINT purchases_status_check CHECK (status IN (''Pending'', ''Received'', ''Cancelled''))', tenant.schema_name);
                     END LOOP;

@@ -192,6 +192,11 @@ public sealed class PurchaseReceiptIntegrationTests
         var partiallyReceivedInventory = await database.GetInventoryDetailsAsync(company.SchemaName, inventory.Id);
         Assert.Equal(4, partiallyReceivedInventory?.Quantity);
 
+        var patchAfterPartialResponse = await client.PatchAsJsonAsync(
+            $"/api/purchases/{purchase.Id}",
+            new PatchPurchaseRequest { Status = "Ordered" });
+        Assert.Equal(HttpStatusCode.Conflict, patchAfterPartialResponse.StatusCode);
+
         var fullResponse = await client.PostAsJsonAsync(
             $"/api/purchases/{purchase.Id}/receive",
             new ReceivePurchaseRequest());
