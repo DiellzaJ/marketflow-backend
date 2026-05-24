@@ -12,6 +12,8 @@ public class Purchase : TenantEntity
 
     public DateOnly PurchaseDate { get; set; }
 
+    public DateOnly? ExpectedDate { get; set; }
+
     public PurchaseStatus Status { get; set; } = PurchaseStatus.Draft;
 
     public decimal TotalAmount { get; set; }

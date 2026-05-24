@@ -8,6 +8,8 @@ public class PatchPurchaseRequest
 
     public DateOnly? PurchaseDate { get; set; }
 
+    public DateOnly? ExpectedDate { get; set; }
+
     public string? Status { get; set; }
 
     public decimal? TotalAmount { get; set; }

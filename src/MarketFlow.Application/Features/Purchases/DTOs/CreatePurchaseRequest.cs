@@ -8,6 +8,8 @@ public class CreatePurchaseRequest
 
     public DateOnly? PurchaseDate { get; set; }
 
+    public DateOnly? ExpectedDate { get; set; }
+
     public string Status { get; set; } = "Draft";
 
     public decimal TotalAmount { get; set; }
