@@ -27,6 +27,90 @@ public sealed class SalesServiceTests
     }
 
     [Fact]
+    public async Task GetSalesHistoryAsync_PassesTrimmedQueryToTenantQueryService()
+    {
+        var tenantQueryService = new StubTenantQueryService();
+        var service = CreateService(tenantQueryService);
+
+        var result = await service.GetSalesHistoryAsync(new SaleHistoryQuery
+        {
+            Page = 2,
+            PageSize = 10,
+            Status = " Paid ",
+            SortBy = " totalAmount ",
+            SortDirection = " desc ",
+            UserId = 42
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(tenantQueryService.LastHistoryQuery);
+        Assert.Equal("Paid", tenantQueryService.LastHistoryQuery.Status);
+        Assert.Equal("totalAmount", tenantQueryService.LastHistoryQuery.SortBy);
+        Assert.Equal("desc", tenantQueryService.LastHistoryQuery.SortDirection);
+        Assert.Equal(42, tenantQueryService.LastHistoryQuery.CashierUserId);
+    }
+
+    [Theory]
+    [InlineData(0, 20, "saleDate", "desc", "Page must be greater than zero.")]
+    [InlineData(1, 0, "saleDate", "desc", "Page size must be between 1 and 100.")]
+    [InlineData(1, 101, "saleDate", "desc", "Page size must be between 1 and 100.")]
+    [InlineData(1, 20, "unsupported", "desc", "Sort field is not supported.")]
+    [InlineData(1, 20, "saleDate", "sideways", "Sort direction must be asc or desc.")]
+    public async Task GetSalesHistoryAsync_RejectsInvalidPagingAndSorting(
+        int page,
+        int pageSize,
+        string sortBy,
+        string sortDirection,
+        string expectedMessage)
+    {
+        var tenantQueryService = new StubTenantQueryService();
+        var service = CreateService(tenantQueryService);
+
+        var result = await service.GetSalesHistoryAsync(new SaleHistoryQuery
+        {
+            Page = page,
+            PageSize = pageSize,
+            SortBy = sortBy,
+            SortDirection = sortDirection
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(expectedMessage, result.Message);
+        Assert.Null(tenantQueryService.LastHistoryQuery);
+    }
+
+    [Fact]
+    public async Task GetSalesHistoryAsync_RejectsInvertedDateRange()
+    {
+        var tenantQueryService = new StubTenantQueryService();
+        var service = CreateService(tenantQueryService);
+
+        var result = await service.GetSalesHistoryAsync(new SaleHistoryQuery
+        {
+            DateFrom = new DateOnly(2026, 5, 24),
+            DateTo = new DateOnly(2026, 5, 23)
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Date from must be on or before date to.", result.Message);
+        Assert.Null(tenantQueryService.LastHistoryQuery);
+    }
+
+    [Fact]
+    public async Task GetSalesHistoryAsync_WhenSaleReferenceRepairFails_ReturnsFailure()
+    {
+        var service = CreateService(new StubTenantQueryService { ThrowSaleReferenceRepairException = true });
+
+        var result = await service.GetSalesHistoryAsync(new SaleHistoryQuery());
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal(
+            "Sales history could not be loaded because the tenant sales schema could not be repaired. See server logs for database diagnostics.",
+            result.Message);
+    }
+
+    [Fact]
     public async Task CreateSaleAsync_WhenSaleReferenceRepairFails_ReturnsFailure()
     {
         var service = CreateService(new StubTenantQueryService { ThrowSaleReferenceRepairException = true });
@@ -164,12 +248,29 @@ public sealed class SalesServiceTests
         public SaleDto? SaleResult { get; init; }
         public bool SaleWasDeleted { get; init; }
         public bool ThrowSaleReferenceRepairException { get; init; }
+        public SaleHistoryQuery? LastHistoryQuery { get; private set; }
 
         public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(
             CancellationToken cancellationToken = default)
         {
             ThrowIfSaleReferenceRepairFails();
             return Task.FromResult<IReadOnlyCollection<SaleDto>>([]);
+        }
+
+        public Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(
+            SaleHistoryQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            ThrowIfSaleReferenceRepairFails();
+            LastHistoryQuery = query;
+            return Task.FromResult(new PagedResult<SaleHistoryItemDto>
+            {
+                Items = [],
+                Page = query.Page,
+                PageSize = query.PageSize,
+                TotalCount = 0,
+                TotalPages = 0
+            });
         }
 
         public Task<SaleDetailsResponse?> GetSaleDetailsAsync(

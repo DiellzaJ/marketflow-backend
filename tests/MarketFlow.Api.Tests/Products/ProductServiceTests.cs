@@ -1006,6 +1006,13 @@ public sealed class ProductServiceTests
             throw new NotSupportedException();
         }
 
+        public Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(
+            SaleHistoryQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<SaleDetailsResponse?> GetSaleDetailsAsync(
             int id,
             CancellationToken cancellationToken = default)

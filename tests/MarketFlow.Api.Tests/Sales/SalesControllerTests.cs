@@ -101,24 +101,72 @@ public sealed class SalesControllerTests
         Assert.Equal("SALE-000007", Assert.Single(result.Data!).ReferenceNumber);
     }
 
+    [Fact]
+    public async Task GetHistoryAsync_WhenQueryIsValid_ReturnsPagedSales()
+    {
+        var sale = new SaleHistoryItemDto
+        {
+            Id = 7,
+            ReferenceNumber = "SALE-000007",
+            SaleDate = new DateOnly(2026, 5, 24),
+            CreatedAt = DateTimeOffset.UtcNow,
+            MarketId = 2,
+            MarketName = "Main Market",
+            CashierUserId = 3,
+            CashierName = "Cashier",
+            Status = "Paid",
+            PaymentMethod = "Cash",
+            TotalAmount = 12.50m,
+            ItemCount = 2
+        };
+        var history = new PagedResult<SaleHistoryItemDto>
+        {
+            Items = [sale],
+            Page = 2,
+            PageSize = 1,
+            TotalCount = 3,
+            TotalPages = 3
+        };
+        var controller = new SalesController(new StubSalesService(
+            ServiceResult<SaleDetailsResponse>.Failure("unused"),
+            historyResult: ServiceResult<PagedResult<SaleHistoryItemDto>>.Success(history)));
+
+        var response = await controller.GetHistoryAsync(
+            new SaleHistoryQuery { Page = 2, PageSize = 1 },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var result = Assert.IsType<ServiceResult<PagedResult<SaleHistoryItemDto>>>(ok.Value);
+        Assert.True(result.Succeeded);
+        Assert.Equal("SALE-000007", Assert.Single(result.Data!.Items).ReferenceNumber);
+    }
+
     private sealed class StubSalesService : ISalesService
     {
         private readonly ServiceResult<SaleDetailsResponse> _saleDetailsResult;
         private readonly ServiceResult<SaleDto> _createResult;
         private readonly ServiceResult<IReadOnlyCollection<SaleDto>> _salesResult;
+        private readonly ServiceResult<PagedResult<SaleHistoryItemDto>> _historyResult;
 
         public StubSalesService(
             ServiceResult<SaleDetailsResponse> saleDetailsResult,
             ServiceResult<SaleDto>? createResult = null,
-            ServiceResult<IReadOnlyCollection<SaleDto>>? salesResult = null)
+            ServiceResult<IReadOnlyCollection<SaleDto>>? salesResult = null,
+            ServiceResult<PagedResult<SaleHistoryItemDto>>? historyResult = null)
         {
             _saleDetailsResult = saleDetailsResult;
             _createResult = createResult ?? ServiceResult<SaleDto>.Failure("unused");
             _salesResult = salesResult ?? ServiceResult<IReadOnlyCollection<SaleDto>>.Success([]);
+            _historyResult = historyResult ?? ServiceResult<PagedResult<SaleHistoryItemDto>>.Success(new PagedResult<SaleHistoryItemDto>());
         }
 
         public Task<ServiceResult<IReadOnlyCollection<SaleDto>>> GetSalesAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(_salesResult);
+
+        public Task<ServiceResult<PagedResult<SaleHistoryItemDto>>> GetSalesHistoryAsync(
+            SaleHistoryQuery query,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(_historyResult);
 
         public Task<ServiceResult<SaleDto>> CreateSaleAsync(CreateSaleRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult(_createResult);

@@ -43,6 +43,10 @@ public sealed class SalesScopeIntegrationTests
         Assert.Contains(sales, sale => sale.Id == marketASale.Id);
         Assert.DoesNotContain(sales, sale => sale.Id == marketBSale.Id);
 
+        var history = await GetSalesHistoryAsync(client);
+        Assert.Contains(history.Items, sale => sale.Id == marketASale.Id);
+        Assert.DoesNotContain(history.Items, sale => sale.Id == marketBSale.Id);
+
         var hiddenDetails = await client.GetAsync($"/api/sales/{marketBSale.Id}");
         Assert.Equal(HttpStatusCode.NotFound, hiddenDetails.StatusCode);
 
@@ -119,6 +123,10 @@ public sealed class SalesScopeIntegrationTests
         Assert.Contains(sales, sale => sale.Id == departmentASale.Id);
         Assert.DoesNotContain(sales, sale => sale.Id == departmentBSale.Id);
 
+        var history = await GetSalesHistoryAsync(client);
+        Assert.Contains(history.Items, sale => sale.Id == departmentASale.Id);
+        Assert.DoesNotContain(history.Items, sale => sale.Id == departmentBSale.Id);
+
         var allowedDetails = await client.GetAsync($"/api/sales/{departmentASale.Id}");
         allowedDetails.EnsureSuccessStatusCode();
 
@@ -171,6 +179,11 @@ public sealed class SalesScopeIntegrationTests
         Assert.Contains(sales, sale => sale.Id == companyASale1.Id);
         Assert.Contains(sales, sale => sale.Id == companyASale2.Id);
         Assert.DoesNotContain(sales, sale => sale.ReferenceNumber == companyBReferenceNumber);
+
+        var history = await GetSalesHistoryAsync(companyAClient);
+        Assert.Contains(history.Items, sale => sale.Id == companyASale1.Id);
+        Assert.Contains(history.Items, sale => sale.Id == companyASale2.Id);
+        Assert.DoesNotContain(history.Items, sale => sale.ReferenceNumber == companyBReferenceNumber);
     }
 
     [PostgresIntegrationFact]
@@ -196,9 +209,106 @@ public sealed class SalesScopeIntegrationTests
 
         var sellerResponse = await sellerClient.GetAsync("/api/sales");
         var rootAdminResponse = await rootAdminClient.GetAsync("/api/sales");
+        var sellerHistoryResponse = await sellerClient.GetAsync("/api/sales/history");
+        var rootAdminHistoryResponse = await rootAdminClient.GetAsync("/api/sales/history");
 
         Assert.Equal(HttpStatusCode.Forbidden, sellerResponse.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, rootAdminResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, sellerHistoryResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, rootAdminHistoryResponse.StatusCode);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task SalesHistory_PaginatesFiltersSortsAndSummarizesSales()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sales_history"),
+            name: "sales_history",
+            dropSchemaOnDispose: true);
+        var marketA = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var marketB = await database.InsertMarketAsync(company.SchemaName, "Market B");
+        var productA = await database.InsertProductAsync(company.SchemaName, name: "History Product A");
+        var productB = await database.InsertProductAsync(company.SchemaName, name: "History Product B");
+        await database.InsertInventoryAsync(company.SchemaName, productA.Id, marketA.Id, quantity: 20);
+        await database.InsertInventoryAsync(company.SchemaName, productB.Id, marketB.Id, quantity: 20);
+
+        var admin = await database.CreateUserAsync(company, roleName: "CompanyAdmin", fullName: "History Admin");
+        var seller = await database.CreateUserAsync(company, roleName: "Seller", fullName: "History Seller");
+        await database.InsertStaffAssignmentAsync(company.SchemaName, seller.Id, marketB.Id);
+
+        using var adminClient = apiFactory.CreateAuthenticatedClient(database, admin);
+        using var sellerClient = apiFactory.CreateAuthenticatedClient(database, seller);
+
+        var highSale = await CreateSaleAsync(
+            adminClient,
+            marketA.Id,
+            productA.Id,
+            quantity: 2,
+            unitPrice: 15,
+            saleDate: new DateOnly(2026, 5, 20));
+        var lowSale = await CreateSaleAsync(
+            adminClient,
+            marketA.Id,
+            productA.Id,
+            quantity: 1,
+            unitPrice: 10,
+            saleDate: new DateOnly(2026, 5, 21));
+        var sellerSale = await CreateSaleAsync(
+            sellerClient,
+            marketB.Id,
+            productB.Id,
+            quantity: 1,
+            unitPrice: 20,
+            saleDate: new DateOnly(2026, 5, 22));
+        var cancelledSaleId = await database.InsertSaleWithReferenceNumberAsync(
+            company.SchemaName,
+            marketA.Id,
+            admin.Id,
+            "SALE-HISTORY-CANCELLED",
+            saleDate: new DateOnly(2026, 5, 23),
+            status: "Cancelled",
+            paymentMethod: "Card",
+            totalAmount: 40);
+
+        var sortedPage = await GetSalesHistoryAsync(
+            adminClient,
+            "page=1&pageSize=2&sortBy=totalAmount&sortDirection=desc");
+        Assert.Equal(4, sortedPage.TotalCount);
+        Assert.Equal(2, sortedPage.TotalPages);
+        Assert.Equal([cancelledSaleId, highSale.Id], sortedPage.Items.Select(sale => sale.Id).ToArray());
+
+        var dateFiltered = await GetSalesHistoryAsync(
+            adminClient,
+            "dateFrom=2026-05-21&dateTo=2026-05-22&sortBy=saleDate&sortDirection=asc");
+        Assert.Equal([lowSale.Id, sellerSale.Id], dateFiltered.Items.Select(sale => sale.Id).ToArray());
+
+        var marketFiltered = await GetSalesHistoryAsync(adminClient, $"marketId={marketB.Id}");
+        var marketSale = Assert.Single(marketFiltered.Items);
+        Assert.Equal(sellerSale.Id, marketSale.Id);
+        Assert.Equal("Market B", marketSale.MarketName);
+        Assert.Equal("History Seller", marketSale.CashierName);
+
+        var cashierFiltered = await GetSalesHistoryAsync(adminClient, $"cashierUserId={seller.Id}");
+        Assert.Equal(sellerSale.Id, Assert.Single(cashierFiltered.Items).Id);
+
+        var statusFiltered = await GetSalesHistoryAsync(adminClient, "status=Cancelled");
+        var cancelledSale = Assert.Single(statusFiltered.Items);
+        Assert.Equal(cancelledSaleId, cancelledSale.Id);
+        Assert.Equal("Cancelled", cancelledSale.Status);
+        Assert.Equal("Card", cancelledSale.PaymentMethod);
+        Assert.Equal(40, cancelledSale.TotalAmount);
+
+        var summarizedSale = Assert.Single(
+            (await GetSalesHistoryAsync(adminClient, $"cashierUserId={admin.Id}&dateFrom=2026-05-20&dateTo=2026-05-20")).Items);
+        Assert.Equal(highSale.Id, summarizedSale.Id);
+        Assert.Equal("Paid", summarizedSale.Status);
+        Assert.Equal(1, summarizedSale.ItemCount);
     }
 
     private static async Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(HttpClient client)
@@ -215,16 +325,37 @@ public sealed class SalesScopeIntegrationTests
         return result.Data;
     }
 
+    private static async Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(
+        HttpClient client,
+        string queryString = "")
+    {
+        var path = string.IsNullOrWhiteSpace(queryString)
+            ? "/api/sales/history"
+            : $"/api/sales/history?{queryString}";
+        var response = await client.GetAsync(path);
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content
+            .ReadFromJsonAsync<ServiceResult<PagedResult<SaleHistoryItemDto>>>();
+
+        Assert.NotNull(result?.Data);
+        Assert.True(result.Succeeded);
+
+        return result.Data;
+    }
+
     private static async Task<SaleDto> CreateSaleAsync(
         HttpClient client,
         int marketId,
         int productId,
         int quantity = 1,
-        decimal unitPrice = 5)
+        decimal unitPrice = 5,
+        DateOnly? saleDate = null)
     {
         var response = await client.PostAsJsonAsync("/api/sales", new CreateSaleRequest
         {
             MarketId = marketId,
+            SaleDate = saleDate,
             PaymentMethod = "Cash",
             TotalAmount = quantity * unitPrice,
             Items =
