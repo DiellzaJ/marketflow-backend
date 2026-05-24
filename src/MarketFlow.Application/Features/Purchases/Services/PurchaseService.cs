@@ -87,7 +87,7 @@ public class PurchaseService : IPurchaseService
             cancellationToken);
 
         return purchase is null
-            ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound)
+            ? await ResolveMissingPurchaseUpdateAsync(id, cancellationToken)
             : ServiceResult<PurchaseDto>.Success(purchase, "Purchase updated.");
     }
 
@@ -103,7 +103,7 @@ public class PurchaseService : IPurchaseService
             cancellationToken);
 
         return purchase is null
-            ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound)
+            ? await ResolveMissingPurchaseUpdateAsync(id, cancellationToken)
             : ServiceResult<PurchaseDto>.Success(purchase, "Purchase updated.");
     }
 
@@ -112,6 +112,11 @@ public class PurchaseService : IPurchaseService
         ReceivePurchaseRequest request,
         CancellationToken cancellationToken = default)
     {
+        if (request.Items is null)
+        {
+            return ServiceResult<PurchaseDto>.Failure("Received items collection is required.");
+        }
+
         if (request.Items.Any(item => item.ProductId <= 0 || item.Quantity <= 0))
         {
             return ServiceResult<PurchaseDto>.Failure("Received items must include a product and positive quantity.");
@@ -148,6 +153,19 @@ public class PurchaseService : IPurchaseService
         return deleted
             ? ServiceResult<bool>.Success(true, "Purchase deleted.")
             : ServiceResult<bool>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound);
+    }
+
+    private async Task<ServiceResult<PurchaseDto>> ResolveMissingPurchaseUpdateAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var existingPurchase = await _tenantQueryService.GetPurchaseAsync(id, cancellationToken);
+
+        return existingPurchase is null
+            ? ServiceResult<PurchaseDto>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound)
+            : ServiceResult<PurchaseDto>.Failure(
+                "Purchase could not be updated. Verify status transition, references, and access.",
+                ServiceResultFailureType.Conflict);
     }
 
     private static ServiceResult<PurchaseDto>? ValidatePurchaseShape(

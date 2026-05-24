@@ -132,7 +132,7 @@ public sealed class PurchaseReceiptIntegrationTests
             $"/api/purchases/{purchase.Id}",
             new PatchPurchaseRequest { Status = "Received" });
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
 
         var unchangedInventory = await database.GetInventoryDetailsAsync(company.SchemaName, inventory.Id);
         Assert.Equal(6, unchangedInventory?.Quantity);
