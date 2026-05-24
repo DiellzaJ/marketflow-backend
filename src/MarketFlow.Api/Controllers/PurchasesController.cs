@@ -20,6 +20,16 @@ public class PurchasesController(IPurchaseService purchaseService) : ControllerB
         return Ok(result);
     }
 
+    [HttpGet("{id:int}")]
+    [Authorize(Policy = AuthorizationPolicies.ReadPurchases)]
+    public async Task<ActionResult<ServiceResult<PurchaseDto>>> GetByIdAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await purchaseService.GetPurchaseAsync(id, cancellationToken);
+        return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
     [HttpPost]
     [Authorize(Policy = AuthorizationPolicies.CreatePurchases)]
     public async Task<ActionResult<ServiceResult<PurchaseDto>>> CreateAsync(
@@ -40,7 +50,7 @@ public class PurchasesController(IPurchaseService purchaseService) : ControllerB
     {
         var result = await purchaseService.UpdatePurchaseAsync(id, request, cancellationToken);
 
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return MapPurchaseResult(result);
     }
 
     [HttpPatch("{id:int}")]
@@ -52,7 +62,28 @@ public class PurchasesController(IPurchaseService purchaseService) : ControllerB
     {
         var result = await purchaseService.PatchPurchaseAsync(id, request, cancellationToken);
 
-        return result.Succeeded ? Ok(result) : NotFound(result);
+        return MapPurchaseResult(result);
+    }
+
+    [HttpPost("{id:int}/receive")]
+    [Authorize(Policy = AuthorizationPolicies.UpdatePurchases)]
+    public async Task<ActionResult<ServiceResult<PurchaseDto>>> ReceiveAsync(
+        int id,
+        ReceivePurchaseRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await purchaseService.ReceivePurchaseAsync(id, request, cancellationToken);
+        return MapPurchaseResult(result);
+    }
+
+    [HttpPost("{id:int}/cancel")]
+    [Authorize(Policy = AuthorizationPolicies.DeletePurchases)]
+    public async Task<ActionResult<ServiceResult<PurchaseDto>>> CancelAsync(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var result = await purchaseService.CancelPurchaseAsync(id, cancellationToken);
+        return MapPurchaseResult(result);
     }
 
     [HttpDelete("{id:int}")]
@@ -64,5 +95,20 @@ public class PurchasesController(IPurchaseService purchaseService) : ControllerB
         var result = await purchaseService.DeletePurchaseAsync(id, cancellationToken);
 
         return result.Succeeded ? Ok(result) : NotFound(result);
+    }
+
+    private ActionResult<ServiceResult<PurchaseDto>> MapPurchaseResult(ServiceResult<PurchaseDto> result)
+    {
+        if (result.Succeeded)
+        {
+            return Ok(result);
+        }
+
+        return result.FailureType switch
+        {
+            ServiceResultFailureType.NotFound => NotFound(result),
+            ServiceResultFailureType.Conflict => Conflict(result),
+            _ => BadRequest(result)
+        };
     }
 }

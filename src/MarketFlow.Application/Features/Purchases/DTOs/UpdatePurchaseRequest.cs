@@ -8,9 +8,11 @@ public class UpdatePurchaseRequest
 
     public DateOnly PurchaseDate { get; set; }
 
-    public string Status { get; set; } = "Pending";
+    public string Status { get; set; } = "Draft";
 
     public decimal TotalAmount { get; set; }
 
     public string? Notes { get; set; }
+
+    public IReadOnlyCollection<CreatePurchaseItemRequest>? Items { get; set; }
 }
