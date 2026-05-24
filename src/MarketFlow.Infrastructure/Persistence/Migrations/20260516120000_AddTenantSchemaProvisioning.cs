@@ -122,6 +122,7 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                             market_id           INT           NOT NULL REFERENCES %1$I.markets(id) ON DELETE CASCADE,
                             created_by_user_id  INT           NOT NULL,
                             purchase_date       DATE          NOT NULL DEFAULT CURRENT_DATE,
+                            expected_date       DATE,
                             status              VARCHAR(20)   NOT NULL DEFAULT 'Draft'
                                 CHECK (status IN ('Pending', 'Draft', 'Ordered', 'PartiallyReceived', 'Received', 'Cancelled')),
                             total_amount        DECIMAL(12,2) NOT NULL DEFAULT 0,
