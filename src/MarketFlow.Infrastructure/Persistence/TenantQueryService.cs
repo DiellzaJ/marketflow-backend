@@ -4,6 +4,7 @@ using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Departments.DTOs;
+using MarketFlow.Application.Features.Departments.Exceptions;
 using MarketFlow.Application.Features.Departments.Interfaces;
 using MarketFlow.Application.Features.Inventory.Configuration;
 using MarketFlow.Application.Features.Inventory.DTOs;
@@ -24,7 +25,7 @@ using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
-public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IMarketStore, IDepartmentQueryService
+public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IMarketStore, IDepartmentStore
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -638,6 +639,204 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
 
         return departments;
+    }
+
+    public async Task<DepartmentDto?> GetDepartmentAsync(
+        int id,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        return await GetDepartmentAsync(
+            schemaName,
+            id,
+            includeInactive,
+            cancellationToken);
+    }
+
+    private async Task<DepartmentDto?> GetDepartmentAsync(
+        string schemaName,
+        int id,
+        bool includeInactive,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
+    {
+        var activeCondition = includeInactive ? string.Empty : " AND is_active = TRUE";
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id,
+                   market_id,
+                   name,
+                   description,
+                   is_active
+            FROM {schemaName}.departments
+            WHERE id = @id{activeCondition};
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("id", id);
+
+        return await ReadDepartmentAsync(command, cancellationToken);
+    }
+
+    public async Task<bool> MarketExistsAsync(
+        int marketId,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        return await MarketExistsAsync(schemaName, marketId, cancellationToken);
+    }
+
+    public async Task<bool> DepartmentNameExistsAsync(
+        int marketId,
+        string name,
+        int? excludedDepartmentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        return await DepartmentNameExistsAsync(
+            schemaName,
+            marketId,
+            name,
+            excludedDepartmentId,
+            cancellationToken);
+    }
+
+    public async Task<DepartmentDto> CreateDepartmentAsync(
+        CreateDepartmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+
+        await LockDepartmentsTableAsync(schemaName, transaction, cancellationToken);
+
+        if (!await MarketExistsAsync(schemaName, request.MarketId, cancellationToken, transaction))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new DepartmentMarketNotFoundException();
+        }
+
+        if (await DepartmentNameExistsAsync(
+                schemaName,
+                request.MarketId,
+                request.Name,
+                excludedDepartmentId: null,
+                cancellationToken,
+                transaction))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new DepartmentNameConflictException();
+        }
+
+        await using var command = await CreateCommandAsync($"""
+            INSERT INTO {schemaName}.departments (market_id, name, description)
+            VALUES (@market_id, @name, @description)
+            RETURNING id;
+            """, cancellationToken, transaction);
+
+        AddDepartmentParameters(command, request);
+
+        object? createdIdValue;
+
+        try
+        {
+            createdIdValue = await command.ExecuteScalarAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (IsForeignKeyViolation(exception))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new DepartmentMarketNotFoundException();
+        }
+
+        var createdId = createdIdValue is int value
+            ? value
+            : throw new InvalidOperationException("Department was not created.");
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return await GetDepartmentAsync(createdId, includeInactive: true, cancellationToken)
+            ?? throw new InvalidOperationException("Department was not found after creation.");
+    }
+
+    public async Task<DepartmentDto?> UpdateDepartmentAsync(
+        int id,
+        UpdateDepartmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+
+        await LockDepartmentsTableAsync(schemaName, transaction, cancellationToken);
+
+        var currentDepartment = await GetDepartmentAsync(
+            schemaName,
+            id,
+            includeInactive: true,
+            cancellationToken,
+            transaction);
+
+        if (currentDepartment is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return null;
+        }
+
+        if (await DepartmentNameExistsAsync(
+                schemaName,
+                currentDepartment.MarketId,
+                request.Name,
+                id,
+                cancellationToken,
+                transaction))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new DepartmentNameConflictException();
+        }
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.departments
+            SET name = @name,
+                description = @description
+            WHERE id = @id
+            RETURNING id;
+            """, cancellationToken, transaction);
+
+        command.Parameters.AddWithValue("id", id);
+        AddDepartmentParameters(command, request);
+
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return updatedId is null
+            ? null
+            : await GetDepartmentAsync(id, includeInactive: true, cancellationToken);
+    }
+
+    public async Task<DepartmentDto?> SetDepartmentActiveStateAsync(
+        int id,
+        bool isActive,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.departments
+            SET is_active = @is_active
+            WHERE id = @id
+              AND is_active <> @is_active
+            RETURNING id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("is_active", isActive);
+
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return updatedId is null
+            ? null
+            : await GetDepartmentAsync(id, includeInactive: true, cancellationToken);
     }
 
     public async Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
@@ -2695,6 +2894,15 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return await reader.ReadAsync(cancellationToken) ? ReadMarket(reader) : null;
     }
 
+    private static async Task<DepartmentDto?> ReadDepartmentAsync(
+        NpgsqlCommand command,
+        CancellationToken cancellationToken)
+    {
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? ReadDepartment(reader) : null;
+    }
+
     private async Task<bool> MarketNameExistsAsync(
         string schemaName,
         string name,
@@ -2720,7 +2928,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         string schemaName,
         int id,
         CancellationToken cancellationToken,
-        NpgsqlTransaction transaction)
+        NpgsqlTransaction? transaction = null)
     {
         await using var command = await CreateCommandAsync($"""
             SELECT EXISTS (
@@ -2734,6 +2942,30 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
+    private async Task<bool> DepartmentNameExistsAsync(
+        string schemaName,
+        int marketId,
+        string name,
+        int? excludedDepartmentId,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
+    {
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {schemaName}.departments
+                WHERE market_id = @market_id
+                  AND lower(name) = lower(@name)
+                  AND (@excluded_department_id IS NULL OR id <> @excluded_department_id)
+            );
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("market_id", marketId);
+        command.Parameters.AddWithValue("name", name.Trim());
+        command.Parameters.AddWithValue("excluded_department_id", DbValue(excludedDepartmentId));
+
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
     private async Task LockMarketsTableAsync(
         string schemaName,
         NpgsqlTransaction transaction,
@@ -2741,6 +2973,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
     {
         await using var command = await CreateCommandAsync(
             $"LOCK TABLE {schemaName}.markets IN SHARE ROW EXCLUSIVE MODE;",
+            cancellationToken,
+            transaction);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task LockDepartmentsTableAsync(
+        string schemaName,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = await CreateCommandAsync(
+            $"LOCK TABLE {schemaName}.departments IN SHARE ROW EXCLUSIVE MODE;",
             cancellationToken,
             transaction);
 
@@ -3141,6 +3386,18 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         };
     }
 
+    private static DepartmentDto ReadDepartment(NpgsqlDataReader reader)
+    {
+        return new DepartmentDto
+        {
+            Id = reader.GetInt32(0),
+            MarketId = reader.GetInt32(1),
+            Name = reader.GetString(2),
+            Description = reader.IsDBNull(3) ? null : reader.GetString(3),
+            IsActive = reader.GetBoolean(4)
+        };
+    }
+
     private static async Task<SaleDto?> ReadSaleAsync(
         NpgsqlCommand command,
         CancellationToken cancellationToken)
@@ -3218,6 +3475,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("address", DbValue(request.Address));
     }
 
+    private static void AddDepartmentParameters(NpgsqlCommand command, CreateDepartmentRequest request)
+    {
+        command.Parameters.AddWithValue("market_id", request.MarketId);
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("description", DbValue(request.Description));
+    }
+
+    private static void AddDepartmentParameters(NpgsqlCommand command, UpdateDepartmentRequest request)
+    {
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("description", DbValue(request.Description));
+    }
+
     private static object DbValue<T>(T? value)
     {
         return value is null ? DBNull.Value : value;
@@ -3226,6 +3496,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
     private static bool IsUniqueViolation(PostgresException exception)
     {
         return exception.SqlState == PostgresErrorCodes.UniqueViolation;
+    }
+
+    private static bool IsForeignKeyViolation(PostgresException exception)
+    {
+        return exception.SqlState == PostgresErrorCodes.ForeignKeyViolation;
     }
 
     private async Task<NpgsqlCommand> CreateCommandAsync(
