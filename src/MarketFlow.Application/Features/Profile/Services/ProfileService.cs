@@ -10,11 +10,16 @@ public class ProfileService : IProfileService
 {
     private readonly IUserStore _userStore;
     private readonly ICurrentUserService _currentUserService;
+    private readonly ICompanyStore _companyStore;
 
-    public ProfileService(IUserStore userStore, ICurrentUserService currentUserService)
+    public ProfileService(
+        IUserStore userStore,
+        ICurrentUserService currentUserService,
+        ICompanyStore companyStore)
     {
         _userStore = userStore;
         _currentUserService = currentUserService;
+        _companyStore = companyStore;
     }
 
     public async Task<ServiceResult<UserProfileResponse>> GetProfileAsync(CancellationToken cancellationToken = default)
@@ -31,7 +36,7 @@ public class ProfileService : IProfileService
             return ServiceResult<UserProfileResponse>.Failure("User not found.", ServiceResultFailureType.NotFound);
         }
 
-        var profile = Map(user, _currentUserService.CompanyId);
+        var profile = await MapAsync(user, _currentUserService.CompanyId, cancellationToken);
 
         return ServiceResult<UserProfileResponse>.Success(profile);
     }
@@ -57,7 +62,7 @@ public class ProfileService : IProfileService
 
         return updated is null
             ? ServiceResult<UserProfileResponse>.Failure("User not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<UserProfileResponse>.Success(Map(updated, _currentUserService.CompanyId), "Profile updated.");
+            : ServiceResult<UserProfileResponse>.Success(await MapAsync(updated, _currentUserService.CompanyId, cancellationToken), "Profile updated.");
     }
 
     public async Task<ServiceResult<bool>> ChangePasswordAsync(ChangePasswordRequest request, CancellationToken cancellationToken = default)
@@ -79,8 +84,12 @@ public class ProfileService : IProfileService
             : ServiceResult<bool>.Failure("Current password is invalid.");
     }
 
-    private static UserProfileResponse Map(UserDto user, int? companyId)
+    private async Task<UserProfileResponse> MapAsync(UserDto user, int? companyId, CancellationToken cancellationToken)
     {
+        var companyName = companyId.HasValue
+            ? (await _companyStore.GetCompanyByIdAsync(companyId.Value, cancellationToken))?.Name
+            : null;
+
         return new UserProfileResponse
         {
             Id = user.Id,
@@ -89,8 +98,11 @@ public class ProfileService : IProfileService
             Role = user.RoleName,
             IsActive = user.IsActive,
             CompanyId = companyId,
+            CompanyName = companyName,
             MarketId = user.Assignment?.MarketId,
-            DepartmentId = user.Assignment?.DepartmentId
+            MarketName = user.Assignment?.MarketName,
+            DepartmentId = user.Assignment?.DepartmentId,
+            DepartmentName = user.Assignment?.DepartmentName
         };
     }
 }

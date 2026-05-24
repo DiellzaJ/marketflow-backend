@@ -1,4 +1,5 @@
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.Companies.DTOs;
 using MarketFlow.Application.Features.Profile.DTOs;
 using MarketFlow.Application.Features.Profile.Services;
 using MarketFlow.Application.Features.Users.DTOs;
@@ -11,7 +12,9 @@ public sealed class ProfileServiceTests
     public async Task GetProfileAsync_ReturnsProfileForCurrentUser()
     {
         var store = new FakeUserStore();
+        var companyStore = new FakeCompanyStore();
         var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2 };
+        companyStore.Companies.Add(new CompanyDto { Id = 2, Name = "Test Company" });
         store.Users.Add(new UserDto
         {
             Id = 1,
@@ -26,7 +29,7 @@ public sealed class ProfileServiceTests
             }
         });
 
-        var service = new ProfileService(store, current);
+        var service = new ProfileService(store, current, companyStore);
 
         var result = await service.GetProfileAsync();
 
@@ -36,16 +39,47 @@ public sealed class ProfileServiceTests
         Assert.Equal(5, result.Data?.MarketId);
         Assert.Equal(7, result.Data?.DepartmentId);
         Assert.Equal(2, result.Data?.CompanyId);
+        Assert.Equal("Test Company", result.Data?.CompanyName);
+    }
+
+    [Fact]
+    public async Task GetProfileAsync_ReturnsCompanyNameEvenWithoutAssignment()
+    {
+        var store = new FakeUserStore();
+        var companyStore = new FakeCompanyStore();
+        var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2 };
+        companyStore.Companies.Add(new CompanyDto { Id = 2, Name = "Acme Corp" });
+        store.Users.Add(new UserDto
+        {
+            Id = 1,
+            FullName = "Admin User",
+            Email = "admin@x.test",
+            RoleName = "CompanyAdmin",
+            IsActive = true,
+            Assignment = null
+        });
+
+        var service = new ProfileService(store, current, companyStore);
+
+        var result = await service.GetProfileAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, result.Data?.CompanyId);
+        Assert.Equal("Acme Corp", result.Data?.CompanyName);
+        Assert.Null(result.Data?.MarketId);
+        Assert.Null(result.Data?.DepartmentId);
+        Assert.Null(result.Data?.MarketName);
+        Assert.Null(result.Data?.DepartmentName);
     }
 
     [Fact]
     public async Task UpdateProfileAsync_UpdatesFullName()
     {
         var store = new FakeUserStore();
+        var companyStore = new FakeCompanyStore();
         var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2 };
         store.Users.Add(new UserDto { Id = 1, FullName = "Old Name", Email = "a@b.test", RoleName = "Seller", IsActive = true });
-
-        var service = new ProfileService(store, current);
+        var service = new ProfileService(store, current, companyStore);
 
         var result = await service.UpdateProfileAsync(new UpdateProfileRequest { FullName = "New Name" });
 
@@ -57,6 +91,7 @@ public sealed class ProfileServiceTests
     public async Task UpdateProfileAsync_DoesNotUpdateRestrictedFields()
     {
         var store = new FakeUserStore();
+        var companyStore = new FakeCompanyStore();
         var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2 };
         store.Users.Add(new UserDto { Id = 1, FullName = "Old", Email = "a@b.test", RoleName = "Seller", IsActive = true });
 
@@ -76,7 +111,7 @@ public sealed class ProfileServiceTests
             return Task.FromResult<UserDto?>(store.Users.First(x => x.Id == id));
         };
 
-        var service = new ProfileService(store, current);
+        var service = new ProfileService(store, current, companyStore);
 
         var result = await service.UpdateProfileAsync(new UpdateProfileRequest { FullName = "New" });
 
@@ -87,8 +122,6 @@ public sealed class ProfileServiceTests
         Assert.True(string.IsNullOrWhiteSpace(received.Email));
         Assert.True(string.IsNullOrWhiteSpace(received.RoleName));
         Assert.Null(received.IsActive);
-        Assert.Null(received.MarketId);
-        Assert.Null(received.DepartmentId);
     }
 
     [Fact]
@@ -96,9 +129,10 @@ public sealed class ProfileServiceTests
     {
         var store = new FakeUserStore();
         var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2 };
+        var companyStore = new FakeCompanyStore();
         store.AddUserWithPassword(1, "user@x.test", "OldPass123");
 
-        var service = new ProfileService(store, current);
+        var service = new ProfileService(store, current, companyStore);
 
         var result = await service.ChangePasswordAsync(new ChangePasswordRequest { CurrentPassword = "OldPass123", NewPassword = "NewPass456" });
 
@@ -110,9 +144,10 @@ public sealed class ProfileServiceTests
     {
         var store = new FakeUserStore();
         var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2 };
+        var companyStore = new FakeCompanyStore();
         store.AddUserWithPassword(1, "user@x.test", "OldPass123");
 
-        var service = new ProfileService(store, current);
+        var service = new ProfileService(store, current, companyStore);
 
         var result = await service.ChangePasswordAsync(new ChangePasswordRequest { CurrentPassword = "WrongPass", NewPassword = "NewPass456" });
 
@@ -189,6 +224,26 @@ public sealed class ProfileServiceTests
 
             return Task.FromResult(true);
         }
+    }
+
+    private sealed class FakeCompanyStore : ICompanyStore
+    {
+        public List<CompanyDto> Companies { get; } = new();
+
+        public Task<IReadOnlyCollection<CompanyDto>> GetCompaniesAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyCollection<CompanyDto>>(Companies);
+
+        public Task<CompanyDto?> GetCompanyByIdAsync(int id, CancellationToken cancellationToken = default)
+            => Task.FromResult(Companies.FirstOrDefault(x => x.Id == id));
+
+        public Task<bool> SchemaNameExistsAsync(string schemaName, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public Task<CompanyOnboardingDto?> CreateCompanyAsync(CreateCompanyRequest request, string schemaName, CancellationToken cancellationToken = default)
+            => Task.FromResult<CompanyOnboardingDto?>(null);
     }
 
     private sealed class FakeCurrentUserService : ICurrentUserService
