@@ -2561,7 +2561,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 last_updated_by = @last_updated_by,
                 updated_at = NOW()
             WHERE id = @inventory_id
-              AND quantity + @quantity_change >= 0
+              AND (@quantity_change >= 0 OR quantity + @quantity_change >= reserved_quantity)
             RETURNING id;
             """, cancellationToken, transaction);
         command.Parameters.AddWithValue("inventory_id", DbValue(inventoryId));
