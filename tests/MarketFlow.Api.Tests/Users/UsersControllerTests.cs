@@ -57,6 +57,9 @@ public sealed class UsersControllerTests
             Email = "seller@freshmarket.test",
             RoleName = "Seller",
             IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
             Assignment = new UserAssignmentSummaryDto
             {
                 MarketId = 3,
@@ -88,12 +91,51 @@ public sealed class UsersControllerTests
         Assert.Null(result.Data?.Assignment?.DepartmentId);
     }
 
+    [Fact]
+    public async Task GetByIdAsync_ReturnsUserDetailsForModal()
+    {
+        var user = new UserDto
+        {
+            Id = 7,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market",
+                DepartmentId = 4,
+                DepartmentName = "Produce"
+            }
+        };
+        var controller = new UsersController(new FakeUserService
+        {
+            GetUserResult = ServiceResult<UserDto>.Success(user)
+        });
+
+        var response = await controller.GetByIdAsync(7, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var result = Assert.IsType<ServiceResult<UserDto>>(ok.Value);
+        Assert.True(result.Succeeded);
+        Assert.Equal(12, result.Data?.CompanyId);
+        Assert.Equal("Fresh Market", result.Data?.CompanyName);
+        Assert.Equal(4, result.Data?.Assignment?.DepartmentId);
+    }
+
     private sealed class FakeUserService : IUserService
     {
         public ServiceResult<IReadOnlyCollection<UserDto>> GetUsersResult { get; init; } =
             ServiceResult<IReadOnlyCollection<UserDto>>.Success(Array.Empty<UserDto>());
 
         public ServiceResult<UserDto> CreateUserResult { get; init; } =
+            ServiceResult<UserDto>.Failure("Not configured.");
+
+        public ServiceResult<UserDto> GetUserResult { get; init; } =
             ServiceResult<UserDto>.Failure("Not configured.");
 
         public Task<ServiceResult<IReadOnlyCollection<UserDto>>> GetUsersAsync(
@@ -106,7 +148,7 @@ public sealed class UsersControllerTests
             int id,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ServiceResult<UserDto>.Failure("Not configured."));
+            return Task.FromResult(GetUserResult);
         }
 
         public Task<ServiceResult<UserDto>> CreateUserAsync(

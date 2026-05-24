@@ -50,6 +50,14 @@ public static class RoleAssignmentRules
         };
     }
 
+    public static bool IsUserManagementRole(string? roleName)
+    {
+        var normalizedRoleName = NormalizeRoleName(roleName ?? string.Empty);
+
+        return string.Equals(normalizedRoleName, RootAdmin, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(normalizedRoleName, CompanyAdmin, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Validates whether a role can be created with the provided market and department assignment.
     /// </summary>

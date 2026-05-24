@@ -344,6 +344,9 @@ public sealed class UserServiceTests
             Email = "seller@freshmarket.test",
             RoleName = "Seller",
             IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 1, 9, 0, 0, TimeSpan.Zero),
             Assignment = new UserAssignmentSummaryDto
             {
                 MarketId = 3,
@@ -376,6 +379,9 @@ public sealed class UserServiceTests
             Email = "seller@freshmarket.test",
             RoleName = "Seller",
             IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 1, 9, 0, 0, TimeSpan.Zero),
             Assignment = new UserAssignmentSummaryDto
             {
                 MarketId = 3,
@@ -409,6 +415,9 @@ public sealed class UserServiceTests
                 Email = $"user{id:D3}@freshmarket.test",
                 RoleName = "Seller",
                 IsActive = true,
+                CompanyId = 12,
+                CompanyName = "Fresh Market",
+                CreatedAt = new DateTimeOffset(2026, 5, 1, 9, 0, 0, TimeSpan.Zero),
                 Assignment = new UserAssignmentSummaryDto
                 {
                     MarketId = 3,
@@ -478,6 +487,147 @@ public sealed class UserServiceTests
         Assert.Equal(4, store.CreatedRequest?.DepartmentId);
     }
 
+    [Fact]
+    public async Task GetUserAsync_ReturnsDetailsFieldsForModal()
+    {
+        var createdAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero);
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 7,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = createdAt,
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market",
+                DepartmentId = 4,
+                DepartmentName = "Produce"
+            }
+        });
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.GetUserAsync(7);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(12, result.Data?.CompanyId);
+        Assert.Equal("Fresh Market", result.Data?.CompanyName);
+        Assert.Equal(createdAt, result.Data?.CreatedAt);
+        Assert.Equal(3, result.Data?.Assignment?.MarketId);
+        Assert.Equal(4, result.Data?.Assignment?.DepartmentId);
+    }
+
+    [Fact]
+    public async Task UpdateUserAsync_UpdatesSafeFieldsAndAssignment()
+    {
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 7,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market"
+            }
+        });
+        store.ExistingMarketIds.Add(8);
+        store.ExistingDepartmentIds.Add((8, 9));
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.UpdateUserAsync(
+            7,
+            new UpdateUserRequest
+            {
+                FullName = "Produce Manager",
+                RoleName = "DepartmentManager",
+                MarketId = 8,
+                DepartmentId = 9,
+                IsActive = false
+            });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Produce Manager", result.Data?.FullName);
+        Assert.Equal("DepartmentManager", result.Data?.RoleName);
+        Assert.False(result.Data?.IsActive);
+        Assert.Equal(8, result.Data?.Assignment?.MarketId);
+        Assert.Equal(9, result.Data?.Assignment?.DepartmentId);
+        Assert.Equal(8, store.UpdatedRequest?.MarketId);
+        Assert.Equal(9, store.UpdatedRequest?.DepartmentId);
+    }
+
+    [Fact]
+    public async Task PatchUserAsync_ForCompanyAdminRole_ClearsAssignment()
+    {
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 7,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market",
+                DepartmentId = 4,
+                DepartmentName = "Produce"
+            }
+        });
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.PatchUserAsync(
+            7,
+            new PatchUserRequest
+            {
+                RoleName = "CompanyAdmin",
+                IsActive = true
+            });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("CompanyAdmin", result.Data?.RoleName);
+        Assert.Null(result.Data?.Assignment);
+    }
+
+    [Fact]
+    public async Task DeleteUserAsync_ReturnsDeactivatedMessage()
+    {
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 7,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero)
+        });
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.DeleteUserAsync(7);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("User deactivated.", result.Message);
+        Assert.False(store.Users.Single().IsActive);
+    }
+
     private static UserService CreateCompanyAdminService(FakeUserStore? store = null)
     {
         return CreateUserService(
@@ -511,6 +661,10 @@ public sealed class UserServiceTests
         public int? CreatedCompanyId { get; private set; }
 
         public CreateUserRequest? CreatedRequest { get; private set; }
+
+        public UpdateUserRequest? UpdatedRequest { get; private set; }
+
+        public PatchUserRequest? PatchedRequest { get; private set; }
 
         public HashSet<int> ExistingCompanyIds { get; } = new() { 12, 25 };
 
@@ -555,6 +709,9 @@ public sealed class UserServiceTests
                 Email = request.Email,
                 RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName),
                 IsActive = request.IsActive,
+                CompanyId = companyId,
+                CompanyName = $"Company {companyId}",
+                CreatedAt = new DateTimeOffset(2026, 5, 1, 9, 0, 0, TimeSpan.Zero),
                 Assignment = request.MarketId.HasValue
                     ? new UserAssignmentSummaryDto
                     {
@@ -600,7 +757,30 @@ public sealed class UserServiceTests
             UpdateUserRequest request,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<UserDto?>(null);
+            UpdatedRequest = request;
+            var user = Users.FirstOrDefault(x => x.Id == id);
+
+            if (user is null)
+            {
+                return Task.FromResult<UserDto?>(null);
+            }
+
+            user.FullName = request.FullName;
+            user.RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName);
+            user.IsActive = request.IsActive;
+            user.Assignment = request.MarketId.HasValue
+                ? new UserAssignmentSummaryDto
+                {
+                    MarketId = request.MarketId.Value,
+                    MarketName = $"Market {request.MarketId.Value}",
+                    DepartmentId = request.DepartmentId,
+                    DepartmentName = request.DepartmentId.HasValue
+                        ? $"Department {request.DepartmentId.Value}"
+                        : null
+                }
+                : null;
+
+            return Task.FromResult<UserDto?>(user);
         }
 
         public Task<UserDto?> PatchUserAsync(
@@ -610,7 +790,47 @@ public sealed class UserServiceTests
             PatchUserRequest request,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<UserDto?>(null);
+            PatchedRequest = request;
+            var user = Users.FirstOrDefault(x => x.Id == id);
+
+            if (user is null)
+            {
+                return Task.FromResult<UserDto?>(null);
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.FullName))
+            {
+                user.FullName = request.FullName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.RoleName))
+            {
+                user.RoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName);
+            }
+
+            if (request.IsActive.HasValue)
+            {
+                user.IsActive = request.IsActive.Value;
+            }
+
+            if (string.Equals(user.RoleName, RoleAssignmentRules.CompanyAdmin, StringComparison.OrdinalIgnoreCase))
+            {
+                user.Assignment = null;
+            }
+            else if (request.MarketId.HasValue || request.DepartmentId.HasValue)
+            {
+                user.Assignment = new UserAssignmentSummaryDto
+                {
+                    MarketId = request.MarketId ?? user.Assignment?.MarketId ?? 0,
+                    MarketName = $"Market {request.MarketId ?? user.Assignment?.MarketId ?? 0}",
+                    DepartmentId = request.DepartmentId,
+                    DepartmentName = request.DepartmentId.HasValue
+                        ? $"Department {request.DepartmentId.Value}"
+                        : null
+                };
+            }
+
+            return Task.FromResult<UserDto?>(user);
         }
 
         public Task<bool> DeleteUserAsync(
@@ -619,7 +839,15 @@ public sealed class UserServiceTests
             bool includeAllCompanies,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(false);
+            var user = Users.FirstOrDefault(x => x.Id == id);
+
+            if (user is null)
+            {
+                return Task.FromResult(false);
+            }
+
+            user.IsActive = false;
+            return Task.FromResult(true);
         }
     }
 
