@@ -31,9 +31,10 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
+    private static readonly TimeSpan SaleReferenceNumberRepairCacheTtl = TimeSpan.FromMinutes(5);
 
     private static readonly ConcurrentDictionary<string, byte> InventoryMovementTableRepairCache = new();
-    private static readonly ConcurrentDictionary<string, byte> SaleReferenceNumberRepairCache = new();
+    private static readonly ConcurrentDictionary<string, DateTimeOffset> SaleReferenceNumberRepairCache = new();
 
     private readonly ApplicationDbContext _dbContext;
     private readonly TenantProvider _tenantProvider;
@@ -1490,7 +1491,17 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
+
+        return await ExecuteWithSaleReferenceNumberRecoveryAsync(
+            schemaName,
+            () => GetSalesCoreAsync(schemaName, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<IReadOnlyCollection<SaleDto>> GetSalesCoreAsync(
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
         var sales = new List<SaleDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -1522,8 +1533,18 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
 
+        return await ExecuteWithSaleReferenceNumberRecoveryAsync(
+            schemaName,
+            () => GetSaleDetailsCoreAsync(schemaName, id, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<SaleDetailsResponse?> GetSaleDetailsCoreAsync(
+        string schemaName,
+        int id,
+        CancellationToken cancellationToken)
+    {
         await using var saleCommand = await CreateCommandAsync($"""
             SELECT s.id,
                    s.reference_number,
@@ -1598,7 +1619,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
+
+        return await ExecuteWithSaleReferenceNumberRecoveryAsync(
+            schemaName,
+            () => CreateSaleCoreAsync(schemaName, request, createdByUserId, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<SaleDto?> CreateSaleCoreAsync(
+        string schemaName,
+        CreateSaleRequest request,
+        int createdByUserId,
+        CancellationToken cancellationToken)
+    {
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var departmentId = scope.Kind == InventoryScopeKind.Department
             ? scope.DepartmentId
@@ -2486,7 +2519,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         string quotedSchemaName,
         CancellationToken cancellationToken)
     {
-        if (SaleReferenceNumberRepairCache.ContainsKey(quotedSchemaName))
+        if (TryUseSaleReferenceNumberRepairCache(quotedSchemaName))
         {
             _logger.LogDebug(
                 "Skipping sale reference number repair for tenant schema {SchemaName} because it is already cached.",
@@ -2508,6 +2541,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             _logger.LogDebug(
                 "Skipping sale reference number repair for tenant schema {SchemaName} because it is already healthy.",
                 quotedSchemaName);
+            MarkSaleReferenceNumberRepairCacheHealthy(quotedSchemaName);
             return;
         }
 
@@ -2538,6 +2572,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                     "Skipping sale reference number repair for tenant schema {SchemaName} because it became healthy before the repair lock was acquired.",
                     quotedSchemaName);
                 await transaction.CommitAsync(cancellationToken);
+                MarkSaleReferenceNumberRepairCacheHealthy(quotedSchemaName);
                 return;
             }
 
@@ -2628,11 +2663,15 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             }
 
             await transaction.CommitAsync(cancellationToken);
-            SaleReferenceNumberRepairCache.TryAdd(quotedSchemaName, 0);
 
             var postState = await GetSaleReferenceNumberSchemaDiagnosticsAsync(
                 quotedSchemaName,
                 cancellationToken);
+
+            if (postState.HasCompleteInfrastructure)
+            {
+                MarkSaleReferenceNumberRepairCacheHealthy(quotedSchemaName);
+            }
 
             _logger.LogInformation(
                 "Sale reference number infrastructure ensured for tenant schema {SchemaName}. New state: {SchemaState}",
@@ -2671,6 +2710,53 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
     }
 
+    private async Task<T> ExecuteWithSaleReferenceNumberRecoveryAsync<T>(
+        string quotedSchemaName,
+        Func<Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        await EnsureSaleReferenceNumbersAsync(quotedSchemaName, cancellationToken);
+
+        try
+        {
+            return await operation();
+        }
+        catch (PostgresException postgresException)
+            when (IsSaleReferenceNumberInfrastructureFailure(postgresException))
+        {
+            _logger.LogWarning(
+                postgresException,
+                "Sale reference number operation failed for tenant schema {SchemaName}; clearing cached schema state, repairing, and retrying once.",
+                quotedSchemaName);
+
+            SaleReferenceNumberRepairCache.TryRemove(quotedSchemaName, out _);
+            await EnsureSaleReferenceNumbersAsync(quotedSchemaName, cancellationToken);
+
+            return await operation();
+        }
+    }
+
+    private static bool TryUseSaleReferenceNumberRepairCache(string quotedSchemaName)
+    {
+        if (!SaleReferenceNumberRepairCache.TryGetValue(quotedSchemaName, out var cachedAt))
+        {
+            return false;
+        }
+
+        if (DateTimeOffset.UtcNow - cachedAt < SaleReferenceNumberRepairCacheTtl)
+        {
+            return true;
+        }
+
+        SaleReferenceNumberRepairCache.TryRemove(quotedSchemaName, out _);
+        return false;
+    }
+
+    private static void MarkSaleReferenceNumberRepairCacheHealthy(string quotedSchemaName)
+    {
+        SaleReferenceNumberRepairCache[quotedSchemaName] = DateTimeOffset.UtcNow;
+    }
+
     private async Task ExecuteSchemaRepairCommandAsync(
         string quotedSchemaName,
         string stepName,
@@ -2692,6 +2778,35 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
     {
         return exception.SqlState == "42501" ||
             exception.Message.Contains("permission denied", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSaleReferenceNumberInfrastructureFailure(PostgresException exception)
+    {
+        if (exception.SqlState == PostgresErrorCodes.NotNullViolation &&
+            string.Equals(exception.ColumnName, "reference_number", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (exception.SqlState == PostgresErrorCodes.UndefinedColumn &&
+            ExceptionMentionsSaleReferenceNumberInfrastructure(exception))
+        {
+            return true;
+        }
+
+        if (exception.SqlState is "42704" or "42883" &&
+            ExceptionMentionsSaleReferenceNumberInfrastructure(exception))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ExceptionMentionsSaleReferenceNumberInfrastructure(PostgresException exception)
+    {
+        return exception.MessageText.Contains("reference_number", StringComparison.OrdinalIgnoreCase) ||
+            exception.MessageText.Contains("assign_sale_reference_number", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<SaleReferenceNumberSchemaDiagnostics> GetSaleReferenceNumberSchemaDiagnosticsAsync(

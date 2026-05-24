@@ -168,6 +168,53 @@ public sealed class SaleCompletionIntegrationTests
     }
 
     [PostgresIntegrationFact]
+    public async Task CreateSale_WhenCachedTenantReferenceSchemaDrifts_RepairsAndRetries()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_cache_drift"),
+            name: "sale_reference_cache_drift",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Cache Drift Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var firstSale = await CreateSaleAsync(client, market.Id, product.Id);
+        Assert.NotEmpty(firstSale.ReferenceNumber);
+
+        await database.RemoveSaleReferenceTriggerAsync(company.SchemaName);
+
+        var driftedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(driftedState.ColumnExists);
+        Assert.False(driftedState.TriggerExists);
+        Assert.False(driftedState.UniqueIndexExists);
+
+        var secondSale = await CreateSaleAsync(client, market.Id, product.Id);
+
+        Assert.NotEmpty(secondSale.ReferenceNumber);
+        Assert.NotEqual(firstSale.ReferenceNumber, secondSale.ReferenceNumber);
+
+        var repairedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(repairedState.ColumnExists);
+        Assert.True(repairedState.TriggerExists);
+        Assert.True(repairedState.UniqueIndexExists);
+        Assert.True(repairedState.TriggerFunctionExists);
+    }
+
+    [PostgresIntegrationFact]
     public async Task CreateSale_WhenTenantReferenceSchemaIsMissing_RepairsSchemaAndReturnsReferenceNumber()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();
