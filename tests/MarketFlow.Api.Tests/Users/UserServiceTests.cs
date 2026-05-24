@@ -498,6 +498,17 @@ public sealed class UserServiceTests
             return Task.FromResult<UserDto?>(null);
         }
 
+        public Task<bool> ChangePasswordAsync(
+            int id,
+            string currentPassword,
+            string newPassword,
+            int? companyId,
+            bool includeAllCompanies,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(false);
+        }
+
         public Task<bool> DeleteUserAsync(
             int id,
             int? companyId,

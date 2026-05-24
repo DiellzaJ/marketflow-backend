@@ -25,6 +25,8 @@ using MarketFlow.Application.Features.Sales.Interfaces;
 using MarketFlow.Application.Features.Sales.Services;
 using MarketFlow.Application.Features.Users.Interfaces;
 using MarketFlow.Application.Features.Users.Services;
+using MarketFlow.Application.Features.Profile.Interfaces;
+using MarketFlow.Application.Features.Profile.Services;
 using MarketFlow.Infrastructure.BackgroundJobs;
 using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Infrastructure.MultiTenancy;
@@ -142,6 +144,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDepartmentService, DepartmentService>();
         services.AddScoped<IUserCreationValidator, UserCreationValidator>();
         services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IProfileService, ProfileService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IInventoryService, InventoryService>();
         services.AddScoped<IPurchaseService, PurchaseService>();
