@@ -38,9 +38,7 @@ public class PurchasesController(IPurchaseService purchaseService) : ControllerB
     {
         var result = await purchaseService.CreatePurchaseAsync(request, cancellationToken);
 
-        return result.Succeeded
-            ? CreatedAtAction(nameof(GetByIdAsync), new { id = result.Data?.Id }, result)
-            : BadRequest(result);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 
     [HttpPut("{id:int}")]
