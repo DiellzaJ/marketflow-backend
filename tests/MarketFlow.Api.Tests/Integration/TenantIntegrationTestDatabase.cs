@@ -25,7 +25,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         ["RootAdmin"] = ("Platform administrator", "{\"company\": true, \"companies:read\": true, \"companies:create\": true, \"companies:update\": true, \"companies:delete\": true, \"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true}"),
         ["CompanyAdmin"] = ("Company-level administrator", "{\"users:read\": true, \"users:create\": true, \"users:update\": true, \"users:delete\": true, \"markets:read\": true, \"markets:create\": true, \"markets:update\": true, \"markets:delete\": true, \"departments:read\": true, \"departments:create\": true, \"departments:update\": true, \"departments:delete\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
         ["MainOperator"] = ("Market-level manager", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"products:create\": true, \"products:update\": true, \"products:delete\": true, \"sales:read\": true, \"sales:create\": true, \"sales:update\": true, \"sales:delete\": true, \"inventory:create\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory:delete\": true, \"inventory-movements:read\": true, \"stock:transfer\": true, \"purchases:read\": true, \"purchases:create\": true, \"purchases:update\": true, \"purchases:delete\": true}"),
-        ["DepartmentManager"] = ("Department-level manager", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"),
+        ["DepartmentManager"] = ("Department-level manager", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"sales:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"),
         ["InventoryEmployee"] = ("Stock and inventory employee", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true}"),
         ["Seller"] = ("Creates sales and handles POS operations", "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"sales:create\": true, \"inventory:read\": true}")
     };
@@ -472,6 +472,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         int marketId,
         int createdByUserId,
         string referenceNumber,
+        int? departmentId = null,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
@@ -481,6 +482,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             $"""
             INSERT INTO {QuoteIdentifier(schemaName)}.sales (
                 market_id,
+                department_id,
                 created_by_user_id,
                 sale_date,
                 payment_method,
@@ -488,6 +490,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 reference_number)
             VALUES (
                 @market_id,
+                @department_id,
                 @created_by_user_id,
                 CURRENT_DATE,
                 'Cash',
@@ -497,6 +500,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             """,
             cancellationToken,
             new NpgsqlParameter("market_id", marketId),
+            new NpgsqlParameter("department_id", departmentId is null ? DBNull.Value : departmentId),
             new NpgsqlParameter("created_by_user_id", createdByUserId),
             new NpgsqlParameter("reference_number", referenceNumber));
     }
@@ -787,6 +791,30 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 reader.GetInt32(4),
                 reader.GetInt32(5))
             : null;
+    }
+
+    public async Task<bool> DeleteInventoryAsync(
+        string schemaName,
+        int inventoryId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        var affected = await ExecuteScalarAsync<int>(
+            connection,
+            $"""
+            WITH deleted AS (
+                DELETE FROM {QuoteIdentifier(schemaName)}.inventory
+                WHERE id = @inventory_id
+                RETURNING id
+            )
+            SELECT COUNT(*)::int
+            FROM deleted;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("inventory_id", inventoryId));
+
+        return affected > 0;
     }
 
     public async Task<TenantTestInventoryMovement> InsertInventoryMovementAsync(
@@ -1208,6 +1236,10 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             END;
             $$;
 
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ADD COLUMN IF NOT EXISTS department_id INT;
+            CREATE INDEX IF NOT EXISTS idx_sales_department
+                ON {QuoteIdentifier(schemaName)}.sales(department_id);
             ALTER TABLE {QuoteIdentifier(schemaName)}.sales
                 ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);
             UPDATE {QuoteIdentifier(schemaName)}.sales

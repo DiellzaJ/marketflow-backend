@@ -72,7 +72,7 @@ public static class GlobalDataSeeder
             {
                 Name = "DepartmentManager",
                 Description = "Department-level manager",
-                Permissions = "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"
+                Permissions = "{\"markets:read\": true, \"departments:read\": true, \"products:read\": true, \"sales:read\": true, \"inventory:read\": true, \"stock:update\": true, \"stock:adjust\": true, \"inventory-movements:read\": true, \"stock:transfer\": true}"
             },
             new Role
             {
