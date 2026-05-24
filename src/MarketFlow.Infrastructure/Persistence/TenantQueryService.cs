@@ -1310,6 +1310,79 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return sales;
     }
 
+    public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var saleCommand = await CreateCommandAsync($"""
+            SELECT s.id,
+                   s.total_amount,
+                   s.created_at,
+                   u.full_name AS cashier_name,
+                   m.name AS market_name
+            FROM {schemaName}.sales s
+            LEFT JOIN public.users u ON u.id = s.created_by_user_id
+            LEFT JOIN {schemaName}.markets m ON m.id = s.market_id
+            WHERE s.id = @id;
+            """, cancellationToken);
+
+        saleCommand.Parameters.AddWithValue("id", id);
+
+        await using var saleReader = await saleCommand.ExecuteReaderAsync(cancellationToken);
+
+        if (!await saleReader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var saleDetails = new SaleDetailsResponse
+        {
+            Id = saleReader.GetInt32(0),
+            ReferenceNumber = $"SALE-{saleReader.GetInt32(0):000}",
+            TotalAmount = saleReader.GetDecimal(1),
+            CreatedAt = saleReader.GetFieldValue<DateTimeOffset>(2),
+            CashierName = saleReader.IsDBNull(3) ? null : saleReader.GetString(3),
+            MarketName = saleReader.IsDBNull(4) ? null : saleReader.GetString(4)
+        };
+
+        await saleReader.DisposeAsync();
+
+        await using var itemCommand = await CreateCommandAsync($"""
+            SELECT si.product_id,
+                   p.name,
+                   si.quantity,
+                   si.unit_price,
+                   si.line_total
+            FROM {schemaName}.sale_items si
+            LEFT JOIN {schemaName}.products p ON p.id = si.product_id
+            WHERE si.sale_id = @id
+            ORDER BY si.id;
+            """, cancellationToken);
+
+        itemCommand.Parameters.AddWithValue("id", id);
+
+        await using var itemReader = await itemCommand.ExecuteReaderAsync(cancellationToken);
+
+        var items = new List<SaleItemResponse>();
+
+        while (await itemReader.ReadAsync(cancellationToken))
+        {
+            items.Add(new SaleItemResponse
+            {
+                ProductId = itemReader.GetInt32(0),
+                ProductName = itemReader.IsDBNull(1) ? null : itemReader.GetString(1),
+                Quantity = itemReader.GetInt32(2),
+                UnitPrice = itemReader.GetDecimal(3),
+                LineTotal = itemReader.GetDecimal(4)
+            });
+        }
+
+        saleDetails.Items = items;
+        return saleDetails;
+    }
+
     public async Task<SaleDto?> CreateSaleAsync(
         CreateSaleRequest request,
         int createdByUserId,

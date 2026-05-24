@@ -51,6 +51,17 @@ public class SalesService : ISalesService
             : ServiceResult<SaleDto>.Success(sale, "Sale created.");
     }
 
+    public async Task<ServiceResult<SaleDetailsResponse>> GetSaleDetailsAsync(
+        int id,
+        CancellationToken cancellationToken = default)
+    {
+        var sale = await _tenantQueryService.GetSaleDetailsAsync(id, cancellationToken);
+
+        return sale is null
+            ? ServiceResult<SaleDetailsResponse>.Failure("Sale was not found.")
+            : ServiceResult<SaleDetailsResponse>.Success(sale);
+    }
+
     public async Task<ServiceResult<SaleDto>> UpdateSaleAsync(
         int id,
         UpdateSaleRequest request,
