@@ -3716,11 +3716,14 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 SELECT 1
                 FROM {schemaName}.markets
                 WHERE lower(name) = lower(@name)
-                  AND (@excluded_market_id IS NULL OR id <> @excluded_market_id)
+                  AND (@excluded_market_id::integer IS NULL OR id <> @excluded_market_id::integer)
             );
             """, cancellationToken, transaction);
         command.Parameters.AddWithValue("name", name.Trim());
-        command.Parameters.AddWithValue("excluded_market_id", DbValue(excludedMarketId));
+        command.Parameters.Add(new NpgsqlParameter("excluded_market_id", NpgsqlTypes.NpgsqlDbType.Integer)
+        {
+            Value = DbValue(excludedMarketId)
+        });
 
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
@@ -3757,12 +3760,15 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 FROM {schemaName}.departments
                 WHERE market_id = @market_id
                   AND lower(name) = lower(@name)
-                  AND (@excluded_department_id IS NULL OR id <> @excluded_department_id)
+                  AND (@excluded_department_id::integer IS NULL OR id <> @excluded_department_id::integer)
             );
             """, cancellationToken, transaction);
         command.Parameters.AddWithValue("market_id", marketId);
         command.Parameters.AddWithValue("name", name.Trim());
-        command.Parameters.AddWithValue("excluded_department_id", DbValue(excludedDepartmentId));
+        command.Parameters.Add(new NpgsqlParameter("excluded_department_id", NpgsqlTypes.NpgsqlDbType.Integer)
+        {
+            Value = DbValue(excludedDepartmentId)
+        });
 
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
