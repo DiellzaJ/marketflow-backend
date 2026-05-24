@@ -215,6 +215,69 @@ public sealed class SaleCompletionIntegrationTests
     }
 
     [PostgresIntegrationFact]
+    public async Task CreateSale_WhenRepairTransactionAborts_ReturnsHandledRepairFailure()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_repair_abort"),
+            name: "sale_reference_repair_abort",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Repair Abort Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        await database.RemoveSaleReferenceTriggerAsync(company.SchemaName);
+        await database.InsertSaleWithReferenceNumberAsync(
+            company.SchemaName,
+            market.Id,
+            user.Id,
+            "SALE-DUPLICATE");
+        await database.InsertSaleWithReferenceNumberAsync(
+            company.SchemaName,
+            market.Id,
+            user.Id,
+            "SALE-DUPLICATE");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var response = await client.PostAsJsonAsync("/api/sales", new CreateSaleRequest
+        {
+            MarketId = market.Id,
+            PaymentMethod = "Cash",
+            TotalAmount = 5,
+            Items =
+            [
+                new CreateSaleItemRequest
+                {
+                    ProductId = product.Id,
+                    Quantity = 1,
+                    UnitPrice = 5
+                }
+            ]
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<SaleDto>>();
+        Assert.NotNull(result);
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            "Sale creation failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.",
+            result.Message);
+    }
+
+    [PostgresIntegrationFact]
     public async Task CreateSale_WhenTenantReferenceSchemaIsMissing_RepairsSchemaAndReturnsReferenceNumber()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();

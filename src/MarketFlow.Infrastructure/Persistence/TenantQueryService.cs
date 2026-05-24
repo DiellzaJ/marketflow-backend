@@ -2680,9 +2680,17 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
         catch (PostgresException postgresException)
         {
-            var currentState = await GetSaleReferenceNumberSchemaDiagnosticsAsync(
+            await RollBackFailedSaleReferenceNumberRepairAsync(
+                transaction,
                 quotedSchemaName,
+                currentRepairStep,
+                postgresException,
                 cancellationToken);
+
+            var currentState = await GetSaleReferenceNumberSchemaDiagnosticsAfterFailureAsync(
+                quotedSchemaName,
+                cancellationToken,
+                postgresException);
 
             _logger.LogError(
                 postgresException,
@@ -2707,6 +2715,51 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 quotedSchemaName,
                 "Tenant sales schema repair failed while creating or updating sale reference number infrastructure.",
                 postgresException);
+        }
+    }
+
+    private async Task RollBackFailedSaleReferenceNumberRepairAsync(
+        NpgsqlTransaction transaction,
+        string quotedSchemaName,
+        string? currentRepairStep,
+        PostgresException rootCause,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await transaction.RollbackAsync(cancellationToken);
+        }
+        catch (Exception rollbackException)
+        {
+            _logger.LogWarning(
+                rollbackException,
+                "Failed to roll back sale reference number repair transaction for tenant schema {SchemaName} after step {Step}. Original SqlState={SqlState}.",
+                quotedSchemaName,
+                currentRepairStep,
+                rootCause.SqlState);
+        }
+    }
+
+    private async Task<SaleReferenceNumberSchemaDiagnostics> GetSaleReferenceNumberSchemaDiagnosticsAfterFailureAsync(
+        string quotedSchemaName,
+        CancellationToken cancellationToken,
+        PostgresException rootCause)
+    {
+        try
+        {
+            return await GetSaleReferenceNumberSchemaDiagnosticsAsync(
+                quotedSchemaName,
+                cancellationToken);
+        }
+        catch (Exception diagnosticsException)
+        {
+            _logger.LogWarning(
+                diagnosticsException,
+                "Failed to collect sale reference number diagnostics for tenant schema {SchemaName} after repair failure. Original SqlState={SqlState}.",
+                quotedSchemaName,
+                rootCause.SqlState);
+
+            return new SaleReferenceNumberSchemaDiagnostics(false, false, false, false);
         }
     }
 
