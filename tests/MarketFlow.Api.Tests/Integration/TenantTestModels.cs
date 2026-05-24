@@ -75,6 +75,12 @@ public sealed record TenantTestPurchase(
     int MarketId,
     string Status);
 
+public sealed record TenantSaleReferenceSchemaState(
+    bool ColumnExists,
+    bool TriggerExists,
+    bool UniqueIndexExists,
+    bool TriggerFunctionExists);
+
 public sealed record TenantTestProductDetails(
     int Id,
     string Name,

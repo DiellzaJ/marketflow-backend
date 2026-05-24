@@ -50,6 +50,7 @@ public sealed class SaleDetailsIntegrationTests
 
         var createResult = await createSaleResponse.Content.ReadFromJsonAsync<ServiceResult<SaleDto>>();
         Assert.NotNull(createResult?.Data);
+        Assert.NotEmpty(createResult.Data.ReferenceNumber);
 
         var detailsResponse = await authenticatedClient.GetAsync($"/api/sales/{createResult.Data.Id}");
         detailsResponse.EnsureSuccessStatusCode();
@@ -58,6 +59,7 @@ public sealed class SaleDetailsIntegrationTests
         Assert.NotNull(detailsResult?.Data);
         Assert.True(detailsResult.Succeeded);
         Assert.Equal(createResult.Data.Id, detailsResult.Data.Id);
+        Assert.Equal(createResult.Data.ReferenceNumber, detailsResult.Data.ReferenceNumber);
         Assert.Equal("Main Market", detailsResult.Data.MarketName);
         Assert.Equal(user.FullName, detailsResult.Data.CashierName);
         Assert.Equal(3.00m, detailsResult.Data.TotalAmount);

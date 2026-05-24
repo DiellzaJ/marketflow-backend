@@ -4,6 +4,7 @@ using MarketFlow.Application.Features.Products.Services;
 using MarketFlow.Infrastructure.MultiTenancy;
 using MarketFlow.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
 namespace MarketFlow.Api.Tests.Products;
@@ -34,6 +35,7 @@ public sealed class ProductLiveSmokeTests
                 setupConnection,
                 "SELECT public.create_tenant_schema(@schema_name);",
                 new NpgsqlParameter("schema_name", schemaName));
+            await EnsureSaleReferenceNumbersAsync(setupConnection, schemaName);
 
             var categoryId = await ExecuteScalarAsync<int>(
                 setupConnection,
@@ -87,6 +89,7 @@ public sealed class ProductLiveSmokeTests
                 setupConnection,
                 "SELECT public.create_tenant_schema(@schema_name);",
                 new NpgsqlParameter("schema_name", schemaName));
+            await EnsureSaleReferenceNumbersAsync(setupConnection, schemaName);
 
             var categoryId = await ExecuteScalarAsync<int>(
                 setupConnection,
@@ -160,6 +163,7 @@ public sealed class ProductLiveSmokeTests
                 setupConnection,
                 "SELECT public.create_tenant_schema(@schema_name);",
                 new NpgsqlParameter("schema_name", schemaName));
+            await EnsureSaleReferenceNumbersAsync(setupConnection, schemaName);
 
             var marketId = await ExecuteScalarAsync<int>(
                 setupConnection,
@@ -332,7 +336,8 @@ public sealed class ProductLiveSmokeTests
         var tenantQueryService = new TenantQueryService(
             dbContext,
             new TenantProvider(currentUser, tenantContextStore),
-            currentUser);
+            currentUser,
+            NullLogger<TenantQueryService>.Instance);
 
         return new ProductServiceContext(new ProductService(tenantQueryService), dbContext);
     }
@@ -360,6 +365,43 @@ public sealed class ProductLiveSmokeTests
         command.Parameters.AddRange(parameters);
         var result = await command.ExecuteScalarAsync();
         return Assert.IsType<T>(result);
+    }
+
+    private static async Task EnsureSaleReferenceNumbersAsync(
+        NpgsqlConnection connection,
+        string schemaName)
+    {
+        await ExecuteAsync(
+            connection,
+            $"""
+            CREATE OR REPLACE FUNCTION public.assign_sale_reference_number()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.reference_number IS NULL OR btrim(NEW.reference_number) = '' THEN
+                    NEW.reference_number := 'SALE-' || lpad(NEW.id::text, 6, '0');
+                END IF;
+
+                RETURN NEW;
+            END;
+            $$;
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);
+            UPDATE {QuoteIdentifier(schemaName)}.sales
+            SET reference_number = 'SALE-' || lpad(id::text, 6, '0')
+            WHERE reference_number IS NULL OR btrim(reference_number) = '';
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ALTER COLUMN reference_number SET NOT NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number
+                ON {QuoteIdentifier(schemaName)}.sales(reference_number);
+            DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {QuoteIdentifier(schemaName)}.sales;
+            CREATE TRIGGER trg_sales_assign_reference_number
+                BEFORE INSERT ON {QuoteIdentifier(schemaName)}.sales
+                FOR EACH ROW
+                EXECUTE FUNCTION public.assign_sale_reference_number();
+            """);
     }
 
     private static string QuoteIdentifier(string identifier)

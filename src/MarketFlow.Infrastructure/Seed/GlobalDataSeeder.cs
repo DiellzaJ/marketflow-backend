@@ -200,6 +200,8 @@ public static class GlobalDataSeeder
         {
             var createTenantSchemaFunctionExists = await CreateTenantSchemaFunctionExistsAsync(connection);
             var ensureLowStockAlertsFunctionExists = await EnsureLowStockAlertsFunctionExistsAsync(connection);
+            var ensureSaleReferenceNumbersFunctionExists =
+                await EnsureSaleReferenceNumbersFunctionExistsAsync(connection);
 
             if (!createTenantSchemaFunctionExists)
             {
@@ -239,6 +241,17 @@ public static class GlobalDataSeeder
 
                         ensureLowStockAlertsCommand.Parameters.AddWithValue("schema_name", schemaName);
                         await ensureLowStockAlertsCommand.ExecuteNonQueryAsync();
+                    }
+
+                    if (ensureSaleReferenceNumbersFunctionExists)
+                    {
+                        await using var ensureSaleReferenceNumbersCommand = new NpgsqlCommand(
+                            "SELECT public.ensure_tenant_sale_reference_numbers(@schema_name);",
+                            connection,
+                            transaction);
+
+                        ensureSaleReferenceNumbersCommand.Parameters.AddWithValue("schema_name", schemaName);
+                        await ensureSaleReferenceNumbersCommand.ExecuteNonQueryAsync();
                     }
 
                     var categoriesTableExists = await TenantTableExistsAsync(
@@ -356,6 +369,17 @@ public static class GlobalDataSeeder
     {
         await using var command = new NpgsqlCommand(
             "SELECT to_regprocedure('public.ensure_tenant_low_stock_alerts_table(text)') IS NOT NULL;",
+            connection);
+
+        var result = await command.ExecuteScalarAsync();
+
+        return result is bool exists && exists;
+    }
+
+    private static async Task<bool> EnsureSaleReferenceNumbersFunctionExistsAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT to_regprocedure('public.ensure_tenant_sale_reference_numbers(text)') IS NOT NULL;",
             connection);
 
         var result = await command.ExecuteScalarAsync();

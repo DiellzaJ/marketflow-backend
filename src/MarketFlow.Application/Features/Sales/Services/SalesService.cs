@@ -1,3 +1,4 @@
+using MarketFlow.Application.Common.Exceptions;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Sales.DTOs;
@@ -44,11 +45,19 @@ public class SalesService : ISalesService
             return ServiceResult<SaleDto>.Failure("Sale items must include a product, positive quantity, and non-negative unit price.");
         }
 
-        var sale = await _tenantQueryService.CreateSaleAsync(request, userId, cancellationToken);
+        try
+        {
+            var sale = await _tenantQueryService.CreateSaleAsync(request, userId, cancellationToken);
 
-        return sale is null
-            ? ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.")
-            : ServiceResult<SaleDto>.Success(sale, "Sale created.");
+            return sale is null
+                ? ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.")
+                : ServiceResult<SaleDto>.Success(sale, "Sale created.");
+        }
+        catch (SaleReferenceNumberRepairException)
+        {
+            return ServiceResult<SaleDto>.Failure(
+                "Sale creation failed because the tenant sales schema could not be repaired. See server logs for database diagnostics.");
+        }
     }
 
     public async Task<ServiceResult<SaleDetailsResponse>> GetSaleDetailsAsync(

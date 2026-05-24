@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
+using Npgsql;
 
 namespace MarketFlow.Api.Tests.Integration;
 
@@ -52,6 +53,8 @@ public sealed class SaleCompletionIntegrationTests
 
         var result = await response.Content.ReadFromJsonAsync<ServiceResult<SaleDto>>();
         Assert.NotNull(result?.Data);
+        Assert.NotEmpty(result.Data.ReferenceNumber);
+        Assert.StartsWith("SALE-", result.Data.ReferenceNumber, StringComparison.Ordinal);
 
         var updatedInventory = await database.GetInventoryDetailsAsync(company.SchemaName, inventory.Id);
         Assert.Equal(5, updatedInventory?.Quantity);
@@ -61,6 +64,133 @@ public sealed class SaleCompletionIntegrationTests
             movement.MovementType == "SaleCompleted" &&
             movement.QuantityChanged == -3 &&
             movement.ReferenceNumber == $"sale:{result.Data.Id}");
+    }
+
+    [PostgresIntegrationFact]
+    public async Task CreateSale_GeneratesUniqueReferenceNumbersAndPreventsDuplicates()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference"),
+            name: "sale_reference",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Receipt Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 10);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var firstSale = await CreateSaleAsync(client, market.Id, product.Id);
+        var secondSale = await CreateSaleAsync(client, market.Id, product.Id);
+
+        Assert.NotEmpty(firstSale.ReferenceNumber);
+        Assert.NotEmpty(secondSale.ReferenceNumber);
+        Assert.NotEqual(firstSale.ReferenceNumber, secondSale.ReferenceNumber);
+
+        var duplicateException = await Assert.ThrowsAsync<PostgresException>(() =>
+            database.InsertSaleWithReferenceNumberAsync(
+                company.SchemaName,
+                market.Id,
+                user.Id,
+                firstSale.ReferenceNumber));
+        Assert.Equal(PostgresErrorCodes.UniqueViolation, duplicateException.SqlState);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task CreateSale_WhenTenantReferenceSchemaIsMissing_RepairsSchemaAndReturnsReferenceNumber()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_repair"),
+            name: "sale_reference_repair",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Repair Receipt Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+        await database.RemoveSaleReferenceNumbersAsync(company.SchemaName);
+
+        var initialState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.False(initialState.ColumnExists);
+        Assert.False(initialState.TriggerExists);
+        Assert.False(initialState.UniqueIndexExists);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var sale = await CreateSaleAsync(client, market.Id, product.Id);
+
+        Assert.NotEmpty(sale.ReferenceNumber);
+        Assert.StartsWith("SALE-", sale.ReferenceNumber, StringComparison.Ordinal);
+
+        var repairedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(repairedState.ColumnExists);
+        Assert.True(repairedState.TriggerExists);
+        Assert.True(repairedState.UniqueIndexExists);
+        Assert.True(repairedState.TriggerFunctionExists);
+    }
+
+    [PostgresIntegrationFact]
+    public async Task CreateSale_WhenTenantReferenceTriggerIsMissing_RepairsSchemaAndReturnsReferenceNumber()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_trigger"),
+            name: "sale_reference_trigger",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Trigger Repair Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        await database.RemoveSaleReferenceTriggerAsync(company.SchemaName);
+
+        var initialState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(initialState.ColumnExists);
+        Assert.False(initialState.TriggerExists);
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var sale = await CreateSaleAsync(client, market.Id, product.Id);
+
+        Assert.NotEmpty(sale.ReferenceNumber);
+        Assert.StartsWith("SALE-", sale.ReferenceNumber, StringComparison.Ordinal);
+
+        var repairedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(repairedState.ColumnExists);
+        Assert.True(repairedState.TriggerExists);
+        Assert.True(repairedState.UniqueIndexExists);
+        Assert.True(repairedState.TriggerFunctionExists);
     }
 
     [PostgresIntegrationFact]
@@ -329,5 +459,33 @@ public sealed class SaleCompletionIntegrationTests
         Assert.NotNull(result.Data);
 
         return result.Data.ToList();
+    }
+
+    private static async Task<SaleDto> CreateSaleAsync(
+        HttpClient client,
+        int marketId,
+        int productId)
+    {
+        var response = await client.PostAsJsonAsync("/api/sales", new CreateSaleRequest
+        {
+            MarketId = marketId,
+            PaymentMethod = "Cash",
+            TotalAmount = 5,
+            Items =
+            [
+                new CreateSaleItemRequest
+                {
+                    ProductId = productId,
+                    Quantity = 1,
+                    UnitPrice = 5
+                }
+            ]
+        });
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<SaleDto>>();
+        Assert.NotNull(result?.Data);
+
+        return result.Data;
     }
 }

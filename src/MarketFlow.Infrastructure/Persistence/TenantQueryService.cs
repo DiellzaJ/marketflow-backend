@@ -17,9 +17,11 @@ using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
 using MarketFlow.Infrastructure.Caching;
+using MarketFlow.Application.Common.Exceptions;
 using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Infrastructure.MultiTenancy;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -31,17 +33,20 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
 
     private static readonly ConcurrentDictionary<string, byte> InventoryMovementTableRepairCache = new();
+    private static readonly ConcurrentDictionary<string, byte> SaleReferenceNumberRepairCache = new();
 
     private readonly ApplicationDbContext _dbContext;
     private readonly TenantProvider _tenantProvider;
     private readonly ICurrentUserService _currentUserService;
     private readonly RedisCacheService? _cacheService;
+    private readonly ILogger<TenantQueryService> _logger;
     private readonly TimeSpan _barcodeLookupCacheTtl;
 
     public TenantQueryService(
         ApplicationDbContext dbContext,
         TenantProvider tenantProvider,
         ICurrentUserService currentUserService,
+        ILogger<TenantQueryService> logger,
         RedisCacheService? cacheService = null,
         IConfiguration? configuration = null)
     {
@@ -49,6 +54,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         _tenantProvider = tenantProvider;
         _currentUserService = currentUserService;
         _cacheService = cacheService;
+        _logger = logger;
         _barcodeLookupCacheTtl = TimeSpan.FromSeconds(
             GetBarcodeLookupCacheTtlSeconds(configuration));
     }
@@ -1484,10 +1490,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
         var sales = new List<SaleDto>();
 
         await using var command = await CreateCommandAsync($"""
-            SELECT id, market_id, sale_date, payment_method, total_amount
+            SELECT id, reference_number, market_id, sale_date, payment_method, total_amount
             FROM {schemaName}.sales
             ORDER BY sale_date DESC, id DESC;
             """, cancellationToken);
@@ -1499,10 +1506,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             sales.Add(new SaleDto
             {
                 Id = reader.GetInt32(0),
-                MarketId = reader.GetInt32(1),
-                SaleDate = reader.GetFieldValue<DateOnly>(2),
-                PaymentMethod = reader.GetString(3),
-                TotalAmount = reader.GetDecimal(4)
+                ReferenceNumber = reader.GetString(1),
+                MarketId = reader.GetInt32(2),
+                SaleDate = reader.GetFieldValue<DateOnly>(3),
+                PaymentMethod = reader.GetString(4),
+                TotalAmount = reader.GetDecimal(5)
             });
         }
 
@@ -1514,9 +1522,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
 
         await using var saleCommand = await CreateCommandAsync($"""
             SELECT s.id,
+                   s.reference_number,
                    s.total_amount,
                    s.created_at,
                    u.full_name AS cashier_name,
@@ -1539,11 +1549,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         var saleDetails = new SaleDetailsResponse
         {
             Id = saleReader.GetInt32(0),
-            ReferenceNumber = $"SALE-{saleReader.GetInt32(0):000}",
-            TotalAmount = saleReader.GetDecimal(1),
-            CreatedAt = saleReader.GetFieldValue<DateTimeOffset>(2),
-            CashierName = saleReader.IsDBNull(3) ? null : saleReader.GetString(3),
-            MarketName = saleReader.IsDBNull(4) ? null : saleReader.GetString(4)
+            ReferenceNumber = saleReader.GetString(1),
+            TotalAmount = saleReader.GetDecimal(2),
+            CreatedAt = saleReader.GetFieldValue<DateTimeOffset>(3),
+            CashierName = saleReader.IsDBNull(4) ? null : saleReader.GetString(4),
+            MarketName = saleReader.IsDBNull(5) ? null : saleReader.GetString(5)
         };
 
         await saleReader.DisposeAsync();
@@ -1588,6 +1598,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
         var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
         var departmentId = scope.Kind == InventoryScopeKind.Department
             ? scope.DepartmentId
@@ -1616,7 +1627,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 @discount_amount,
                 @total_amount,
                 @notes)
-            RETURNING id, market_id, sale_date, payment_method, total_amount;
+            RETURNING id, reference_number, market_id, sale_date, payment_method, total_amount;
             """, cancellationToken, transaction);
 
         command.Parameters.AddWithValue("market_id", request.MarketId);
@@ -1668,6 +1679,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.sales
@@ -1678,7 +1690,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 total_amount = @total_amount,
                 notes = @notes
             WHERE id = @id
-            RETURNING id, market_id, sale_date, payment_method, total_amount;
+            RETURNING id, reference_number, market_id, sale_date, payment_method, total_amount;
             """, cancellationToken);
 
         command.Parameters.AddWithValue("id", id);
@@ -1698,6 +1710,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        await EnsureSaleReferenceNumbersAsync(schemaName, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.sales
@@ -1708,7 +1721,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 total_amount = COALESCE(@total_amount, total_amount),
                 notes = COALESCE(@notes, notes)
             WHERE id = @id
-            RETURNING id, market_id, sale_date, payment_method, total_amount;
+            RETURNING id, reference_number, market_id, sale_date, payment_method, total_amount;
             """, cancellationToken);
 
         command.Parameters.AddWithValue("id", id);
@@ -2468,6 +2481,229 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             "42P01" or // undefined_table
             "42703";   // undefined_column
     }
+
+    private async Task EnsureSaleReferenceNumbersAsync(
+        string quotedSchemaName,
+        CancellationToken cancellationToken)
+    {
+        if (SaleReferenceNumberRepairCache.ContainsKey(quotedSchemaName))
+        {
+            _logger.LogDebug(
+                "Skipping sale reference number repair for tenant schema {SchemaName} because it is already cached.",
+                quotedSchemaName);
+            return;
+        }
+
+        var preState = await GetSaleReferenceNumberSchemaDiagnosticsAsync(
+            quotedSchemaName,
+            cancellationToken);
+
+        _logger.LogInformation(
+            "Ensuring sale reference number infrastructure for tenant schema {SchemaName}. Existing state: {SchemaState}",
+            quotedSchemaName,
+            preState);
+
+        await using var transaction = await BeginTransactionAsync(cancellationToken);
+
+        await using var lockCommand = await CreateCommandAsync(
+            "SELECT pg_advisory_xact_lock(hashtext(@lock_key));",
+            cancellationToken,
+            transaction);
+        lockCommand.Parameters.AddWithValue(
+            "lock_key",
+            $"tenant:{quotedSchemaName}:sale_reference_numbers");
+
+        await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        string? currentRepairStep = null;
+
+        try
+        {
+            currentRepairStep = "CreateReferenceNumberTriggerFunction";
+            await ExecuteSchemaRepairCommandAsync(
+                quotedSchemaName,
+                currentRepairStep,
+                $"CREATE OR REPLACE FUNCTION public.assign_sale_reference_number()\n" +
+                "RETURNS trigger\n" +
+                "LANGUAGE plpgsql\n" +
+                "AS $$\n" +
+                "BEGIN\n" +
+                "    IF NEW.reference_number IS NULL OR btrim(NEW.reference_number) = '' THEN\n" +
+                "        NEW.reference_number := 'SALE-' || lpad(NEW.id::text, 6, '0');\n" +
+                "    END IF;\n" +
+                "    RETURN NEW;\n" +
+                "END;\n" +
+                "$$;\n",
+                transaction,
+                cancellationToken);
+
+            currentRepairStep = "AddReferenceNumberColumn";
+            await ExecuteSchemaRepairCommandAsync(
+                quotedSchemaName,
+                currentRepairStep,
+                $"ALTER TABLE {quotedSchemaName}.sales\n" +
+                "    ADD COLUMN IF NOT EXISTS reference_number VARCHAR(50);\n",
+                transaction,
+                cancellationToken);
+
+            currentRepairStep = "BackfillReferenceNumbers";
+            await ExecuteSchemaRepairCommandAsync(
+                quotedSchemaName,
+                currentRepairStep,
+                $"UPDATE {quotedSchemaName}.sales\n" +
+                "SET reference_number = 'SALE-' || lpad(id::text, 6, '0')\n" +
+                "WHERE reference_number IS NULL OR btrim(reference_number) = '';\n",
+                transaction,
+                cancellationToken);
+
+            currentRepairStep = "SetReferenceNumberNotNull";
+            await ExecuteSchemaRepairCommandAsync(
+                quotedSchemaName,
+                currentRepairStep,
+                $"ALTER TABLE {quotedSchemaName}.sales\n" +
+                "    ALTER COLUMN reference_number SET NOT NULL;\n",
+                transaction,
+                cancellationToken);
+
+            currentRepairStep = "CreateUniqueReferenceNumberIndex";
+            await ExecuteSchemaRepairCommandAsync(
+                quotedSchemaName,
+                currentRepairStep,
+                $"CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number\n" +
+                $"    ON {quotedSchemaName}.sales(reference_number);\n",
+                transaction,
+                cancellationToken);
+
+            currentRepairStep = "DropExistingTrigger";
+            await ExecuteSchemaRepairCommandAsync(
+                quotedSchemaName,
+                currentRepairStep,
+                $"DROP TRIGGER IF EXISTS trg_sales_assign_reference_number ON {quotedSchemaName}.sales;\n",
+                transaction,
+                cancellationToken);
+
+            currentRepairStep = "CreateTrigger";
+            await ExecuteSchemaRepairCommandAsync(
+                quotedSchemaName,
+                currentRepairStep,
+                $"CREATE TRIGGER trg_sales_assign_reference_number\n" +
+                $"    BEFORE INSERT ON {quotedSchemaName}.sales\n" +
+                $"    FOR EACH ROW\n" +
+                $"    EXECUTE FUNCTION public.assign_sale_reference_number();\n",
+                transaction,
+                cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+            SaleReferenceNumberRepairCache.TryAdd(quotedSchemaName, 0);
+
+            var postState = await GetSaleReferenceNumberSchemaDiagnosticsAsync(
+                quotedSchemaName,
+                cancellationToken);
+
+            _logger.LogInformation(
+                "Sale reference number infrastructure ensured for tenant schema {SchemaName}. New state: {SchemaState}",
+                quotedSchemaName,
+                postState);
+        }
+        catch (PostgresException postgresException)
+        {
+            var currentState = await GetSaleReferenceNumberSchemaDiagnosticsAsync(
+                quotedSchemaName,
+                cancellationToken);
+
+            _logger.LogError(
+                postgresException,
+                "Sale reference number infrastructure repair failed for tenant schema {SchemaName} during step {Step}. Pre-state: {PreState}. Current-state: {CurrentState}. SqlState={SqlState}. Detail={Detail}. Hint={Hint}.",
+                quotedSchemaName,
+                currentRepairStep,
+                preState,
+                currentState,
+                postgresException.SqlState,
+                postgresException.Detail,
+                postgresException.Hint);
+
+            if (IsPermissionDenied(postgresException))
+            {
+                throw new SaleReferenceNumberRepairException(
+                    quotedSchemaName,
+                    "Tenant sales schema repair failed because the database user does not have sufficient privileges to alter the tenant schema or create triggers.",
+                    postgresException);
+            }
+
+            throw new SaleReferenceNumberRepairException(
+                quotedSchemaName,
+                "Tenant sales schema repair failed while creating or updating sale reference number infrastructure.",
+                postgresException);
+        }
+    }
+
+    private async Task ExecuteSchemaRepairCommandAsync(
+        string quotedSchemaName,
+        string stepName,
+        string commandText,
+        NpgsqlTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = await CreateCommandAsync(commandText, cancellationToken, transaction);
+
+        _logger.LogDebug(
+            "Executing sale reference number repair step {StepName} for tenant schema {SchemaName}.",
+            stepName,
+            quotedSchemaName);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static bool IsPermissionDenied(PostgresException exception)
+    {
+        return exception.SqlState == "42501" ||
+            exception.Message.Contains("permission denied", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async Task<SaleReferenceNumberSchemaDiagnostics> GetSaleReferenceNumberSchemaDiagnosticsAsync(
+        string quotedSchemaName,
+        CancellationToken cancellationToken)
+    {
+        var actualSchemaName = quotedSchemaName.Trim('"');
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                       SELECT 1
+                       FROM information_schema.columns
+                       WHERE table_schema = @schema_name
+                         AND table_name = 'sales'
+                         AND column_name = 'reference_number'
+                   ) AS column_exists,
+                   EXISTS (
+                       SELECT 1
+                       FROM pg_catalog.pg_trigger trigger
+                       INNER JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
+                       INNER JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
+                       WHERE namespace.nspname = @schema_name
+                         AND relation.relname = 'sales'
+                         AND trigger.tgname = 'trg_sales_assign_reference_number'
+                   ) AS trigger_exists,
+                   to_regclass(format('%I.ux_sales_reference_number', @schema_name)) IS NOT NULL AS unique_index_exists,
+                   to_regprocedure('public.assign_sale_reference_number()') IS NOT NULL AS trigger_function_exists;
+            """,
+            cancellationToken);
+        command.Parameters.AddWithValue("schema_name", actualSchemaName);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new SaleReferenceNumberSchemaDiagnostics(
+                reader.GetBoolean(0),
+                reader.GetBoolean(1),
+                reader.GetBoolean(2),
+                reader.GetBoolean(3))
+            : new SaleReferenceNumberSchemaDiagnostics(false, false, false, false);
+    }
+
+    private sealed record SaleReferenceNumberSchemaDiagnostics(
+        bool ColumnExists,
+        bool TriggerExists,
+        bool UniqueIndexExists,
+        bool TriggerFunctionExists);
 
     private async Task InsertSaleItemAsync(
         string quotedSchemaName,
@@ -3408,10 +3644,11 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             ? new SaleDto
             {
                 Id = reader.GetInt32(0),
-                MarketId = reader.GetInt32(1),
-                SaleDate = reader.GetFieldValue<DateOnly>(2),
-                PaymentMethod = reader.GetString(3),
-                TotalAmount = reader.GetDecimal(4)
+                ReferenceNumber = reader.GetString(1),
+                MarketId = reader.GetInt32(2),
+                SaleDate = reader.GetFieldValue<DateOnly>(3),
+                PaymentMethod = reader.GetString(4),
+                TotalAmount = reader.GetDecimal(5)
             }
             : null;
     }

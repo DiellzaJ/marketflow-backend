@@ -4,6 +4,8 @@ public class SaleDto
 {
     public int Id { get; set; }
 
+    public string ReferenceNumber { get; set; } = string.Empty;
+
     public int MarketId { get; set; }
 
     public DateOnly SaleDate { get; set; }
