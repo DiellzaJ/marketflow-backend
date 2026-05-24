@@ -1502,13 +1502,17 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         string schemaName,
         CancellationToken cancellationToken)
     {
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildSalesScopeCondition(schemaName, scope, "WHERE");
         var sales = new List<SaleDto>();
 
         await using var command = await CreateCommandAsync($"""
-            SELECT id, reference_number, market_id, sale_date, payment_method, total_amount
-            FROM {schemaName}.sales
-            ORDER BY sale_date DESC, id DESC;
+            SELECT s.id, s.reference_number, s.market_id, s.sale_date, s.payment_method, s.total_amount
+            FROM {schemaName}.sales s
+            {scopeCondition}
+            ORDER BY s.sale_date DESC, s.id DESC;
             """, cancellationToken);
+        AddInventoryScopeParameters(command, scope);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 
@@ -1545,6 +1549,9 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         int id,
         CancellationToken cancellationToken)
     {
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildSalesScopeCondition(schemaName, scope, "AND");
+
         await using var saleCommand = await CreateCommandAsync($"""
             SELECT s.id,
                    s.reference_number,
@@ -1555,10 +1562,12 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             FROM {schemaName}.sales s
             LEFT JOIN public.users u ON u.id = s.created_by_user_id
             LEFT JOIN {schemaName}.markets m ON m.id = s.market_id
-            WHERE s.id = @id;
+            WHERE s.id = @id
+              {scopeCondition};
             """, cancellationToken);
 
         saleCommand.Parameters.AddWithValue("id", id);
+        AddInventoryScopeParameters(saleCommand, scope);
 
         await using var saleReader = await saleCommand.ExecuteReaderAsync(cancellationToken);
 
@@ -1725,15 +1734,25 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         UpdateSaleRequest request,
         CancellationToken cancellationToken)
     {
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+        if (!CanAccessSaleMarket(scope, request.MarketId))
+        {
+            return null;
+        }
+
+        var scopeCondition = BuildSalesScopeCondition(schemaName, scope, "AND");
+
         await using var command = await CreateCommandAsync($"""
-            UPDATE {schemaName}.sales
+            UPDATE {schemaName}.sales s
             SET market_id = @market_id,
                 sale_date = @sale_date,
                 payment_method = @payment_method,
                 discount_amount = @discount_amount,
                 total_amount = @total_amount,
                 notes = @notes
-            WHERE id = @id
+            WHERE s.id = @id
+              {scopeCondition}
             RETURNING id, reference_number, market_id, sale_date, payment_method, total_amount;
             """, cancellationToken);
 
@@ -1744,6 +1763,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("discount_amount", request.DiscountAmount);
         command.Parameters.AddWithValue("total_amount", request.TotalAmount);
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
+        AddInventoryScopeParameters(command, scope);
 
         return await ReadSaleAsync(command, cancellationToken);
     }
@@ -1767,15 +1787,25 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         PatchSaleRequest request,
         CancellationToken cancellationToken)
     {
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+        if (request.MarketId.HasValue && !CanAccessSaleMarket(scope, request.MarketId.Value))
+        {
+            return null;
+        }
+
+        var scopeCondition = BuildSalesScopeCondition(schemaName, scope, "AND");
+
         await using var command = await CreateCommandAsync($"""
-            UPDATE {schemaName}.sales
+            UPDATE {schemaName}.sales s
             SET market_id = COALESCE(@market_id, market_id),
                 sale_date = COALESCE(@sale_date, sale_date),
                 payment_method = COALESCE(@payment_method, payment_method),
                 discount_amount = COALESCE(@discount_amount, discount_amount),
                 total_amount = COALESCE(@total_amount, total_amount),
                 notes = COALESCE(@notes, notes)
-            WHERE id = @id
+            WHERE s.id = @id
+              {scopeCondition}
             RETURNING id, reference_number, market_id, sale_date, payment_method, total_amount;
             """, cancellationToken);
 
@@ -1786,6 +1816,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("discount_amount", DbValue(request.DiscountAmount));
         command.Parameters.AddWithValue("total_amount", DbValue(request.TotalAmount));
         command.Parameters.AddWithValue("notes", DbValue(request.Notes));
+        AddInventoryScopeParameters(command, scope);
 
         return await ReadSaleAsync(command, cancellationToken);
     }
@@ -1795,12 +1826,16 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var scopeCondition = BuildSalesScopeCondition(schemaName, scope, "AND");
 
         await using var command = await CreateCommandAsync($"""
-            DELETE FROM {schemaName}.sales
-            WHERE id = @id;
+            DELETE FROM {schemaName}.sales s
+            WHERE s.id = @id
+              {scopeCondition};
             """, cancellationToken);
         command.Parameters.AddWithValue("id", id);
+        AddInventoryScopeParameters(command, scope);
 
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
@@ -2321,6 +2356,30 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         };
     }
 
+    private static string BuildSalesScopeCondition(
+        string quotedSchemaName,
+        InventoryScope scope,
+        string prefix = "WHERE")
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => string.Empty,
+            InventoryScopeKind.Market => $"{prefix} s.market_id = @scope_market_id",
+            InventoryScopeKind.Department => $"""
+                {prefix} s.market_id = @scope_market_id
+                  AND EXISTS (
+                      SELECT 1
+                      FROM {quotedSchemaName}.inventory_movements im
+                      INNER JOIN {quotedSchemaName}.inventory i ON i.id = im.inventory_id
+                      WHERE im.reference_number = 'sale:' || s.id::text
+                        AND i.market_id = @scope_market_id
+                        AND i.department_id = @scope_department_id
+                  )
+                """,
+            _ => $"{prefix} FALSE"
+        };
+    }
+
     private static void AddInventoryScopeParameters(NpgsqlCommand command, InventoryScope scope)
     {
         if (scope.MarketId.HasValue)
@@ -2344,6 +2403,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             InventoryScopeKind.Company => true,
             InventoryScopeKind.Market => scope.MarketId == marketId,
             InventoryScopeKind.Department => scope.MarketId == marketId && scope.DepartmentId == departmentId,
+            _ => false
+        };
+    }
+
+    private static bool CanAccessSaleMarket(
+        InventoryScope scope,
+        int marketId)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => true,
+            InventoryScopeKind.Market => scope.MarketId == marketId,
+            InventoryScopeKind.Department => scope.MarketId == marketId,
             _ => false
         };
     }
