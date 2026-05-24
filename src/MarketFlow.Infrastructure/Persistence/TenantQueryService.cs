@@ -2601,7 +2601,12 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             var referenceNumberColumnWasMissing = !lockedState.ColumnExists;
             var shouldBackfillReferenceNumbers =
                 referenceNumberColumnWasMissing ||
-                !lockedState.UniqueIndexExists;
+                !lockedState.UniqueIndexExists ||
+                lockedState.ReferenceNumbersNeedBackfill;
+            var shouldSetReferenceNumberNotNull =
+                referenceNumberColumnWasMissing ||
+                lockedState.ReferenceNumberColumnIsNullable ||
+                lockedState.ReferenceNumbersNeedBackfill;
 
             if (!lockedState.TriggerFunctionExists)
             {
@@ -2648,6 +2653,20 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                     transaction,
                     cancellationToken);
 
+                if (shouldSetReferenceNumberNotNull)
+                {
+                    currentRepairStep = "SetReferenceNumberNotNull";
+                    await ExecuteSchemaRepairCommandAsync(
+                        quotedSchemaName,
+                        currentRepairStep,
+                        $"ALTER TABLE {quotedSchemaName}.sales\n" +
+                        "    ALTER COLUMN reference_number SET NOT NULL;\n",
+                        transaction,
+                        cancellationToken);
+                }
+            }
+            else if (shouldSetReferenceNumberNotNull)
+            {
                 currentRepairStep = "SetReferenceNumberNotNull";
                 await ExecuteSchemaRepairCommandAsync(
                     quotedSchemaName,
@@ -2781,7 +2800,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 quotedSchemaName,
                 rootCause.SqlState);
 
-            return new SaleReferenceNumberSchemaDiagnostics(false, false, false, false);
+            return new SaleReferenceNumberSchemaDiagnostics(false, false, false, false, false, false);
         }
     }
 
@@ -2802,6 +2821,18 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             _logger.LogWarning(
                 postgresException,
                 "Sale reference number operation failed for tenant schema {SchemaName}; clearing cached schema state, repairing, and retrying once.",
+                quotedSchemaName);
+
+            SaleReferenceNumberRepairCache.TryRemove(quotedSchemaName, out _);
+            await EnsureSaleReferenceNumbersAsync(quotedSchemaName, cancellationToken);
+
+            return await operation();
+        }
+        catch (InvalidCastException invalidCastException)
+        {
+            _logger.LogWarning(
+                invalidCastException,
+                "Sale reference number operation failed for tenant schema {SchemaName} while reading sale data; clearing cached schema state, repairing, and retrying once.",
                 quotedSchemaName);
 
             SaleReferenceNumberRepairCache.TryRemove(quotedSchemaName, out _);
@@ -2901,6 +2932,14 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                    ) AS column_exists,
                    EXISTS (
                        SELECT 1
+                       FROM information_schema.columns
+                       WHERE table_schema = @schema_name
+                         AND table_name = 'sales'
+                         AND column_name = 'reference_number'
+                         AND is_nullable = 'YES'
+                   ) AS reference_number_column_is_nullable,
+                   EXISTS (
+                       SELECT 1
                        FROM pg_catalog.pg_trigger trigger
                        INNER JOIN pg_catalog.pg_class relation ON relation.oid = trigger.tgrelid
                        INNER JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace
@@ -2916,26 +2955,52 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         command.Parameters.AddWithValue("schema_name", actualSchemaName);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        return await reader.ReadAsync(cancellationToken)
+        var diagnostics = await reader.ReadAsync(cancellationToken)
             ? new SaleReferenceNumberSchemaDiagnostics(
                 reader.GetBoolean(0),
                 reader.GetBoolean(1),
                 reader.GetBoolean(2),
-                reader.GetBoolean(3))
-            : new SaleReferenceNumberSchemaDiagnostics(false, false, false, false);
+                reader.GetBoolean(3),
+                reader.GetBoolean(4),
+                ReferenceNumbersNeedBackfill: false)
+            : new SaleReferenceNumberSchemaDiagnostics(false, false, false, false, false, false);
+
+        await reader.DisposeAsync();
+
+        if (!diagnostics.ColumnExists)
+        {
+            return diagnostics;
+        }
+
+        await using var nullReferenceCommand = await CreateCommandAsync($"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {quotedSchemaName}.sales
+                WHERE reference_number IS NULL OR btrim(reference_number) = ''
+            );
+            """,
+            cancellationToken,
+            transaction);
+
+        var needsBackfill = (bool)(await nullReferenceCommand.ExecuteScalarAsync(cancellationToken) ?? false);
+        return diagnostics with { ReferenceNumbersNeedBackfill = needsBackfill };
     }
 
     private sealed record SaleReferenceNumberSchemaDiagnostics(
         bool ColumnExists,
+        bool ReferenceNumberColumnIsNullable,
         bool TriggerExists,
         bool UniqueIndexExists,
-        bool TriggerFunctionExists)
+        bool TriggerFunctionExists,
+        bool ReferenceNumbersNeedBackfill)
     {
         public bool HasCompleteInfrastructure =>
             ColumnExists &&
+            !ReferenceNumberColumnIsNullable &&
             TriggerExists &&
             UniqueIndexExists &&
-            TriggerFunctionExists;
+            TriggerFunctionExists &&
+            !ReferenceNumbersNeedBackfill;
     }
 
     private async Task InsertSaleItemAsync(

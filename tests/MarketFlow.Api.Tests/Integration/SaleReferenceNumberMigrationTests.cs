@@ -28,6 +28,27 @@ public sealed class SaleReferenceNumberMigrationTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(typeof(AddTenantSaleReferenceNumbers))]
+    [InlineData(typeof(OptimizeTenantSaleReferenceNumberEnsureFunction))]
+    public void EnsureTenantSaleReferenceNumbers_BackfillsNullReferencesAndEnforcesNotNull(Type migrationType)
+    {
+        var sql = GetUpSql(migrationType);
+
+        Assert.Contains(
+            "reference_numbers_need_backfill",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "reference_number IS NULL OR btrim(reference_number) = ''",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "ALTER COLUMN reference_number SET NOT NULL",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string GetUpSql(Type migrationType)
     {
         var migration = (Migration)Activator.CreateInstance(migrationType)!;

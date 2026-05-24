@@ -215,6 +215,56 @@ public sealed class SaleCompletionIntegrationTests
     }
 
     [PostgresIntegrationFact]
+    public async Task GetSales_WhenReferenceNumbersAreNullableAndNull_RepairsAndReturnsReferenceNumbers()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("sale_reference_null_repair"),
+            name: "sale_reference_null_repair",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Null Reference Product");
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 5);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var sale = await CreateSaleAsync(client, market.Id, product.Id);
+        Assert.NotEmpty(sale.ReferenceNumber);
+
+        await database.MakeSaleReferenceNumberNullableAndNullAsync(company.SchemaName, sale.Id);
+
+        var driftedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(driftedState.ColumnExists);
+        Assert.True(driftedState.ColumnIsNullable);
+        Assert.True(driftedState.UniqueIndexExists);
+        Assert.True(driftedState.ReferenceNumbersNeedBackfill);
+
+        var response = await client.GetAsync("/api/sales");
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<IReadOnlyCollection<SaleDto>>>();
+        Assert.NotNull(result?.Data);
+        Assert.NotEmpty(Assert.Single(result.Data).ReferenceNumber);
+
+        var repairedState = await database.GetSaleReferenceSchemaStateAsync(company.SchemaName);
+        Assert.True(repairedState.ColumnExists);
+        Assert.False(repairedState.ColumnIsNullable);
+        Assert.True(repairedState.UniqueIndexExists);
+        Assert.False(repairedState.ReferenceNumbersNeedBackfill);
+    }
+
+    [PostgresIntegrationFact]
     public async Task UpdateSale_WhenCachedTenantReferenceSchemaDrifts_RepairsAndRetries()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();

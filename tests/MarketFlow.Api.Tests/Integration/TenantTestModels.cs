@@ -77,9 +77,11 @@ public sealed record TenantTestPurchase(
 
 public sealed record TenantSaleReferenceSchemaState(
     bool ColumnExists,
+    bool ColumnIsNullable,
     bool TriggerExists,
     bool UniqueIndexExists,
-    bool TriggerFunctionExists);
+    bool TriggerFunctionExists,
+    bool ReferenceNumbersNeedBackfill);
 
 public sealed record TenantTestProductDetails(
     int Id,

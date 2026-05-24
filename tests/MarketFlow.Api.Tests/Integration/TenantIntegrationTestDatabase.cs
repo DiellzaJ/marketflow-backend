@@ -532,6 +532,26 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             cancellationToken);
     }
 
+    public async Task MakeSaleReferenceNumberNullableAndNullAsync(
+        string schemaName,
+        int saleId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        await ExecuteAsync(
+            connection,
+            $"""
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ALTER COLUMN reference_number DROP NOT NULL;
+            UPDATE {QuoteIdentifier(schemaName)}.sales
+            SET reference_number = NULL
+            WHERE id = @sale_id;
+            """,
+            cancellationToken,
+            new NpgsqlParameter("sale_id", saleId));
+    }
+
     public async Task<TenantSaleReferenceSchemaState> GetSaleReferenceSchemaStateAsync(
         string schemaName,
         CancellationToken cancellationToken = default)
@@ -546,6 +566,14 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                          AND table_name = 'sales'
                          AND column_name = 'reference_number'
                    ) AS column_exists,
+                   EXISTS (
+                       SELECT 1
+                       FROM information_schema.columns
+                       WHERE table_schema = @schema_name
+                         AND table_name = 'sales'
+                         AND column_name = 'reference_number'
+                         AND is_nullable = 'YES'
+                   ) AS column_is_nullable,
                    EXISTS (
                        SELECT 1
                        FROM pg_catalog.pg_trigger trigger
@@ -568,8 +596,33 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 reader.GetBoolean(0),
                 reader.GetBoolean(1),
                 reader.GetBoolean(2),
-                reader.GetBoolean(3))
+                reader.GetBoolean(3),
+                reader.GetBoolean(4),
+                await HasSaleReferenceNumbersNeedingBackfillAsync(schemaName, reader.GetBoolean(0), cancellationToken))
             : throw new InvalidOperationException("Sale reference schema state was not returned.");
+    }
+
+    private async Task<bool> HasSaleReferenceNumbersNeedingBackfillAsync(
+        string schemaName,
+        bool referenceNumberColumnExists,
+        CancellationToken cancellationToken)
+    {
+        if (!referenceNumberColumnExists)
+        {
+            return false;
+        }
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        return await ExecuteScalarAsync<bool>(
+            connection,
+            $"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM {QuoteIdentifier(schemaName)}.sales
+                WHERE reference_number IS NULL OR btrim(reference_number) = ''
+            );
+            """,
+            cancellationToken);
     }
 
     public async Task<TenantTestStaffAssignment> InsertStaffAssignmentAsync(

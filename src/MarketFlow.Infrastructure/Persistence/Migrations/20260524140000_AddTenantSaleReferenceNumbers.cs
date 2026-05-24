@@ -34,8 +34,10 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                 AS $$
                 DECLARE
                     reference_number_column_exists boolean;
+                    reference_number_column_is_nullable boolean;
                     reference_number_index_exists boolean;
                     reference_number_trigger_exists boolean;
+                    reference_numbers_need_backfill boolean;
                 BEGIN
                     IF p_schema_name IS NULL OR p_schema_name !~ '^[a-zA-Z_][a-zA-Z0-9_]{0,62}$' THEN
                         RAISE EXCEPTION 'Invalid tenant schema name: %', p_schema_name;
@@ -54,6 +56,16 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                     )
                     INTO reference_number_column_exists;
 
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = p_schema_name
+                          AND table_name = 'sales'
+                          AND column_name = 'reference_number'
+                          AND is_nullable = 'YES'
+                    )
+                    INTO reference_number_column_is_nullable;
+
                     SELECT to_regclass(format('%I.ux_sales_reference_number', p_schema_name)) IS NOT NULL
                     INTO reference_number_index_exists;
 
@@ -68,7 +80,22 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                     )
                     INTO reference_number_trigger_exists;
 
+                    IF reference_number_column_exists THEN
+                        EXECUTE format($tenant$
+                            SELECT EXISTS (
+                                SELECT 1
+                                FROM %1$I.sales
+                                WHERE reference_number IS NULL OR btrim(reference_number) = ''
+                            );
+                        $tenant$, p_schema_name)
+                        INTO reference_numbers_need_backfill;
+                    ELSE
+                        reference_numbers_need_backfill := FALSE;
+                    END IF;
+
                     IF reference_number_column_exists
+                        AND NOT reference_number_column_is_nullable
+                        AND NOT reference_numbers_need_backfill
                         AND reference_number_index_exists
                         AND reference_number_trigger_exists THEN
                         RETURN;
@@ -81,15 +108,23 @@ namespace MarketFlow.Infrastructure.Persistence.Migrations
                         $tenant$, p_schema_name);
                     END IF;
 
-                    IF NOT reference_number_column_exists OR NOT reference_number_index_exists THEN
+                    IF NOT reference_number_column_exists OR NOT reference_number_index_exists OR reference_numbers_need_backfill THEN
                         EXECUTE format($tenant$
                         UPDATE %1$I.sales
                         SET reference_number = 'SALE-' || lpad(id::text, 6, '0')
                         WHERE reference_number IS NULL OR btrim(reference_number) = '';
+                        $tenant$, p_schema_name);
+                    END IF;
 
+                    IF NOT reference_number_column_exists OR reference_number_column_is_nullable OR reference_numbers_need_backfill THEN
+                        EXECUTE format($tenant$
                         ALTER TABLE %1$I.sales
                             ALTER COLUMN reference_number SET NOT NULL;
+                        $tenant$, p_schema_name);
+                    END IF;
 
+                    IF NOT reference_number_index_exists THEN
+                        EXECUTE format($tenant$
                         CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_reference_number
                             ON %1$I.sales(reference_number);
                         $tenant$, p_schema_name);
