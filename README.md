@@ -1,90 +1,262 @@
-# marketflow-backend
+# MarketFlow
 
-## Configuration
+MarketFlow is a multi-tenant market management system for retail companies. It helps companies manage users, markets, departments, inventory, purchases, sales/POS checkout, sales history, reports, and low-stock tracking from one centralized application.
 
-Copy `.env.example` to `.env` for local development and keep real credentials in `.env` or your deployment environment variables.
+The project uses an ASP.NET Core backend, a React + TypeScript frontend, and PostgreSQL schema-based multi-tenancy so each company has isolated operational data.
 
-Do not store secrets in tracked files such as `appsettings.json`, `appsettings.Development.json`, or `launchSettings.json`.
+## Project Members
 
-## Deployment Notes
+| # | Name |
+| --- | --- |
+| 1 | Dren Morina |
+| 2 | Riga Ferati |
+| 3 | Djellza Jasiqi |
+| 4 | Dituri Kodra |
+| 5 | Nora Morina |
 
-Require HTTPS for API traffic in deployed environments. Company onboarding receives the initial CompanyAdmin password in plaintext over the request body before the backend hashes it with BCrypt.
+## Architecture Overview
 
-## Users API
+| Layer | Technology | Purpose |
+| --- | --- | --- |
+| Backend | ASP.NET Core | REST API, authentication, authorization, business logic, and tenant-aware data access. |
+| Frontend | React, TypeScript, Vite | User interface for administration, inventory, POS, sales history, and reports. |
+| Database | PostgreSQL | Global data and schema-based tenant data isolation. |
+| Testing | xUnit, Vitest | Backend and frontend automated testing. |
 
-Operational users (`MainOperator`, `DepartmentManager`, `InventoryEmployee`, and `Seller`) must be created with a `marketId`. They can also include a `departmentId` for an optional department assignment inside that market. `CompanyAdmin` users should omit both fields.
+### Multi-Tenancy
 
-User responses include the current active assignment when one exists:
+MarketFlow uses PostgreSQL schemas to isolate company data:
 
-```json
-{
-  "id": 42,
-  "fullName": "Store Seller",
-  "email": "seller@freshmarket.test",
-  "roleName": "Seller",
-  "isActive": true,
-  "assignment": {
-    "marketId": 3,
-    "marketName": "Central Market",
-    "departmentId": 4,
-    "departmentName": "Produce"
-  }
-}
+- Shared system data is stored in the `public` schema.
+- Each company has its own tenant schema.
+- Operational data such as markets, departments, inventory, purchases, and sales is stored inside the tenant schema.
+
+### Authentication
+
+Users log in through the API and receive a JWT access token. The frontend sends this token with secured requests using the `Authorization: Bearer` header. The backend validates the token and applies role-based permissions before returning data.
+
+## Main Modules
+
+| Module | Description |
+| --- | --- |
+| Authentication and Authorization | Login, JWT authentication, and role-based permissions. |
+| Companies | Company onboarding and tenant creation. |
+| Users | User management, roles, activation state, and staff assignments. |
+| Markets | Market creation and management. |
+| Departments | Department management inside markets. |
+| Inventory | Stock records, quantities, adjustments, transfers, and availability. |
+| Inventory Movements | History of stock changes from purchases, sales, transfers, and adjustments. |
+| Purchases | Purchase management and stock receiving. |
+| Sales/POS | Checkout flow, sale creation, sale items, totals, and payment method. |
+| Sales History | Paginated sales list with filtering and sorting for reporting pages. |
+| Reports | Reporting data for operational analysis and dashboards. |
+| Low-Stock Support | Low-stock monitoring and alert support. |
+
+## Roles and Access
+
+| Role | Access Overview |
+| --- | --- |
+| `RootAdmin` | Platform administration and company onboarding. No tenant inventory or sales access by default. |
+| `CompanyAdmin` | Full access inside the company tenant. |
+| `MainOperator` | Access to assigned market operations. |
+| `DepartmentManager` | Access to assigned department inventory and sales data. |
+| `InventoryEmployee` | Inventory-focused access for assigned market or department. |
+| `Seller` | POS-focused access for creating sales and viewing checkout availability. |
+
+Access is controlled by both role permissions and staff assignment. For example, a `MainOperator` sees data for the assigned market, while a `DepartmentManager` sees data for the assigned department.
+
+## Technologies Used
+
+| Area | Technologies |
+| --- | --- |
+| Backend | ASP.NET Core, Entity Framework Core, PostgreSQL, JWT Bearer authentication |
+| Frontend | React, TypeScript, Vite, Vitest |
+| Tools | GitHub, GitHub Projects, DBeaver, .NET SDK, npm |
+
+## API Overview
+
+Main API groups:
+
+| Endpoint Group | Purpose |
+| --- | --- |
+| `/api/auth` | Authentication and token handling. |
+| `/api/users` | User and staff assignment management. |
+| `/api/products` | Product catalog management. |
+| `/api/inventory` | Inventory, stock operations, low-stock data, and inventory movements. |
+| `/api/purchases` | Purchase and receiving workflows. |
+| `/api/sales` | Sales, POS checkout, sale details, and sales history. |
+| `/api/reports` | Reporting data for dashboards and analytics. |
+
+Secured requests use:
+
+```http
+Authorization: Bearer eyJhbGciOi...
 ```
 
-When a user is assigned only to a market, `departmentId` and `departmentName` are `null`. Company users without an active staff assignment return `assignment: null`.
+## Backend Setup
 
-Assignment summaries are read from each company's tenant schema. If a tenant schema is temporarily missing assignment tables or lacks read privileges, user list responses still return the global user records and omit assignment summaries for that affected schema while the backend logs a warning. User creation still requires a writable tenant `staff_assignments` table so assignment insert failures roll back the created user.
+### Prerequisites
 
-For companies with large user counts, monitor the user list assignment lookup query against `staff_assignments`. The backend batches assignment summary lookups per tenant schema in groups of 1,000 users and uses the existing `idx_staff_user` index.
+- .NET SDK 10.0 or compatible newer SDK
+- PostgreSQL
+- Optional Redis for cache-backed features
 
-Controller tests cover the user API response shape for assignment summaries. Add database-backed integration or E2E coverage when a test Postgres tenant schema is available in CI.
-
-## Products API
-
-Product removal uses soft-deactivation. `DELETE /api/products/{id}` remains supported for existing clients, but it marks the product inactive instead of deleting the row. New clients should prefer the explicit state endpoints:
-
-- `POST /api/products/{id}/deactivate`
-- `POST /api/products/{id}/reactivate`
-
-Default product list and detail responses only return active products. Product list callers can opt into inactive data with `includeInactive=true`, or request only inactive products with `isActive=false`. Generic product `PUT` and `PATCH` requests do not change `IsActive`; use the explicit deactivate/reactivate endpoints for state transitions.
-
-## Inventory Authorization
-
-The backend inventory matrix is defined in `InventoryPermissionMatrix` and uses these permission keys for API policies, seeded role permissions, and frontend sidebar/route guard parity:
-
-| Role | Scope | View inventory | Create records | Update stock | Adjust stock | Delete records | View movements | Transfer stock |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RootAdmin | No tenant inventory access | No | No | No | No | No | No | No |
-| CompanyAdmin | All company inventory | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| MainOperator | Assigned market inventory | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| DepartmentManager | Assigned department inventory | Yes | No | Yes | Yes | No | Yes | Yes |
-| InventoryEmployee | Assigned market or department inventory | Yes | No | Yes | Yes | No | Yes | No |
-| Seller | Assigned POS market availability only | Yes | No | No | No | No | No | No |
-
-Permission keys:
-
-- `inventory:read` gates inventory visibility and POS availability reads.
-- `inventory:create` gates creating inventory records.
-- `stock:update` gates full stock updates, including `PUT /api/inventory/{id}`.
-- `stock:adjust` gates stock adjustments, including `PATCH /api/inventory/{id}`.
-- `inventory:delete` gates deleting inventory records.
-- `inventory-movements:read` gates inventory movement history.
-- `stock:transfer` gates transfers between allowed inventory scopes.
-
-Scope rules are enforced from the user's tenant assignment: `CompanyAdmin` has company-wide scope, `MainOperator` is limited to the assigned market, `DepartmentManager` is limited to the assigned department, `InventoryEmployee` is limited to the assigned market or department when present, and `Seller` only reads availability for POS flows. `RootAdmin` is a platform role and has no tenant inventory access by default.
-
-## Product Persistence Notes
-
-Tenant product rows use `is_active` as soft-delete state. This preserves existing foreign-key references from inventory, purchase items, and sale items, so historical operational data remains valid after a product is deactivated.
-
-Product active-state updates are conditional (`is_active <> target_state`) so concurrent deactivate/reactivate requests can distinguish an actual state transition from an already-active or already-inactive conflict.
-
-An opt-in live smoke test covers the graceful fallback path for a tenant schema that is present but missing `staff_assignments`. To run it, point `MARKETFLOW_TEST_DB_CONNECTION_STRING` at a disposable Postgres database that has the global MarketFlow migrations applied, then run the normal test command:
+### Restore Packages
 
 ```bash
-MARKETFLOW_TEST_DB_CONNECTION_STRING="Host=localhost;Port=5432;Database=marketflow_test;Username=postgres;Password=postgres" \
+dotnet restore MarketFlow.sln
+```
+
+### Configure Environment
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+Required configuration:
+
+| Key | Purpose |
+| --- | --- |
+| `DB_CONNECTION_STRING` or `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` | PostgreSQL connection configuration. |
+| `JWT_SECRET` | Secret used to sign JWT tokens. |
+| `JWT_ISSUER` | JWT issuer. |
+| `JWT_AUDIENCE` | JWT audience. |
+| `ROOT_ADMIN_FULL_NAME` | Seeded root administrator name. |
+| `ROOT_ADMIN_EMAIL` | Seeded root administrator email. |
+| `ROOT_ADMIN_PASSWORD` | Seeded root administrator password. |
+| `TENANT_SCHEMA_PREFIX` | Prefix for tenant schemas. |
+| `FRONTEND_URL` | Allowed frontend URL for CORS. |
+
+Optional configuration:
+
+| Key | Purpose |
+| --- | --- |
+| `REDIS_CONNECTION` | Redis connection string. |
+| `OPENAI_API_KEY` | API key for future AI assistant integration. |
+| `OPENAI_MODEL` | OpenAI model configuration. |
+
+### Apply Migrations
+
+```bash
+dotnet ef database update \
+  --project src/MarketFlow.Infrastructure/MarketFlow.Infrastructure.csproj \
+  --startup-project src/MarketFlow.Api/MarketFlow.Api.csproj
+```
+
+### Run Backend
+
+```bash
+dotnet run --project src/MarketFlow.Api/MarketFlow.Api.csproj
+```
+
+Default development API URL:
+
+```text
+http://localhost:5000
+```
+
+## Frontend Setup
+
+Run these commands from the frontend project directory.
+
+### Install Packages
+
+```bash
+npm install
+```
+
+### Run Frontend
+
+```bash
+npm run dev
+```
+
+Default Vite URL:
+
+```text
+http://localhost:5173
+```
+
+The frontend should call the backend API at:
+
+```text
+http://localhost:5000
+```
+
+## Application Usage Flow
+
+1. `RootAdmin` logs in.
+2. `RootAdmin` creates a company.
+3. The system creates the company's tenant schema.
+4. `CompanyAdmin` logs in and creates markets and departments.
+5. `CompanyAdmin` creates users and assigns staff to markets or departments.
+6. Inventory records are created and updated.
+7. Purchases are created and received into stock.
+8. Sellers use the POS checkout flow to create sales.
+9. Managers review inventory movements, sales history, low-stock data, and reports.
+
+## Testing
+
+### Backend
+
+```bash
 dotnet test tests/MarketFlow.Api.Tests/MarketFlow.Api.Tests.csproj
 ```
 
-For production deployments with multi-region or cross-database tenancy, verify that the API role has read access to each tenant schema's `markets`, `departments`, and `staff_assignments` tables, write access to `staff_assignments` for user creation, and acceptable latency for per-schema assignment summary lookups.
+Run all solution tests:
+
+```bash
+dotnet test MarketFlow.sln
+```
+
+### Frontend
+
+```bash
+npm run test
+npm run lint
+npm run build
+```
+
+## Project Structure
+
+```text
+marketflow-backend/
+|-- MarketFlow.sln
+|-- src/
+|   |-- MarketFlow.Api/
+|   |-- MarketFlow.Application/
+|   |-- MarketFlow.Infrastructure/
+|   `-- MarketFlow.Domain/
+`-- tests/
+    `-- MarketFlow.Api.Tests/
+```
+
+```text
+marketflow-frontend/
+|-- src/
+|   |-- api/
+|   |-- components/
+|   |-- features/
+|   |-- pages/
+|   |-- routes/
+|   `-- types/
+|-- package.json
+`-- vite.config.ts
+```
+
+## Future Improvements
+
+- More advanced reports and analytics.
+- Export reports to CSV, Excel, and PDF.
+- Redis caching for faster lookups and reporting queries.
+- OpenAI/AI assistant support for smart insights.
+- Dashboard pages with charts, KPIs, and trends.
+
+## Security Notes
+
+- Use HTTPS in deployed environments.
+- Keep secrets outside source control.
+- Store production credentials in environment variables or a secure secret manager.
+- Tenant data should always be accessed through authenticated and scoped API requests.
