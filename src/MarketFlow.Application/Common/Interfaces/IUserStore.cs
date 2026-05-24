@@ -20,6 +20,10 @@ public interface IUserStore
         CreateUserRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<bool> CompanyExistsAsync(
+        int companyId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Checks whether the market exists in the selected company's tenant schema.
     /// </summary>

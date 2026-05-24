@@ -191,11 +191,20 @@ public sealed class UserStore : IUserStore
                     SELECT 1
                     FROM {quotedSchemaName}.markets
                     WHERE id = @market_id
+                      AND is_active = TRUE
                 ) AS "Value"
                 """,
                 new NpgsqlParameter("market_id", marketId))
             .FirstOrDefaultAsync(cancellationToken);
 #pragma warning restore EF1002
+    }
+
+    public async Task<bool> CompanyExistsAsync(
+        int companyId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Companies
+            .AnyAsync(x => x.Id == companyId && x.IsActive, cancellationToken);
     }
 
     public async Task<bool> DepartmentExistsAsync(
@@ -220,9 +229,13 @@ public sealed class UserStore : IUserStore
                 $"""
                 SELECT EXISTS (
                     SELECT 1
-                    FROM {quotedSchemaName}.departments
-                    WHERE id = @department_id
-                      AND market_id = @market_id
+                    FROM {quotedSchemaName}.departments d
+                    INNER JOIN {quotedSchemaName}.markets m
+                        ON m.id = d.market_id
+                    WHERE d.id = @department_id
+                      AND d.market_id = @market_id
+                      AND d.is_active = TRUE
+                      AND m.is_active = TRUE
                 ) AS "Value"
                 """,
                 new NpgsqlParameter("department_id", departmentId),

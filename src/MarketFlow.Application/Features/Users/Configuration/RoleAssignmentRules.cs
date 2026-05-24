@@ -18,6 +18,22 @@ public static class RoleAssignmentRules
         [CompanyAdmin] = new RoleRequirements(AllowsMarket: false, AllowsDepartment: false)
     };
 
+    private static readonly HashSet<string> CreatableRoles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        CompanyAdmin,
+        Seller,
+        MainOperator,
+        DepartmentManager,
+        InventoryEmployee
+    };
+
+    private static readonly Dictionary<string, HashSet<string>> AllowedTargetRolesByCaller =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            [RootAdmin] = CreatableRoles,
+            [CompanyAdmin] = CreatableRoles
+        };
+
     public static string NormalizeRoleName(string roleName)
     {
         var trimmedRoleName = roleName.Trim();
@@ -50,6 +66,36 @@ public static class RoleAssignmentRules
         }
 
         return requirements.Validate(normalizedRoleName, marketId, departmentId);
+    }
+
+    public static string? ValidateCreatePermission(string? callerRoleName, string targetRoleName)
+    {
+        var normalizedTargetRoleName = NormalizeRoleName(targetRoleName);
+
+        if (string.IsNullOrWhiteSpace(normalizedTargetRoleName))
+        {
+            return "Role is required.";
+        }
+
+        if (string.Equals(normalizedTargetRoleName, RootAdmin, StringComparison.OrdinalIgnoreCase))
+        {
+            return "RootAdmin users cannot be created through this endpoint.";
+        }
+
+        if (!CreatableRoles.Contains(normalizedTargetRoleName))
+        {
+            return $"Role '{normalizedTargetRoleName}' cannot be created through this endpoint.";
+        }
+
+        var normalizedCallerRoleName = NormalizeRoleName(callerRoleName ?? string.Empty);
+
+        if (AllowedTargetRolesByCaller.TryGetValue(normalizedCallerRoleName, out var allowedTargetRoles) &&
+            allowedTargetRoles.Contains(normalizedTargetRoleName))
+        {
+            return null;
+        }
+
+        return $"Role '{normalizedCallerRoleName}' is not allowed to create {normalizedTargetRoleName} users.";
     }
 
     private sealed record RoleRequirements(
