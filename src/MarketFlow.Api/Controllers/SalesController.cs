@@ -20,6 +20,16 @@ public class SalesController(ISalesService salesService) : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("history")]
+    [Authorize(Policy = AuthorizationPolicies.ReadSales)]
+    public async Task<ActionResult<ServiceResult<PagedResult<SaleHistoryItemDto>>>> GetHistoryAsync(
+        [FromQuery] SaleHistoryQuery query,
+        CancellationToken cancellationToken)
+    {
+        var result = await salesService.GetSalesHistoryAsync(query, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
     [HttpGet("{id:int}")]
     [Authorize(Policy = AuthorizationPolicies.ReadSales)]
     public async Task<ActionResult<ServiceResult<SaleDetailsResponse>>> GetByIdAsync(

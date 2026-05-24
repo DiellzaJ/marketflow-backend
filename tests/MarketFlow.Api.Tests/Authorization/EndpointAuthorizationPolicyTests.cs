@@ -17,6 +17,7 @@ public sealed class EndpointAuthorizationPolicyTests
         { typeof(ProductsController), nameof(ProductsController.DeactivateAsync), AuthorizationPolicies.DeleteProducts },
         { typeof(ProductsController), nameof(ProductsController.ReactivateAsync), AuthorizationPolicies.UpdateProducts },
         { typeof(SalesController), nameof(SalesController.GetAsync), AuthorizationPolicies.ReadSales },
+        { typeof(SalesController), nameof(SalesController.GetHistoryAsync), AuthorizationPolicies.ReadSales },
         { typeof(SalesController), nameof(SalesController.GetByIdAsync), AuthorizationPolicies.ReadSales },
         { typeof(SalesController), nameof(SalesController.CreateAsync), AuthorizationPolicies.CreateSales },
         { typeof(SalesController), nameof(SalesController.UpdateAsync), AuthorizationPolicies.UpdateSales },

@@ -170,6 +170,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         await EnsureInventoryMovementsTableAsync(connection, schemaName, cancellationToken);
         await EnsureLowStockAlertsTableAsync(connection, schemaName, cancellationToken);
         await EnsureSaleReferenceNumbersAsync(connection, schemaName, cancellationToken);
+        await EnsureSalesStatusAsync(connection, schemaName, cancellationToken);
 
         if (generatedSchemaName || dropSchemaOnDispose)
         {
@@ -473,6 +474,10 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         int createdByUserId,
         string referenceNumber,
         int? departmentId = null,
+        DateOnly? saleDate = null,
+        string status = "Paid",
+        string paymentMethod = "Cash",
+        decimal totalAmount = 0,
         CancellationToken cancellationToken = default)
     {
         await using var connection = await OpenConnectionAsync(cancellationToken);
@@ -485,6 +490,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 department_id,
                 created_by_user_id,
                 sale_date,
+                status,
                 payment_method,
                 total_amount,
                 reference_number)
@@ -492,9 +498,10 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
                 @market_id,
                 @department_id,
                 @created_by_user_id,
-                CURRENT_DATE,
-                'Cash',
-                0,
+                @sale_date,
+                @status,
+                @payment_method,
+                @total_amount,
                 @reference_number)
             RETURNING id;
             """,
@@ -502,6 +509,10 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             new NpgsqlParameter("market_id", marketId),
             new NpgsqlParameter("department_id", departmentId is null ? DBNull.Value : departmentId),
             new NpgsqlParameter("created_by_user_id", createdByUserId),
+            new NpgsqlParameter("sale_date", saleDate ?? DateOnly.FromDateTime(DateTime.UtcNow)),
+            new NpgsqlParameter("status", status),
+            new NpgsqlParameter("payment_method", paymentMethod),
+            new NpgsqlParameter("total_amount", totalAmount),
             new NpgsqlParameter("reference_number", referenceNumber));
     }
 
@@ -1180,6 +1191,30 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
             );
             CREATE INDEX IF NOT EXISTS idx_inventory_movements_inventory ON {QuoteIdentifier(schemaName)}.inventory_movements(inventory_id);
             CREATE INDEX IF NOT EXISTS idx_inventory_movements_created ON {QuoteIdentifier(schemaName)}.inventory_movements(created_at);
+            """,
+            cancellationToken);
+    }
+
+    private static async Task EnsureSalesStatusAsync(
+        NpgsqlConnection connection,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteAsync(
+            connection,
+            $"""
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'Paid';
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                DROP CONSTRAINT IF EXISTS sales_status_check;
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.sales
+                ADD CONSTRAINT sales_status_check
+                CHECK (status IN ('Draft', 'Pending', 'Paid', 'Cancelled'));
+
+            CREATE INDEX IF NOT EXISTS idx_sales_status
+                ON {QuoteIdentifier(schemaName)}.sales(status);
             """,
             cancellationToken);
     }

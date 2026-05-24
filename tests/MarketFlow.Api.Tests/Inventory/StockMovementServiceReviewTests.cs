@@ -108,6 +108,7 @@ public sealed class StockMovementServiceReviewTests
         public Task<bool> TransferInventoryAsync(TransferInventoryRequest request, int? updatedByUserId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(SaleHistoryQuery query, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDetailsResponse?> GetSaleDetailsAsync(int id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto?> UpdateSaleAsync(int id, UpdateSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<SaleDto?> PatchSaleAsync(int id, PatchSaleRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();

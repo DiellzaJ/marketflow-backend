@@ -15,6 +15,7 @@ using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Purchases.DTOs;
+using MarketFlow.Application.Features.Sales.Configuration;
 using MarketFlow.Application.Features.Sales.DTOs;
 using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Application.Common.Exceptions;
@@ -1532,6 +1533,104 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return sales;
     }
 
+    public async Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(
+        SaleHistoryQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        return await ExecuteWithSaleReferenceNumberRecoveryAsync(
+            schemaName,
+            () => GetSalesHistoryCoreAsync(schemaName, query, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryCoreAsync(
+        string schemaName,
+        SaleHistoryQuery query,
+        CancellationToken cancellationToken)
+    {
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var whereClause = BuildSalesHistoryWhereClause(query, scope);
+        var sortColumn = GetSalesHistorySortColumn(query.SortBy);
+        var sortDirection = string.Equals(query.SortDirection, "asc", StringComparison.OrdinalIgnoreCase)
+            ? "ASC"
+            : "DESC";
+        var offset = ((long)query.Page - 1L) * query.PageSize;
+        var sales = new List<SaleHistoryItemDto>();
+
+        await using var countCommand = await CreateCommandAsync($"""
+            SELECT COUNT(*)
+            FROM {schemaName}.sales s
+            LEFT JOIN {schemaName}.markets m ON m.id = s.market_id
+            LEFT JOIN public.users u ON u.id = s.created_by_user_id
+            {whereClause};
+            """, cancellationToken);
+        AddSalesHistoryParameters(countCommand, query);
+        AddInventoryScopeParameters(countCommand, scope);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT s.id,
+                   s.reference_number,
+                   s.sale_date,
+                   s.created_at,
+                   s.market_id,
+                   m.name AS market_name,
+                   s.created_by_user_id,
+                   u.full_name AS cashier_name,
+                   s.status,
+                   s.payment_method,
+                   s.total_amount,
+                   COALESCE(items.item_count, 0) AS item_count
+            FROM {schemaName}.sales s
+            LEFT JOIN {schemaName}.markets m ON m.id = s.market_id
+            LEFT JOIN public.users u ON u.id = s.created_by_user_id
+            LEFT JOIN (
+                SELECT sale_id, COUNT(*)::int AS item_count
+                FROM {schemaName}.sale_items
+                GROUP BY sale_id
+            ) items ON items.sale_id = s.id
+            {whereClause}
+            ORDER BY {sortColumn} {sortDirection}, s.id DESC
+            LIMIT @page_size OFFSET @offset;
+            """, cancellationToken);
+        AddSalesHistoryParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+        command.Parameters.AddWithValue("page_size", query.PageSize);
+        command.Parameters.AddWithValue("offset", offset);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            sales.Add(new SaleHistoryItemDto
+            {
+                Id = reader.GetInt32(0),
+                ReferenceNumber = reader.GetString(1),
+                SaleDate = reader.GetFieldValue<DateOnly>(2),
+                CreatedAt = reader.GetFieldValue<DateTimeOffset>(3),
+                MarketId = reader.GetInt32(4),
+                MarketName = reader.IsDBNull(5) ? null : reader.GetString(5),
+                CashierUserId = reader.GetInt32(6),
+                CashierName = reader.IsDBNull(7) ? null : reader.GetString(7),
+                Status = reader.GetString(8),
+                PaymentMethod = reader.GetString(9),
+                TotalAmount = reader.GetDecimal(10),
+                ItemCount = reader.GetInt32(11)
+            });
+        }
+
+        return new PagedResult<SaleHistoryItemDto>
+        {
+            Items = sales,
+            Page = query.Page,
+            PageSize = query.PageSize,
+            TotalCount = totalCount,
+            TotalPages = totalCount == 0 ? 0 : (int)Math.Ceiling(totalCount / (double)query.PageSize)
+        };
+    }
+
     public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
@@ -1658,6 +1757,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 department_id,
                 created_by_user_id,
                 sale_date,
+                status,
                 payment_method,
                 discount_amount,
                 total_amount,
@@ -1667,6 +1767,7 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
                 @department_id,
                 @created_by_user_id,
                 @sale_date,
+                'Paid',
                 @payment_method,
                 @discount_amount,
                 @total_amount,
@@ -2378,6 +2479,99 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             InventoryScopeKind.Department =>
                 $"{prefix} s.market_id = @scope_market_id AND s.department_id = @scope_department_id",
             _ => $"{prefix} FALSE"
+        };
+    }
+
+    private static string BuildSalesHistoryWhereClause(SaleHistoryQuery query, InventoryScope scope)
+    {
+        var conditions = new List<string>();
+
+        switch (scope.Kind)
+        {
+            case InventoryScopeKind.Company:
+                break;
+            case InventoryScopeKind.Market:
+                conditions.Add("s.market_id = @scope_market_id");
+                break;
+            case InventoryScopeKind.Department:
+                conditions.Add("s.market_id = @scope_market_id");
+                conditions.Add("s.department_id = @scope_department_id");
+                break;
+            default:
+                conditions.Add("FALSE");
+                break;
+        }
+
+        if (query.DateFrom.HasValue)
+        {
+            conditions.Add("s.sale_date >= @date_from");
+        }
+
+        if (query.DateTo.HasValue)
+        {
+            conditions.Add("s.sale_date <= @date_to");
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            conditions.Add("s.market_id = @market_id");
+        }
+
+        if (query.CashierUserId.HasValue)
+        {
+            conditions.Add("s.created_by_user_id = @cashier_user_id");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Status))
+        {
+            conditions.Add("s.status = @status");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static void AddSalesHistoryParameters(NpgsqlCommand command, SaleHistoryQuery query)
+    {
+        if (query.DateFrom.HasValue)
+        {
+            command.Parameters.AddWithValue("date_from", query.DateFrom.Value);
+        }
+
+        if (query.DateTo.HasValue)
+        {
+            command.Parameters.AddWithValue("date_to", query.DateTo.Value);
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", query.MarketId.Value);
+        }
+
+        if (query.CashierUserId.HasValue)
+        {
+            command.Parameters.AddWithValue("cashier_user_id", query.CashierUserId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Status))
+        {
+            command.Parameters.AddWithValue("status", query.Status.Trim());
+        }
+    }
+
+    private static string GetSalesHistorySortColumn(string? sortBy)
+    {
+        return sortBy?.Trim() switch
+        {
+            { } value when string.Equals(value, SalesHistorySortFields.ReferenceNumber, StringComparison.OrdinalIgnoreCase) => "s.reference_number",
+            { } value when string.Equals(value, SalesHistorySortFields.MarketName, StringComparison.OrdinalIgnoreCase) => "m.name",
+            { } value when string.Equals(value, SalesHistorySortFields.CashierName, StringComparison.OrdinalIgnoreCase) => "u.full_name",
+            { } value when string.Equals(value, SalesHistorySortFields.Status, StringComparison.OrdinalIgnoreCase) => "s.status",
+            { } value when string.Equals(value, SalesHistorySortFields.PaymentMethod, StringComparison.OrdinalIgnoreCase) => "s.payment_method",
+            { } value when string.Equals(value, SalesHistorySortFields.TotalAmount, StringComparison.OrdinalIgnoreCase) => "s.total_amount",
+            { } value when string.Equals(value, SalesHistorySortFields.ItemCount, StringComparison.OrdinalIgnoreCase) => "item_count",
+            _ => "s.sale_date"
         };
     }
 
