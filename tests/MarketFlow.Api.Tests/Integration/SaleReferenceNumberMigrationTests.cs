@@ -7,6 +7,33 @@ namespace MarketFlow.Api.Tests.Integration;
 
 public sealed class SaleReferenceNumberMigrationTests
 {
+    [Fact]
+    public void AddSalesDepartmentScope_PreservesAllTenantProvisioningSteps()
+    {
+        var sql = GetUpSql(typeof(AddSalesDepartmentScope));
+
+        Assert.Contains(
+            "PERFORM public.create_tenant_schema(NEW.schema_name);",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "PERFORM public.ensure_tenant_inventory_movements_table(NEW.schema_name);",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "PERFORM public.ensure_tenant_low_stock_alerts_table(NEW.schema_name);",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "PERFORM public.ensure_tenant_sale_reference_numbers(NEW.schema_name);",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            "PERFORM public.ensure_tenant_sales_department_scope(NEW.schema_name);",
+            sql,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(typeof(AddTenantSaleReferenceNumbers))]
     [InlineData(typeof(OptimizeTenantSaleReferenceNumberEnsureFunction))]
