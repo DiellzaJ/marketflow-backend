@@ -205,6 +205,55 @@ public sealed class PurchaseReceiptIntegrationTests
         Assert.Equal(7, fullyReceivedInventory?.Quantity);
     }
 
+    [PostgresIntegrationFact]
+    public async Task ReceivePurchaseEndpoint_WithDuplicateProductLines_ReceivesWithoutServerError()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+
+        await using var database = new TenantIntegrationTestDatabase(options);
+        using var apiFactory = new TenantApiFactory(options);
+
+        await database.EnsureRequiredRolesAsync();
+
+        var company = await database.CreateCompanyAsync(
+            database.CreateUniqueSchemaName("purchase_receive_duplicate_lines"),
+            name: "purchase_receive_duplicate_lines",
+            dropSchemaOnDispose: true);
+        var market = await database.InsertMarketAsync(company.SchemaName, "Market A");
+        var supplier = await database.InsertSupplierAsync(company.SchemaName, "Receipt Supplier");
+        var product = await database.InsertProductAsync(company.SchemaName, name: "Duplicate Line Product");
+        var inventory = await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 1);
+        var user = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+
+        using var client = apiFactory.CreateAuthenticatedClient(database, user);
+
+        var purchase = await database.InsertPurchaseAsync(
+            company.SchemaName,
+            supplier.Id,
+            market.Id,
+            user.Id,
+            totalAmount: 40);
+        await database.InsertPurchaseItemAsync(company.SchemaName, purchase.Id, product.Id, quantity: 2, unitCost: 8);
+        await database.InsertPurchaseItemAsync(company.SchemaName, purchase.Id, product.Id, quantity: 3, unitCost: 8);
+
+        var response = await client.PostAsJsonAsync(
+            $"/api/purchases/{purchase.Id}/receive",
+            new ReceivePurchaseRequest());
+
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<ServiceResult<PurchaseDto>>();
+        Assert.Equal("Received", result?.Data?.Status);
+        Assert.Equal(5, result?.Data?.ReceivedQuantity);
+
+        var updatedInventory = await database.GetInventoryDetailsAsync(company.SchemaName, inventory.Id);
+        Assert.Equal(6, updatedInventory?.Quantity);
+    }
+
     private static async Task<IReadOnlyList<InventoryMovementDto>> GetInventoryMovementsAsync(
         HttpClient client,
         int inventoryId)

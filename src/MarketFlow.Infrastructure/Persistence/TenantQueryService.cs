@@ -1956,7 +1956,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
         var purchases = new List<PurchaseDto>();
 
         await using var command = await CreateCommandAsync($"""
@@ -1995,7 +1994,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
         return await GetPurchaseWithItemsAsync(schemaName, id, cancellationToken);
     }
 
@@ -2005,7 +2003,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
         var status = NormalizePurchaseStatus(request.Status);
         var receivesPurchase = string.Equals(status, "Received", StringComparison.OrdinalIgnoreCase);
 
@@ -2107,7 +2104,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
         var status = NormalizePurchaseStatus(request.Status);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
@@ -2196,7 +2192,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
@@ -2272,7 +2267,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
 
         await using var transaction = await BeginTransactionAsync(cancellationToken);
         var currentPurchase = await GetPurchaseReceiptStateForUpdateAsync(schemaName, id, cancellationToken, transaction);
@@ -2305,20 +2299,43 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
 
         foreach (var (productId, quantityToReceive) in receiptQuantities)
         {
-            var item = items.SingleOrDefault(candidate => candidate.ProductId == productId);
-            if (item is null || quantityToReceive <= 0 || item.ReceivedQuantity + quantityToReceive > item.Quantity)
+            var matchingItems = items
+                .Where(candidate => candidate.ProductId == productId)
+                .ToList();
+            var remainingForProduct = matchingItems.Sum(item => item.Quantity - item.ReceivedQuantity);
+
+            if (matchingItems.Count == 0 || quantityToReceive <= 0 || quantityToReceive > remainingForProduct)
             {
                 return null;
             }
 
-            await using var updateItemCommand = await CreateCommandAsync($"""
-                UPDATE {schemaName}.purchase_items
-                SET received_quantity = received_quantity + @quantity_to_receive
-                WHERE id = @item_id;
-                """, cancellationToken, transaction);
-            updateItemCommand.Parameters.AddWithValue("item_id", item.Id);
-            updateItemCommand.Parameters.AddWithValue("quantity_to_receive", quantityToReceive);
-            await updateItemCommand.ExecuteNonQueryAsync(cancellationToken);
+            var quantityLeftToAllocate = quantityToReceive;
+            foreach (var item in matchingItems)
+            {
+                if (quantityLeftToAllocate == 0)
+                {
+                    break;
+                }
+
+                var itemRemaining = item.Quantity - item.ReceivedQuantity;
+                var itemReceiptQuantity = Math.Min(itemRemaining, quantityLeftToAllocate);
+
+                if (itemReceiptQuantity == 0)
+                {
+                    continue;
+                }
+
+                await using var updateItemCommand = await CreateCommandAsync($"""
+                    UPDATE {schemaName}.purchase_items
+                    SET received_quantity = received_quantity + @quantity_to_receive
+                    WHERE id = @item_id;
+                    """, cancellationToken, transaction);
+                updateItemCommand.Parameters.AddWithValue("item_id", item.Id);
+                updateItemCommand.Parameters.AddWithValue("quantity_to_receive", itemReceiptQuantity);
+                await updateItemCommand.ExecuteNonQueryAsync(cancellationToken);
+
+                quantityLeftToAllocate -= itemReceiptQuantity;
+            }
 
             await ApplyInventoryQuantityChangeByProductAsync(
                 schemaName,
@@ -2354,7 +2371,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             UPDATE {schemaName}.purchases
@@ -2377,7 +2393,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         CancellationToken cancellationToken = default)
     {
         var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
-        await EnsurePurchaseReceivingWorkflowAsync(schemaName, cancellationToken);
 
         await using var command = await CreateCommandAsync($"""
             DELETE FROM {schemaName}.purchases
@@ -3859,11 +3874,14 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         if (request.Items.Count == 0)
         {
             return items
-                .Select(item => new KeyValuePair<int, int>(
-                    item.ProductId,
-                    item.Quantity - item.ReceivedQuantity))
-                .Where(pair => pair.Value > 0)
-                .ToDictionary(pair => pair.Key, pair => pair.Value);
+                .GroupBy(item => item.ProductId)
+                .Select(group => new
+                {
+                    ProductId = group.Key,
+                    Quantity = group.Sum(item => item.Quantity - item.ReceivedQuantity)
+                })
+                .Where(item => item.Quantity > 0)
+                .ToDictionary(item => item.ProductId, item => item.Quantity);
         }
 
         return request.Items
@@ -4796,35 +4814,6 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         }
 
         return await connection.BeginTransactionAsync(cancellationToken);
-    }
-
-    private async Task EnsurePurchaseReceivingWorkflowAsync(
-        string quotedSchemaName,
-        CancellationToken cancellationToken)
-    {
-        await using var command = await CreateCommandAsync($"""
-            ALTER TABLE {quotedSchemaName}.purchase_items
-                ADD COLUMN IF NOT EXISTS received_quantity INT NOT NULL DEFAULT 0;
-
-            ALTER TABLE {quotedSchemaName}.purchase_items
-                DROP CONSTRAINT IF EXISTS purchase_items_received_quantity_check;
-
-            ALTER TABLE {quotedSchemaName}.purchase_items
-                ADD CONSTRAINT purchase_items_received_quantity_check
-                CHECK (received_quantity >= 0 AND received_quantity <= quantity);
-
-            ALTER TABLE {quotedSchemaName}.purchases
-                ALTER COLUMN status SET DEFAULT 'Draft';
-
-            ALTER TABLE {quotedSchemaName}.purchases
-                DROP CONSTRAINT IF EXISTS purchases_status_check;
-
-            ALTER TABLE {quotedSchemaName}.purchases
-                ADD CONSTRAINT purchases_status_check
-                CHECK (status IN ('Pending', 'Draft', 'Ordered', 'PartiallyReceived', 'Received', 'Cancelled'));
-            """, cancellationToken);
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<string> GetQuotedCurrentSchemaNameAsync(CancellationToken cancellationToken)

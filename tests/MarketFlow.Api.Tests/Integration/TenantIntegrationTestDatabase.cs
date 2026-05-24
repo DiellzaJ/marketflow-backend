@@ -172,6 +172,7 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         await EnsureLowStockAlertsTableAsync(connection, schemaName, cancellationToken);
         await EnsureSaleReferenceNumbersAsync(connection, schemaName, cancellationToken);
         await EnsureSalesStatusAsync(connection, schemaName, cancellationToken);
+        await EnsurePurchaseReceivingWorkflowAsync(connection, schemaName, cancellationToken);
 
         if (generatedSchemaName || dropSchemaOnDispose)
         {
@@ -1301,6 +1302,37 @@ public sealed class TenantIntegrationTestDatabase : IAsyncDisposable
         {
             SaleReferenceNumberSetupLock.Release();
         }
+    }
+
+    private static async Task EnsurePurchaseReceivingWorkflowAsync(
+        NpgsqlConnection connection,
+        string schemaName,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteAsync(
+            connection,
+            $"""
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchase_items
+                ADD COLUMN IF NOT EXISTS received_quantity INT NOT NULL DEFAULT 0;
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchase_items
+                DROP CONSTRAINT IF EXISTS purchase_items_received_quantity_check;
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchase_items
+                ADD CONSTRAINT purchase_items_received_quantity_check
+                CHECK (received_quantity >= 0 AND received_quantity <= quantity);
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchases
+                ALTER COLUMN status SET DEFAULT 'Draft';
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchases
+                DROP CONSTRAINT IF EXISTS purchases_status_check;
+
+            ALTER TABLE {QuoteIdentifier(schemaName)}.purchases
+                ADD CONSTRAINT purchases_status_check
+                CHECK (status IN ('Pending', 'Draft', 'Ordered', 'PartiallyReceived', 'Received', 'Cancelled'));
+            """,
+            cancellationToken);
     }
 
     private static async Task<T> ExecuteScalarAsync<T>(
