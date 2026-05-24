@@ -20,7 +20,49 @@ public sealed class UserServiceTests
             FullName = "Store Seller",
             Email = "seller@freshmarket.test",
             Password = "Seller12345",
+            RoleName = "Seller",
+            MarketId = 3
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(12, store.CreatedCompanyId);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ForCompanyAdminWithSpoofedCompany_ReturnsValidationError()
+    {
+        var service = CreateUserService(
+            new FakeUserStore(),
+            new FakeCurrentUserService { CompanyId = 12, Role = "CompanyAdmin" });
+
+        var result = await service.CreateUserAsync(new CreateUserRequest
+        {
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            Password = "Seller12345",
             CompanyId = 99,
+            RoleName = "Seller",
+            MarketId = 3
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Company ID 99 does not match the authenticated user's company.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ForCompanyAdminWithMatchingCompany_CreatesUser()
+    {
+        var store = new FakeUserStore();
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { CompanyId = 12, Role = "CompanyAdmin" });
+
+        var result = await service.CreateUserAsync(new CreateUserRequest
+        {
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            Password = "Seller12345",
+            CompanyId = 12,
             RoleName = "Seller",
             MarketId = 3
         });
@@ -69,6 +111,70 @@ public sealed class UserServiceTests
 
         Assert.False(result.Succeeded);
         Assert.Equal("Company is required when RootAdmin creates a user.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ForRootAdminWithInactiveCompany_ReturnsValidationError()
+    {
+        var store = new FakeUserStore();
+        store.ExistingCompanyIds.Remove(25);
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { CompanyId = 1, Role = "RootAdmin" });
+
+        var result = await service.CreateUserAsync(new CreateUserRequest
+        {
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            Password = "Seller12345",
+            CompanyId = 25,
+            RoleName = "Seller",
+            MarketId = 3
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Company ID 25 not found or inactive.", result.Message);
+    }
+
+    [Theory]
+    [InlineData("RootAdmin")]
+    [InlineData("rootadmin")]
+    public async Task CreateUserAsync_WithRootAdminTargetRole_ReturnsValidationError(string roleName)
+    {
+        var service = CreateCompanyAdminService();
+        var request = ValidRequest(roleName);
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("RootAdmin users cannot be created through this endpoint.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_WithUnsupportedTargetRole_ReturnsValidationError()
+    {
+        var service = CreateCompanyAdminService();
+        var request = ValidRequest("Owner");
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Role 'Owner' cannot be created through this endpoint.", result.Message);
+    }
+
+    [Fact]
+    public async Task CreateUserAsync_ForDisallowedCallerRole_ReturnsValidationError()
+    {
+        var service = CreateUserService(
+            new FakeUserStore(),
+            new FakeCurrentUserService { CompanyId = 12, Role = "Seller" });
+        var request = ValidRequest("Seller");
+        request.MarketId = 3;
+
+        var result = await service.CreateUserAsync(request);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Role 'Seller' is not allowed to create Seller users.", result.Message);
     }
 
     [Theory]
@@ -337,7 +443,7 @@ public sealed class UserServiceTests
         var result = await service.CreateUserAsync(request);
 
         Assert.False(result.Succeeded);
-        Assert.Equal("Market ID 99 not found.", result.Message);
+        Assert.Equal("Market ID 99 not found or inactive.", result.Message);
     }
 
     [Fact]
@@ -353,7 +459,7 @@ public sealed class UserServiceTests
         var result = await service.CreateUserAsync(request);
 
         Assert.False(result.Succeeded);
-        Assert.Equal("Department ID 44 not found in market 3.", result.Message);
+        Assert.Equal("Department ID 44 not found or inactive in market 3.", result.Message);
     }
 
     [Fact]
@@ -405,6 +511,8 @@ public sealed class UserServiceTests
         public int? CreatedCompanyId { get; private set; }
 
         public CreateUserRequest? CreatedRequest { get; private set; }
+
+        public HashSet<int> ExistingCompanyIds { get; } = new() { 12, 25 };
 
         public HashSet<int> ExistingMarketIds { get; } = new() { 3 };
 
@@ -459,6 +567,13 @@ public sealed class UserServiceTests
                     }
                     : null
             });
+        }
+
+        public Task<bool> CompanyExistsAsync(
+            int companyId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(ExistingCompanyIds.Contains(companyId));
         }
 
         public Task<bool> MarketExistsAsync(
