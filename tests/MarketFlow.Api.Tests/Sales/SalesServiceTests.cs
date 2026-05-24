@@ -2,6 +2,7 @@ using MarketFlow.Application.Common.Exceptions;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
@@ -272,6 +273,11 @@ public sealed class SalesServiceTests
                 TotalPages = 0
             });
         }
+
+        public Task<SalesSummaryDto> GetSalesSummaryAsync(
+            SalesSummaryQuery query,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
 
         public Task<SaleDetailsResponse?> GetSaleDetailsAsync(
             int id,

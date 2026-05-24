@@ -1,6 +1,7 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Exceptions;
@@ -1008,6 +1009,13 @@ public sealed class ProductServiceTests
 
         public Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(
             SaleHistoryQuery query,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<SalesSummaryDto> GetSalesSummaryAsync(
+            SalesSummaryQuery query,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
