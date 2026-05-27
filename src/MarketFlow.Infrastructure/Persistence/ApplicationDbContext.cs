@@ -21,6 +21,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Sale> Sales => Set<Sale>();
     public DbSet<Inventory> Inventories => Set<Inventory>();
+    public DbSet<AiAnalysisRequest> AiAnalysisRequests => Set<AiAnalysisRequest>();
+    public DbSet<AiAnalysisResult> AiAnalysisResults => Set<AiAnalysisResult>();
+    public DbSet<AiChatSession> AiChatSessions => Set<AiChatSession>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -30,10 +33,12 @@ public class ApplicationDbContext : DbContext
 
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
 
-        // Important:
-        // Do not include tenant tables in InitialGlobalSchema migration yet.
+        // Tenant tables are provisioned in per-schema migrations, not in public.
         modelBuilder.Ignore<Product>();
         modelBuilder.Ignore<Sale>();
         modelBuilder.Ignore<Inventory>();
+        modelBuilder.Ignore<AiAnalysisRequest>();
+        modelBuilder.Ignore<AiAnalysisResult>();
+        modelBuilder.Ignore<AiChatSession>();
     }
 }
