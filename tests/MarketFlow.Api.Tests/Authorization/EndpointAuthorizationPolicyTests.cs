@@ -13,6 +13,7 @@ public sealed class EndpointAuthorizationPolicyTests
         { typeof(AiController), nameof(AiController.GenerateInventoryForecastAsync), AuthorizationPolicies.CompanyAdminOnly },
         { typeof(AiController), nameof(AiController.GenerateInventoryRecommendationsAsync), AuthorizationPolicies.CompanyAdminOnly },
         { typeof(AiController), nameof(AiController.GeneratePurchaseRecommendationsAsync), AuthorizationPolicies.CompanyAdminOrMainOperator },
+        { typeof(AiController), nameof(AiController.GenerateSupplierPerformanceInsightsAsync), AuthorizationPolicies.CompanyAdminOnly },
         { typeof(ProductsController), nameof(ProductsController.GetAsync), AuthorizationPolicies.ReadProducts },
         { typeof(ProductsController), nameof(ProductsController.CreateAsync), AuthorizationPolicies.CreateProducts },
         { typeof(ProductsController), nameof(ProductsController.UpdateAsync), AuthorizationPolicies.UpdateProducts },
