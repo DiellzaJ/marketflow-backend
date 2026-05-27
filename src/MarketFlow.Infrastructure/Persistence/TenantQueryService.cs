@@ -40,7 +40,8 @@ public sealed class TenantQueryService :
     IDepartmentStore,
     ISupplierStore,
     IAiInventoryForecastDataService,
-    IAiInventoryInsightDataService
+    IAiInventoryInsightDataService,
+    IAiPurchaseRecommendationDataService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -2224,6 +2225,98 @@ public sealed class TenantQueryService :
         return products;
     }
 
+    public async Task<IReadOnlyCollection<AiPurchaseRecommendationDataDto>> GetAiPurchaseRecommendationDataAsync(
+        AiPurchaseRecommendationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var inventoryWhereClause = BuildAiPurchaseRecommendationInventoryWhereClause(request, scope);
+        var salesWhereClause = BuildAiPurchaseRecommendationSalesWhereClause(request, scope);
+        var pendingPurchaseWhereClause = BuildAiPurchaseRecommendationPendingPurchaseWhereClause(request, scope);
+        var supplierHistoryWhereClause = BuildAiPurchaseRecommendationSupplierHistoryWhereClause(request, scope);
+        var products = new List<AiPurchaseRecommendationDataDto>();
+
+        await using var command = await CreateCommandAsync($"""
+            WITH inventory_totals AS (
+                SELECT p.id AS product_id,
+                       p.name AS product_name,
+                       COALESCE(SUM(i.quantity), 0)::int AS current_stock
+                FROM {schemaName}.inventory i
+                INNER JOIN {schemaName}.products p ON p.id = i.product_id
+                {inventoryWhereClause}
+                GROUP BY p.id, p.name
+            ),
+            sales_totals AS (
+                SELECT si.product_id,
+                       COALESCE(SUM(si.quantity), 0)::bigint AS total_quantity_sold
+                FROM {schemaName}.sale_items si
+                INNER JOIN {schemaName}.sales s ON s.id = si.sale_id
+                INNER JOIN inventory_totals it ON it.product_id = si.product_id
+                {salesWhereClause}
+                GROUP BY si.product_id
+            ),
+            pending_purchase_totals AS (
+                SELECT pi.product_id,
+                       COALESCE(SUM(pi.quantity - pi.received_quantity), 0)::int AS pending_purchase_quantity
+                FROM {schemaName}.purchase_items pi
+                INNER JOIN {schemaName}.purchases p ON p.id = pi.purchase_id
+                INNER JOIN inventory_totals it ON it.product_id = pi.product_id
+                {pendingPurchaseWhereClause}
+                GROUP BY pi.product_id
+            ),
+            supplier_history AS (
+                SELECT pi.product_id,
+                       p.supplier_id,
+                       s.name AS supplier_name,
+                       SUM(pi.quantity)::bigint AS purchased_quantity,
+                       MAX(p.purchase_date) AS latest_purchase_date,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY pi.product_id
+                           ORDER BY SUM(pi.quantity) DESC, MAX(p.purchase_date) DESC, s.name ASC
+                       ) AS supplier_rank
+                FROM {schemaName}.purchase_items pi
+                INNER JOIN {schemaName}.purchases p ON p.id = pi.purchase_id
+                INNER JOIN {schemaName}.suppliers s ON s.id = p.supplier_id
+                INNER JOIN inventory_totals it ON it.product_id = pi.product_id
+                {supplierHistoryWhereClause}
+                GROUP BY pi.product_id, p.supplier_id, s.name
+            )
+            SELECT it.product_id,
+                   it.product_name,
+                   it.current_stock,
+                   COALESCE(st.total_quantity_sold, 0)::bigint AS total_quantity_sold,
+                   COALESCE(ppt.pending_purchase_quantity, 0)::int AS pending_purchase_quantity,
+                   sh.supplier_id,
+                   sh.supplier_name
+            FROM inventory_totals it
+            LEFT JOIN sales_totals st ON st.product_id = it.product_id
+            LEFT JOIN pending_purchase_totals ppt ON ppt.product_id = it.product_id
+            LEFT JOIN supplier_history sh ON sh.product_id = it.product_id AND sh.supplier_rank = 1
+            ORDER BY it.product_name ASC, it.product_id ASC;
+            """, cancellationToken);
+        AddAiPurchaseRecommendationParameters(command, request);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            products.Add(new AiPurchaseRecommendationDataDto
+            {
+                ProductId = reader.GetInt32(0),
+                ProductName = reader.GetString(1),
+                CurrentStock = reader.GetInt32(2),
+                TotalQuantitySold = reader.GetInt64(3),
+                PendingPurchaseQuantity = reader.GetInt32(4),
+                PreferredSupplierId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                PreferredSupplierName = reader.IsDBNull(6) ? null : reader.GetString(6)
+            });
+        }
+
+        return products;
+    }
+
     public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
@@ -3500,6 +3593,81 @@ public sealed class TenantQueryService :
         return $"WHERE {string.Join(" AND ", conditions)}";
     }
 
+    private static string BuildAiPurchaseRecommendationInventoryWhereClause(
+        AiPurchaseRecommendationRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildInventoryScopeConditions(scope);
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("i.market_id = @market_id");
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            conditions.Add("i.department_id = @department_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiPurchaseRecommendationSalesWhereClause(
+        AiPurchaseRecommendationRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildSalesScopeConditions(scope);
+        conditions.Add("s.sale_date >= CURRENT_DATE - (@sales_history_days - 1) * INTERVAL '1 day'");
+        conditions.Add("s.sale_date <= CURRENT_DATE");
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("s.market_id = @market_id");
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            conditions.Add("s.department_id = @department_id");
+        }
+
+        return $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiPurchaseRecommendationPendingPurchaseWhereClause(
+        AiPurchaseRecommendationRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildPurchaseRecommendationPurchaseScopeConditions(scope);
+        conditions.Add("p.status IN ('Pending', 'Ordered', 'PartiallyReceived')");
+        conditions.Add("pi.quantity > pi.received_quantity");
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("p.market_id = @market_id");
+        }
+
+        return $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiPurchaseRecommendationSupplierHistoryWhereClause(
+        AiPurchaseRecommendationRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildPurchaseRecommendationPurchaseScopeConditions(scope);
+        conditions.Add("p.status IN ('Ordered', 'PartiallyReceived', 'Received')");
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("p.market_id = @market_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
     private static string BuildAiInventoryMovementWhereClause(AiBusinessDataQuery query, InventoryScope scope)
     {
         var conditions = BuildInventoryScopeConditions(scope);
@@ -3588,6 +3756,17 @@ public sealed class TenantQueryService :
         };
     }
 
+    private static List<string> BuildPurchaseRecommendationPurchaseScopeConditions(InventoryScope scope)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => [],
+            InventoryScopeKind.Market => ["p.market_id = @scope_market_id"],
+            InventoryScopeKind.Department => ["p.market_id = @scope_market_id"],
+            _ => ["FALSE"]
+        };
+    }
+
     private static void AddSalesHistoryParameters(NpgsqlCommand command, SaleHistoryQuery query)
     {
         if (query.DateFrom.HasValue)
@@ -3672,6 +3851,23 @@ public sealed class TenantQueryService :
     private static void AddAiInventoryRecommendationParameters(
         NpgsqlCommand command,
         AiInventoryRecommendationRequest request)
+    {
+        command.Parameters.AddWithValue("sales_history_days", request.SalesHistoryDays);
+
+        if (request.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", request.MarketId.Value);
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("department_id", request.DepartmentId.Value);
+        }
+    }
+
+    private static void AddAiPurchaseRecommendationParameters(
+        NpgsqlCommand command,
+        AiPurchaseRecommendationRequest request)
     {
         command.Parameters.AddWithValue("sales_history_days", request.SalesHistoryDays);
 

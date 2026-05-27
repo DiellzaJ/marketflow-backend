@@ -4,6 +4,7 @@ public static class AuthorizationPolicies
 {
     public const string RootAdminOnly = "RootAdminOnly";
     public const string CompanyAdminOnly = "CompanyAdminOnly";
+    public const string CompanyAdminOrMainOperator = "CompanyAdminOrMainOperator";
     public const string ManageCompanies = "ManageCompanies";
 
     public const string ReadUsers = "ReadUsers";

@@ -143,6 +143,8 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IAiInventoryInsightDataService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiPurchaseRecommendationDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
@@ -151,6 +153,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAiDashboardService, AiDashboardService>();
         services.AddScoped<IAiInventoryForecastService, AiInventoryForecastService>();
         services.AddScoped<IAiInventoryInsightService, AiInventoryInsightService>();
+        services.AddScoped<IAiPurchaseRecommendationService, AiPurchaseRecommendationService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<ICategoryService, CategoryService>();
@@ -194,6 +197,9 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.CompanyAdminOnly, policy =>
             policy.RequireRole("CompanyAdmin"));
+
+        options.AddPolicy(AuthorizationPolicies.CompanyAdminOrMainOperator, policy =>
+            policy.RequireRole("CompanyAdmin", "MainOperator"));
 
         options.AddPolicy(AuthorizationPolicies.ManageCompanies, policy =>
             policy.Requirements.Add(new PermissionRequirement("company")));
