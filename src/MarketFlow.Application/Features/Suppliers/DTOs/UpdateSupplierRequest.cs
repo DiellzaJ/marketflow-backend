@@ -1,6 +1,6 @@
-namespace MarketFlow.Domain.Entities;
+namespace MarketFlow.Application.Features.Suppliers.DTOs;
 
-public class Supplier : TenantEntity
+public class UpdateSupplierRequest
 {
     public string Name { get; set; } = string.Empty;
 
@@ -10,5 +10,5 @@ public class Supplier : TenantEntity
 
     public string? Address { get; set; }
 
-    public bool IsActive { get; set; } = true;
+    public bool? IsActive { get; set; }
 }

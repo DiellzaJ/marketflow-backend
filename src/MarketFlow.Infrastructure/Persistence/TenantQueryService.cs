@@ -18,6 +18,8 @@ using MarketFlow.Application.Features.Products.Exceptions;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Sales.Configuration;
 using MarketFlow.Application.Features.Sales.DTOs;
+using MarketFlow.Application.Features.Suppliers.DTOs;
+using MarketFlow.Application.Features.Suppliers.Interfaces;
 using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Application.Common.Exceptions;
 using MarketFlow.Application.Features.Users.Configuration;
@@ -29,7 +31,7 @@ using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
-public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IMarketStore, IDepartmentStore
+public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IMarketStore, IDepartmentStore, ISupplierStore
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -846,6 +848,145 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return updatedId is null
             ? null
             : await GetDepartmentAsync(id, includeInactive: true, cancellationToken);
+    }
+
+    public async Task<IReadOnlyCollection<SupplierDto>> GetSuppliersAsync(
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var suppliers = new List<SupplierDto>();
+        var activeCondition = includeInactive ? string.Empty : "WHERE is_active = TRUE";
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id,
+                   name,
+                   phone,
+                   email,
+                   address,
+                   is_active,
+                   created_at
+            FROM {schemaName}.suppliers
+            {activeCondition}
+            ORDER BY name, id;
+            """, cancellationToken);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            suppliers.Add(ReadSupplier(reader));
+        }
+
+        return suppliers;
+    }
+
+    public async Task<SupplierDto?> GetSupplierAsync(
+        int id,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        return await GetSupplierAsync(schemaName, id, includeInactive, cancellationToken);
+    }
+
+    private async Task<SupplierDto?> GetSupplierAsync(
+        string schemaName,
+        int id,
+        bool includeInactive,
+        CancellationToken cancellationToken,
+        NpgsqlTransaction? transaction = null)
+    {
+        var activeCondition = includeInactive ? string.Empty : " AND is_active = TRUE";
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT id,
+                   name,
+                   phone,
+                   email,
+                   address,
+                   is_active,
+                   created_at
+            FROM {schemaName}.suppliers
+            WHERE id = @id{activeCondition};
+            """, cancellationToken, transaction);
+        command.Parameters.AddWithValue("id", id);
+
+        return await ReadSupplierAsync(command, cancellationToken);
+    }
+
+    public async Task<SupplierDto> CreateSupplierAsync(
+        CreateSupplierRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            INSERT INTO {schemaName}.suppliers (name, phone, email, address)
+            VALUES (@name, @phone, @email, @address)
+            RETURNING id;
+            """, cancellationToken);
+
+        AddSupplierParameters(command, request.Name, request.Phone, request.Email, request.Address);
+
+        var createdIdValue = await command.ExecuteScalarAsync(cancellationToken);
+        var createdId = createdIdValue is int value
+            ? value
+            : throw new InvalidOperationException("Supplier was not created.");
+
+        return await GetSupplierAsync(createdId, includeInactive: true, cancellationToken)
+            ?? throw new InvalidOperationException("Supplier was not found after creation.");
+    }
+
+    public async Task<SupplierDto?> UpdateSupplierAsync(
+        int id,
+        UpdateSupplierRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.suppliers
+            SET name = @name,
+                phone = @phone,
+                email = @email,
+                address = @address
+            WHERE id = @id
+            RETURNING id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+        AddSupplierParameters(command, request.Name, request.Phone, request.Email, request.Address);
+
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return updatedId is null
+            ? null
+            : await GetSupplierAsync(id, includeInactive: true, cancellationToken);
+    }
+
+    public async Task<SupplierDto?> SetSupplierActiveStateAsync(
+        int id,
+        bool isActive,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+
+        await using var command = await CreateCommandAsync($"""
+            UPDATE {schemaName}.suppliers
+            SET is_active = @is_active
+            WHERE id = @id
+              AND is_active <> @is_active
+            RETURNING id;
+            """, cancellationToken);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("is_active", isActive);
+
+        var updatedId = await command.ExecuteScalarAsync(cancellationToken);
+
+        return updatedId is null
+            ? null
+            : await GetSupplierAsync(id, includeInactive: true, cancellationToken);
     }
 
     public async Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
@@ -4191,6 +4332,15 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return await reader.ReadAsync(cancellationToken) ? ReadDepartment(reader) : null;
     }
 
+    private static async Task<SupplierDto?> ReadSupplierAsync(
+        NpgsqlCommand command,
+        CancellationToken cancellationToken)
+    {
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? ReadSupplier(reader) : null;
+    }
+
     private async Task<bool> MarketNameExistsAsync(
         string schemaName,
         string name,
@@ -4692,6 +4842,20 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         };
     }
 
+    private static SupplierDto ReadSupplier(NpgsqlDataReader reader)
+    {
+        return new SupplierDto
+        {
+            Id = reader.GetInt32(0),
+            Name = reader.GetString(1),
+            Phone = reader.IsDBNull(2) ? null : reader.GetString(2),
+            Email = reader.IsDBNull(3) ? null : reader.GetString(3),
+            Address = reader.IsDBNull(4) ? null : reader.GetString(4),
+            IsActive = reader.GetBoolean(5),
+            CreatedAt = reader.GetFieldValue<DateTimeOffset>(6)
+        };
+    }
+
     private static async Task<SaleDto?> ReadSaleAsync(
         NpgsqlCommand command,
         CancellationToken cancellationToken)
@@ -4890,6 +5054,19 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
     {
         command.Parameters.AddWithValue("name", request.Name.Trim());
         command.Parameters.AddWithValue("description", DbValue(request.Description));
+    }
+
+    private static void AddSupplierParameters(
+        NpgsqlCommand command,
+        string name,
+        string? phone,
+        string? email,
+        string? address)
+    {
+        command.Parameters.AddWithValue("name", name.Trim());
+        command.Parameters.AddWithValue("phone", DbValue(phone));
+        command.Parameters.AddWithValue("email", DbValue(email));
+        command.Parameters.AddWithValue("address", DbValue(address));
     }
 
     private static object DbValue<T>(T? value)
