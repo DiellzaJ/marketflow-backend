@@ -3,6 +3,7 @@ using System.Data;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.AI.DTOs;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Departments.DTOs;
@@ -32,7 +33,13 @@ using Npgsql;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
-public sealed class TenantQueryService : ITenantQueryService, IMarketQueryService, IMarketStore, IDepartmentStore, ISupplierStore
+public sealed class TenantQueryService :
+    ITenantQueryService,
+    IMarketQueryService,
+    IMarketStore,
+    IDepartmentStore,
+    ISupplierStore,
+    IAiInventoryForecastDataService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -2101,6 +2108,62 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         return metrics;
     }
 
+    public async Task<IReadOnlyCollection<AiInventoryForecastDataDto>> GetAiInventoryForecastDataAsync(
+        AiInventoryForecastRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var inventoryWhereClause = BuildAiInventoryForecastInventoryWhereClause(request, scope);
+        var salesWhereClause = BuildAiInventoryForecastSalesWhereClause(request, scope);
+        var products = new List<AiInventoryForecastDataDto>();
+
+        await using var command = await CreateCommandAsync($"""
+            WITH inventory_totals AS (
+                SELECT p.id AS product_id,
+                       p.name AS product_name,
+                       COALESCE(SUM(i.quantity), 0)::int AS current_stock
+                FROM {schemaName}.inventory i
+                INNER JOIN {schemaName}.products p ON p.id = i.product_id
+                {inventoryWhereClause}
+                GROUP BY p.id, p.name
+            ),
+            sales_totals AS (
+                SELECT si.product_id,
+                       COALESCE(SUM(si.quantity), 0)::bigint AS total_quantity_sold
+                FROM {schemaName}.sale_items si
+                INNER JOIN {schemaName}.sales s ON s.id = si.sale_id
+                INNER JOIN inventory_totals it ON it.product_id = si.product_id
+                {salesWhereClause}
+                GROUP BY si.product_id
+            )
+            SELECT it.product_id,
+                   it.product_name,
+                   it.current_stock,
+                   COALESCE(st.total_quantity_sold, 0)::bigint AS total_quantity_sold
+            FROM inventory_totals it
+            LEFT JOIN sales_totals st ON st.product_id = it.product_id
+            ORDER BY it.product_name ASC, it.product_id ASC;
+            """, cancellationToken);
+        AddAiInventoryForecastParameters(command, request);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            products.Add(new AiInventoryForecastDataDto
+            {
+                ProductId = reader.GetInt32(0),
+                ProductName = reader.GetString(1),
+                CurrentStock = reader.GetInt32(2),
+                TotalQuantitySold = reader.GetInt64(3)
+            });
+        }
+
+        return products;
+    }
+
     public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
@@ -3293,6 +3356,48 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             : $"WHERE {string.Join(" AND ", conditions)}";
     }
 
+    private static string BuildAiInventoryForecastInventoryWhereClause(
+        AiInventoryForecastRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildInventoryScopeConditions(scope);
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("i.market_id = @market_id");
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            conditions.Add("i.department_id = @department_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiInventoryForecastSalesWhereClause(
+        AiInventoryForecastRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildSalesScopeConditions(scope);
+        conditions.Add("s.sale_date >= CURRENT_DATE - (@sales_history_days - 1) * INTERVAL '1 day'");
+        conditions.Add("s.sale_date <= CURRENT_DATE");
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("s.market_id = @market_id");
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            conditions.Add("s.department_id = @department_id");
+        }
+
+        return $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
     private static string BuildAiInventoryMovementWhereClause(AiBusinessDataQuery query, InventoryScope scope)
     {
         var conditions = BuildInventoryScopeConditions(scope);
@@ -3442,6 +3547,23 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         if (query.DepartmentId.HasValue)
         {
             command.Parameters.AddWithValue("department_id", query.DepartmentId.Value);
+        }
+    }
+
+    private static void AddAiInventoryForecastParameters(
+        NpgsqlCommand command,
+        AiInventoryForecastRequest request)
+    {
+        command.Parameters.AddWithValue("sales_history_days", request.SalesHistoryDays);
+
+        if (request.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", request.MarketId.Value);
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("department_id", request.DepartmentId.Value);
         }
     }
 

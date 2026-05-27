@@ -9,7 +9,9 @@ namespace MarketFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/ai")]
-public class AiController(IAiDashboardService aiDashboardService) : ControllerBase
+public class AiController(
+    IAiDashboardService aiDashboardService,
+    IAiInventoryForecastService aiInventoryForecastService) : ControllerBase
 {
     [HttpPost("dashboard-summary")]
     [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
@@ -22,6 +24,20 @@ public class AiController(IAiDashboardService aiDashboardService) : ControllerBa
         CancellationToken cancellationToken)
     {
         var result = await aiDashboardService.GenerateDashboardSummaryAsync(request, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("inventory-forecast")]
+    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [ProducesResponseType(typeof(ServiceResult<AiInventoryForecastResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ServiceResult<AiInventoryForecastResponse>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ServiceResult<AiInventoryForecastResponse>>> GenerateInventoryForecastAsync(
+        AiInventoryForecastRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await aiInventoryForecastService.GenerateInventoryForecastAsync(request, cancellationToken);
         return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 }

@@ -16,8 +16,10 @@ public sealed class AiControllerTests
             Summary = "Sales are healthy.",
             RecommendedActions = ["Restock top items."]
         };
-        var controller = new AiController(new StubAiDashboardService(
-            ServiceResult<AiDashboardSummaryResponse>.Success(response)));
+        var controller = new AiController(
+            new StubAiDashboardService(ServiceResult<AiDashboardSummaryResponse>.Success(response)),
+            new StubAiInventoryForecastService(
+                ServiceResult<AiInventoryForecastResponse>.Success(new AiInventoryForecastResponse())));
 
         var result = await controller.GenerateDashboardSummaryAsync(
             new AiDashboardSummaryRequest(),
@@ -34,7 +36,10 @@ public sealed class AiControllerTests
     {
         var expectedResult = ServiceResult<AiDashboardSummaryResponse>.Failure(
             "From date must be on or before to date.");
-        var controller = new AiController(new StubAiDashboardService(expectedResult));
+        var controller = new AiController(
+            new StubAiDashboardService(expectedResult),
+            new StubAiInventoryForecastService(
+                ServiceResult<AiInventoryForecastResponse>.Success(new AiInventoryForecastResponse())));
 
         var result = await controller.GenerateDashboardSummaryAsync(
             new AiDashboardSummaryRequest(),
@@ -49,6 +54,15 @@ public sealed class AiControllerTests
     {
         public Task<ServiceResult<AiDashboardSummaryResponse>> GenerateDashboardSummaryAsync(
             AiDashboardSummaryRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(result);
+    }
+
+    private sealed class StubAiInventoryForecastService(
+        ServiceResult<AiInventoryForecastResponse> result) : IAiInventoryForecastService
+    {
+        public Task<ServiceResult<AiInventoryForecastResponse>> GenerateInventoryForecastAsync(
+            AiInventoryForecastRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result);
     }
