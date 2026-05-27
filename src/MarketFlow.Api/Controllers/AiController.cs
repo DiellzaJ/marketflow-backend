@@ -14,7 +14,8 @@ public class AiController(
     IAiInventoryForecastService aiInventoryForecastService,
     IAiInventoryInsightService aiInventoryInsightService,
     IAiPurchaseRecommendationService aiPurchaseRecommendationService,
-    IAiSupplierInsightService aiSupplierInsightService) : ControllerBase
+    IAiSupplierInsightService aiSupplierInsightService,
+    IAiAnomalyDetectionService aiAnomalyDetectionService) : ControllerBase
 {
     [HttpPost("dashboard-summary")]
     [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
@@ -83,6 +84,20 @@ public class AiController(
         CancellationToken cancellationToken)
     {
         var result = await aiSupplierInsightService.GenerateSupplierPerformanceInsightsAsync(request, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("anomalies/detect")]
+    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiAnomalyDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiAnomalyDto>>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<AiAnomalyDto>>>> DetectAnomaliesAsync(
+        AiAnomalyDetectionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await aiAnomalyDetectionService.DetectAnomaliesAsync(request, cancellationToken);
         return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 }

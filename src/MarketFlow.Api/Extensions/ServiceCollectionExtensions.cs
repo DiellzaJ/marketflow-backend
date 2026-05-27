@@ -147,6 +147,8 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IAiSupplierInsightDataService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiAnomalyDetectionDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
@@ -157,6 +159,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAiInventoryInsightService, AiInventoryInsightService>();
         services.AddScoped<IAiPurchaseRecommendationService, AiPurchaseRecommendationService>();
         services.AddScoped<IAiSupplierInsightService, AiSupplierInsightService>();
+        services.AddScoped<IAiAnomalyDetectionService, AiAnomalyDetectionService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<ICategoryService, CategoryService>();

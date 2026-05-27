@@ -42,7 +42,8 @@ public sealed class TenantQueryService :
     IAiInventoryForecastDataService,
     IAiInventoryInsightDataService,
     IAiPurchaseRecommendationDataService,
-    IAiSupplierInsightDataService
+    IAiSupplierInsightDataService,
+    IAiAnomalyDetectionDataService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -2374,6 +2375,220 @@ public sealed class TenantQueryService :
         return insights;
     }
 
+    public async Task<AiAnomalyDetectionDataDto> GetAiAnomalyDetectionDataAsync(
+        AiAnomalyDetectionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+        return new AiAnomalyDetectionDataDto
+        {
+            Sales = await GetAiAnomalySalesAsync(schemaName, request, scope, cancellationToken),
+            SaleItems = await GetAiAnomalySaleItemsAsync(schemaName, request, scope, cancellationToken),
+            StockMovements = await GetAiAnomalyStockMovementsAsync(schemaName, request, scope, cancellationToken),
+            DailyProductSales = await GetAiAnomalyDailyProductSalesAsync(schemaName, request, scope, cancellationToken)
+        };
+    }
+
+    private async Task<IReadOnlyCollection<AiAnomalySaleDataDto>> GetAiAnomalySalesAsync(
+        string schemaName,
+        AiAnomalyDetectionRequest request,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var sales = new List<AiAnomalySaleDataDto>();
+        var whereClause = BuildAiAnomalySalesWhereClause(request, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT s.id,
+                   s.reference_number,
+                   s.sale_date,
+                   s.total_amount,
+                   s.discount_amount
+            FROM {schemaName}.sales s
+            {whereClause}
+            ORDER BY s.sale_date DESC, s.id DESC;
+            """, cancellationToken);
+        AddAiAnomalyDetectionParameters(command, request);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            sales.Add(new AiAnomalySaleDataDto
+            {
+                SaleId = reader.GetInt32(0),
+                ReferenceNumber = reader.GetString(1),
+                SaleDate = reader.GetFieldValue<DateOnly>(2),
+                TotalAmount = reader.GetDecimal(3),
+                DiscountAmount = reader.GetDecimal(4)
+            });
+        }
+
+        return sales;
+    }
+
+    private async Task<IReadOnlyCollection<AiAnomalySaleItemDataDto>> GetAiAnomalySaleItemsAsync(
+        string schemaName,
+        AiAnomalyDetectionRequest request,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var saleItems = new List<AiAnomalySaleItemDataDto>();
+        var whereClause = BuildAiAnomalySalesWhereClause(request, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT s.id,
+                   s.reference_number,
+                   s.sale_date,
+                   si.product_id,
+                   COALESCE(p.name, '') AS product_name,
+                   si.quantity,
+                   si.unit_price,
+                   COALESCE(p.cost_price, 0) AS cost_price
+            FROM {schemaName}.sale_items si
+            INNER JOIN {schemaName}.sales s ON s.id = si.sale_id
+            LEFT JOIN {schemaName}.products p ON p.id = si.product_id
+            {whereClause}
+            ORDER BY s.sale_date DESC, s.id DESC, si.id ASC;
+            """, cancellationToken);
+        AddAiAnomalyDetectionParameters(command, request);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            saleItems.Add(new AiAnomalySaleItemDataDto
+            {
+                SaleId = reader.GetInt32(0),
+                ReferenceNumber = reader.GetString(1),
+                SaleDate = reader.GetFieldValue<DateOnly>(2),
+                ProductId = reader.GetInt32(3),
+                ProductName = reader.GetString(4),
+                Quantity = reader.GetInt32(5),
+                UnitPrice = reader.GetDecimal(6),
+                CostPrice = reader.GetDecimal(7)
+            });
+        }
+
+        return saleItems;
+    }
+
+    private async Task<IReadOnlyCollection<AiAnomalyStockMovementDataDto>> GetAiAnomalyStockMovementsAsync(
+        string schemaName,
+        AiAnomalyDetectionRequest request,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var movements = new List<AiAnomalyStockMovementDataDto>();
+        var whereClause = BuildAiAnomalyStockMovementWhereClause(request, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT im.id,
+                   im.movement_type,
+                   im.quantity_changed,
+                   im.reference_number,
+                   im.created_at,
+                   i.product_id,
+                   COALESCE(p.name, '') AS product_name,
+                   CASE
+                       WHEN im.movement_type = 'SaleCompleted'
+                            AND im.reference_number ~ '^sale:[0-9]+$'
+                            THEN EXISTS (
+                                SELECT 1
+                                FROM {schemaName}.sales s
+                                WHERE s.id = substring(im.reference_number FROM '^sale:([0-9]+)$')::int
+                            )
+                       WHEN im.movement_type = 'PurchaseReceived'
+                            AND im.reference_number ~ '^purchase:[0-9]+$'
+                            THEN EXISTS (
+                                SELECT 1
+                                FROM {schemaName}.purchases pu
+                                WHERE pu.id = substring(im.reference_number FROM '^purchase:([0-9]+)$')::int
+                            )
+                       ELSE TRUE
+                   END AS has_matching_reference
+            FROM {schemaName}.inventory_movements im
+            INNER JOIN {schemaName}.inventory i ON i.id = im.inventory_id
+            LEFT JOIN {schemaName}.products p ON p.id = i.product_id
+            {whereClause}
+            ORDER BY im.created_at DESC, im.id DESC;
+            """, cancellationToken);
+        AddAiAnomalyDetectionParameters(command, request);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            movements.Add(new AiAnomalyStockMovementDataDto
+            {
+                MovementId = reader.GetInt32(0),
+                MovementType = reader.GetString(1),
+                QuantityChanged = reader.GetInt32(2),
+                ReferenceNumber = reader.IsDBNull(3) ? null : reader.GetString(3),
+                CreatedAt = reader.GetFieldValue<DateTimeOffset>(4),
+                ProductId = reader.GetInt32(5),
+                ProductName = reader.GetString(6),
+                HasMatchingReference = reader.GetBoolean(7)
+            });
+        }
+
+        return movements;
+    }
+
+    private async Task<IReadOnlyCollection<AiAnomalyDailyProductSalesDataDto>> GetAiAnomalyDailyProductSalesAsync(
+        string schemaName,
+        AiAnomalyDetectionRequest request,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var dailyProductSales = new List<AiAnomalyDailyProductSalesDataDto>();
+        var whereClause = BuildAiAnomalySalesWhereClause(request, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            WITH daily_sales AS (
+                SELECT si.product_id,
+                       COALESCE(p.name, '') AS product_name,
+                       s.sale_date,
+                       SUM(si.quantity)::bigint AS quantity_sold
+                FROM {schemaName}.sale_items si
+                INNER JOIN {schemaName}.sales s ON s.id = si.sale_id
+                LEFT JOIN {schemaName}.products p ON p.id = si.product_id
+                {whereClause}
+                GROUP BY si.product_id, p.name, s.sale_date
+            )
+            SELECT product_id,
+                   product_name,
+                   sale_date,
+                   quantity_sold,
+                   AVG(quantity_sold) OVER (PARTITION BY product_id)::numeric AS average_daily_quantity
+            FROM daily_sales
+            ORDER BY sale_date DESC, product_name ASC, product_id ASC;
+            """, cancellationToken);
+        AddAiAnomalyDetectionParameters(command, request);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            dailyProductSales.Add(new AiAnomalyDailyProductSalesDataDto
+            {
+                ProductId = reader.GetInt32(0),
+                ProductName = reader.GetString(1),
+                SaleDate = reader.GetFieldValue<DateOnly>(2),
+                QuantitySold = reader.GetInt64(3),
+                AverageDailyQuantity = reader.GetDecimal(4)
+            });
+        }
+
+        return dailyProductSales;
+    }
+
     public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
@@ -3751,6 +3966,67 @@ public sealed class TenantQueryService :
             : $"WHERE {string.Join(" AND ", conditions)}";
     }
 
+    private static string BuildAiAnomalySalesWhereClause(
+        AiAnomalyDetectionRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildSalesScopeConditions(scope);
+        conditions.Add("s.status = 'Paid'");
+
+        if (request.From.HasValue)
+        {
+            conditions.Add("s.sale_date >= @from");
+        }
+
+        if (request.To.HasValue)
+        {
+            conditions.Add("s.sale_date <= @to");
+        }
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("s.market_id = @market_id");
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            conditions.Add("s.department_id = @department_id");
+        }
+
+        return $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiAnomalyStockMovementWhereClause(
+        AiAnomalyDetectionRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildInventoryScopeConditions(scope);
+
+        if (request.From.HasValue)
+        {
+            conditions.Add("im.created_at >= @from");
+        }
+
+        if (request.To.HasValue)
+        {
+            conditions.Add("im.created_at < @to + INTERVAL '1 day'");
+        }
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("i.market_id = @market_id");
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            conditions.Add("i.department_id = @department_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
     private static string BuildAiInventoryMovementWhereClause(AiBusinessDataQuery query, InventoryScope scope)
     {
         var conditions = BuildInventoryScopeConditions(scope);
@@ -3982,6 +4258,31 @@ public sealed class TenantQueryService :
         if (request.MarketId.HasValue)
         {
             command.Parameters.AddWithValue("market_id", request.MarketId.Value);
+        }
+    }
+
+    private static void AddAiAnomalyDetectionParameters(
+        NpgsqlCommand command,
+        AiAnomalyDetectionRequest request)
+    {
+        if (request.From.HasValue)
+        {
+            command.Parameters.AddWithValue("from", request.From.Value);
+        }
+
+        if (request.To.HasValue)
+        {
+            command.Parameters.AddWithValue("to", request.To.Value);
+        }
+
+        if (request.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", request.MarketId.Value);
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("department_id", request.DepartmentId.Value);
         }
     }
 
