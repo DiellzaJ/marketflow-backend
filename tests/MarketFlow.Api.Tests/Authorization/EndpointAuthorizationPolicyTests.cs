@@ -9,6 +9,7 @@ public sealed class EndpointAuthorizationPolicyTests
 {
     public static TheoryData<Type, string, string> EndpointPolicies => new()
     {
+        { typeof(AiController), nameof(AiController.GenerateDashboardSummaryAsync), AuthorizationPolicies.CompanyAdminOnly },
         { typeof(ProductsController), nameof(ProductsController.GetAsync), AuthorizationPolicies.ReadProducts },
         { typeof(ProductsController), nameof(ProductsController.CreateAsync), AuthorizationPolicies.CreateProducts },
         { typeof(ProductsController), nameof(ProductsController.UpdateAsync), AuthorizationPolicies.UpdateProducts },

@@ -105,7 +105,8 @@ public interface ITenantQueryService
 
     Task<AiBusinessDataDto> GetAiBusinessDataAsync(
         AiBusinessDataQuery query,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
 
     Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
