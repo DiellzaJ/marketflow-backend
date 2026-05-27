@@ -4,6 +4,7 @@ using System.Text;
 using MarketFlow.Api.Authorization;
 using MarketFlow.Api.Services;
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Auth.Interfaces;
 using MarketFlow.Application.Features.Categories.Interfaces;
 using MarketFlow.Application.Features.Categories.Services;
@@ -30,6 +31,7 @@ using MarketFlow.Application.Features.Users.Services;
 using MarketFlow.Infrastructure.BackgroundJobs;
 using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Infrastructure.MultiTenancy;
+using MarketFlow.Infrastructure.OpenAI;
 using MarketFlow.Infrastructure.Persistence;
 using MarketFlow.Infrastructure.Repositories;
 using MarketFlow.Infrastructure.Services;
@@ -37,6 +39,7 @@ using MarketFlow.Infrastructure.Services.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 
@@ -158,7 +161,13 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<JwtTokenService>();
         services.AddScoped<PasswordHasher>();
-        services.AddScoped<OpenAiService>();
+        services.Configure<OpenAiOptions>(
+            configuration.GetSection(OpenAiOptions.SectionName));
+        services.AddHttpClient<IOpenAiClient, OpenAiClient>((serviceProvider, httpClient) =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
+            httpClient.BaseAddress = options.BaseUrl;
+        });
         services.AddScoped<TenantProvider>();
         services.AddSingleton<RedisCacheService>();
         services.Configure<StockAlertJobOptions>(
