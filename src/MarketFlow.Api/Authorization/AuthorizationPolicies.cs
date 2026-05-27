@@ -20,6 +20,11 @@ public static class AuthorizationPolicies
     public const string UpdatePurchases = "UpdatePurchases";
     public const string DeletePurchases = "DeletePurchases";
 
+    public const string ReadSuppliers = "ReadSuppliers";
+    public const string CreateSuppliers = "CreateSuppliers";
+    public const string UpdateSuppliers = "UpdateSuppliers";
+    public const string DeleteSuppliers = "DeleteSuppliers";
+
     public const string ReadSales = "ReadSales";
     public const string CreateSales = "CreateSales";
     public const string UpdateSales = "UpdateSales";

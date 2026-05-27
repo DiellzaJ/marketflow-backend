@@ -5,6 +5,7 @@ using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
+using MarketFlow.Application.Features.Suppliers.DTOs;
 
 namespace MarketFlow.Application.Common.Interfaces;
 
@@ -151,4 +152,32 @@ public interface ITenantQueryService
         Task.FromResult<PurchaseDto?>(null);
 
     Task<bool> DeletePurchaseAsync(int id, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<SupplierDto>> GetSuppliersAsync(
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<SupplierDto>>(Array.Empty<SupplierDto>());
+
+    Task<SupplierDto?> GetSupplierAsync(
+        int id,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<SupplierDto?>(null);
+
+    Task<SupplierDto> CreateSupplierAsync(
+        CreateSupplierRequest request,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new SupplierDto());
+
+    Task<SupplierDto?> UpdateSupplierAsync(
+        int id,
+        UpdateSupplierRequest request,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<SupplierDto?>(null);
+
+    Task<SupplierDto?> SetSupplierActiveStateAsync(
+        int id,
+        bool isActive,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<SupplierDto?>(null);
 }

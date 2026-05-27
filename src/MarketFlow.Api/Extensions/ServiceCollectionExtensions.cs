@@ -23,6 +23,8 @@ using MarketFlow.Application.Features.Purchases.Interfaces;
 using MarketFlow.Application.Features.Purchases.Services;
 using MarketFlow.Application.Features.Sales.Interfaces;
 using MarketFlow.Application.Features.Sales.Services;
+using MarketFlow.Application.Features.Suppliers.Interfaces;
+using MarketFlow.Application.Features.Suppliers.Services;
 using MarketFlow.Application.Features.Users.Interfaces;
 using MarketFlow.Application.Features.Users.Services;
 using MarketFlow.Infrastructure.BackgroundJobs;
@@ -131,6 +133,8 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IDepartmentStore>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<ISupplierStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
@@ -145,6 +149,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IInventoryService, InventoryService>();
         services.AddScoped<IPurchaseService, PurchaseService>();
+        services.AddScoped<ISupplierService, SupplierService>();
         services.AddScoped<ISalesService, SalesService>();
 
         services.AddScoped<ProductRepository>();
@@ -207,6 +212,18 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.DeletePurchases, policy =>
             policy.Requirements.Add(new PermissionRequirement("purchases", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "delete")));
 
         options.AddPolicy(AuthorizationPolicies.ReadSales, policy =>
             policy.Requirements.Add(new PermissionRequirement("sales", "read")));
