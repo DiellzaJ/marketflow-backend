@@ -141,6 +141,8 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IAiInventoryForecastDataService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiInventoryInsightDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
@@ -148,6 +150,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAiBusinessDataService, AiBusinessDataService>();
         services.AddScoped<IAiDashboardService, AiDashboardService>();
         services.AddScoped<IAiInventoryForecastService, AiInventoryForecastService>();
+        services.AddScoped<IAiInventoryInsightService, AiInventoryInsightService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<ICategoryService, CategoryService>();
