@@ -21,7 +21,9 @@ public sealed class AiControllerTests
             new StubAiInventoryForecastService(
                 ServiceResult<AiInventoryForecastResponse>.Success(new AiInventoryForecastResponse())),
             new StubAiInventoryInsightService(
-                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success([])));
+                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success([])),
+            new StubAiPurchaseRecommendationService(
+                ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>.Success([])));
 
         var result = await controller.GenerateDashboardSummaryAsync(
             new AiDashboardSummaryRequest(),
@@ -43,7 +45,9 @@ public sealed class AiControllerTests
             new StubAiInventoryForecastService(
                 ServiceResult<AiInventoryForecastResponse>.Success(new AiInventoryForecastResponse())),
             new StubAiInventoryInsightService(
-                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success([])));
+                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success([])),
+            new StubAiPurchaseRecommendationService(
+                ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>.Success([])));
 
         var result = await controller.GenerateDashboardSummaryAsync(
             new AiDashboardSummaryRequest(),
@@ -72,7 +76,9 @@ public sealed class AiControllerTests
             new StubAiInventoryForecastService(
                 ServiceResult<AiInventoryForecastResponse>.Success(new AiInventoryForecastResponse())),
             new StubAiInventoryInsightService(
-                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success(response)));
+                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success(response)),
+            new StubAiPurchaseRecommendationService(
+                ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>.Success([])));
 
         var result = await controller.GenerateInventoryRecommendationsAsync(
             new AiInventoryRecommendationRequest(),
@@ -80,6 +86,38 @@ public sealed class AiControllerTests
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
         var serviceResult = Assert.IsType<ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>>(ok.Value);
+        Assert.True(serviceResult.Succeeded);
+        Assert.Same(response, serviceResult.Data);
+    }
+
+    [Fact]
+    public async Task GeneratePurchaseRecommendationsAsync_WhenRequestSucceeds_ReturnsOk()
+    {
+        IReadOnlyCollection<AiPurchaseRecommendationDto> response =
+        [
+            new AiPurchaseRecommendationDto
+            {
+                ProductId = 20,
+                ProductName = "Milk",
+                RecommendedPurchaseQuantity = 12
+            }
+        ];
+        var controller = new AiController(
+            new StubAiDashboardService(
+                ServiceResult<AiDashboardSummaryResponse>.Success(new AiDashboardSummaryResponse())),
+            new StubAiInventoryForecastService(
+                ServiceResult<AiInventoryForecastResponse>.Success(new AiInventoryForecastResponse())),
+            new StubAiInventoryInsightService(
+                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success([])),
+            new StubAiPurchaseRecommendationService(
+                ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>.Success(response)));
+
+        var result = await controller.GeneratePurchaseRecommendationsAsync(
+            new AiPurchaseRecommendationRequest(),
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var serviceResult = Assert.IsType<ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>>(ok.Value);
         Assert.True(serviceResult.Succeeded);
         Assert.Same(response, serviceResult.Data);
     }
@@ -107,6 +145,15 @@ public sealed class AiControllerTests
     {
         public Task<ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>> GenerateInventoryRecommendationsAsync(
             AiInventoryRecommendationRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(result);
+    }
+
+    private sealed class StubAiPurchaseRecommendationService(
+        ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>> result) : IAiPurchaseRecommendationService
+    {
+        public Task<ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>> GeneratePurchaseRecommendationsAsync(
+            AiPurchaseRecommendationRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result);
     }
