@@ -160,6 +160,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAiPurchaseRecommendationService, AiPurchaseRecommendationService>();
         services.AddScoped<IAiSupplierInsightService, AiSupplierInsightService>();
         services.AddScoped<IAiAnomalyDetectionService, AiAnomalyDetectionService>();
+        services.AddScoped<IAiReportQueryService, AiReportQueryService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<ICategoryService, CategoryService>();
