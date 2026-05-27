@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Data;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.DTOs;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Departments.DTOs;
@@ -1836,6 +1837,270 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         };
     }
 
+    public async Task<AiBusinessDataDto> GetAiBusinessDataAsync(
+        AiBusinessDataQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+
+        return new AiBusinessDataDto
+        {
+            Filters = new AiBusinessDataFilterDto
+            {
+                From = query.From,
+                To = query.To,
+                MarketId = query.MarketId,
+                DepartmentId = query.DepartmentId
+            },
+            SalesMetrics = await GetAiSalesMetricsAsync(schemaName, query, scope, cancellationToken),
+            TopSellingProducts = await GetAiTopSellingProductsAsync(schemaName, query, scope, cancellationToken),
+            LowStockProducts = await GetAiLowStockProductsAsync(schemaName, query, scope, cancellationToken),
+            InventoryMovementMetrics = await GetAiInventoryMovementMetricsAsync(schemaName, query, scope, cancellationToken),
+            SupplierPurchaseMetrics = await GetAiSupplierPurchaseMetricsAsync(schemaName, query, scope, cancellationToken)
+        };
+    }
+
+    private async Task<AiSalesMetricsDto> GetAiSalesMetricsAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var whereClause = BuildAiSalesWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            WITH filtered_sales AS (
+                SELECT s.id,
+                       s.total_amount
+                FROM {schemaName}.sales s
+                {whereClause}
+            ),
+            filtered_sale_items AS (
+                SELECT si.sale_id,
+                       SUM(si.quantity)::bigint AS total_quantity
+                FROM {schemaName}.sale_items si
+                INNER JOIN filtered_sales fs ON fs.id = si.sale_id
+                GROUP BY si.sale_id
+            )
+            SELECT COALESCE(SUM(fs.total_amount), 0) AS total_revenue,
+                   COUNT(*)::bigint AS total_sales,
+                   COALESCE(SUM(COALESCE(items.total_quantity, 0)), 0)::bigint AS total_items_sold
+            FROM filtered_sales fs
+            LEFT JOIN filtered_sale_items items ON items.sale_id = fs.id;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new AiSalesMetricsDto();
+        }
+
+        var totalRevenue = reader.GetDecimal(0);
+        var totalSales = reader.GetInt64(1);
+
+        return new AiSalesMetricsDto
+        {
+            TotalRevenue = totalRevenue,
+            TotalSales = totalSales,
+            TotalItemsSold = reader.GetInt64(2),
+            AverageSaleAmount = totalSales == 0 ? 0 : totalRevenue / totalSales
+        };
+    }
+
+    private async Task<IReadOnlyCollection<AiTopSellingProductDto>> GetAiTopSellingProductsAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var products = new List<AiTopSellingProductDto>();
+        var whereClause = BuildAiSalesWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT si.product_id,
+                   COALESCE(p.name, '') AS product_name,
+                   SUM(si.quantity)::bigint AS quantity_sold,
+                   COALESCE(SUM(si.line_total), 0) AS revenue
+            FROM {schemaName}.sale_items si
+            INNER JOIN {schemaName}.sales s ON s.id = si.sale_id
+            LEFT JOIN {schemaName}.products p ON p.id = si.product_id
+            {whereClause}
+            GROUP BY si.product_id, p.name
+            ORDER BY quantity_sold DESC, revenue DESC, product_name ASC
+            LIMIT @top_products_limit;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+        command.Parameters.AddWithValue("top_products_limit", query.TopProductsLimit);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            products.Add(new AiTopSellingProductDto
+            {
+                ProductId = reader.GetInt32(0),
+                ProductName = reader.GetString(1),
+                QuantitySold = reader.GetInt64(2),
+                Revenue = reader.GetDecimal(3)
+            });
+        }
+
+        return products;
+    }
+
+    private async Task<IReadOnlyCollection<AiLowStockProductDto>> GetAiLowStockProductsAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var products = new List<AiLowStockProductDto>();
+        var whereClause = BuildAiInventoryWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT i.product_id,
+                   p.name,
+                   i.market_id,
+                   m.name,
+                   i.department_id,
+                   d.name AS department_name,
+                   i.quantity,
+                   i.reserved_quantity,
+                   i.quantity - i.reserved_quantity AS available_quantity,
+                   p.min_stock_alert,
+                   GREATEST(p.min_stock_alert - i.quantity, 0) AS suggested_restock_quantity
+            FROM {schemaName}.inventory i
+            INNER JOIN {schemaName}.products p ON p.id = i.product_id
+            INNER JOIN {schemaName}.markets m ON m.id = i.market_id
+            LEFT JOIN {schemaName}.departments d ON d.id = i.department_id
+            {whereClause}
+            ORDER BY suggested_restock_quantity DESC, p.name ASC, i.id ASC
+            LIMIT @low_stock_limit;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+        command.Parameters.AddWithValue("low_stock_limit", query.LowStockLimit);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            products.Add(new AiLowStockProductDto
+            {
+                ProductId = reader.GetInt32(0),
+                ProductName = reader.GetString(1),
+                MarketId = reader.GetInt32(2),
+                MarketName = reader.GetString(3),
+                DepartmentId = reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                DepartmentName = reader.IsDBNull(5) ? null : reader.GetString(5),
+                Quantity = reader.GetInt32(6),
+                ReservedQuantity = reader.GetInt32(7),
+                AvailableQuantity = reader.GetInt32(8),
+                MinimumStockAlert = reader.GetInt32(9),
+                SuggestedRestockQuantity = reader.GetInt32(10)
+            });
+        }
+
+        return products;
+    }
+
+    private async Task<IReadOnlyCollection<AiInventoryMovementMetricDto>> GetAiInventoryMovementMetricsAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var metrics = new List<AiInventoryMovementMetricDto>();
+        var whereClause = BuildAiInventoryMovementWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT im.movement_type,
+                   COUNT(*)::bigint AS movement_count,
+                   COALESCE(SUM(ABS(im.quantity_changed)), 0)::bigint AS total_quantity_changed
+            FROM {schemaName}.inventory_movements im
+            INNER JOIN {schemaName}.inventory i ON i.id = im.inventory_id
+            {whereClause}
+            GROUP BY im.movement_type
+            ORDER BY movement_count DESC, im.movement_type ASC;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            metrics.Add(new AiInventoryMovementMetricDto
+            {
+                MovementType = reader.GetString(0),
+                MovementCount = reader.GetInt64(1),
+                TotalQuantityChanged = reader.GetInt64(2)
+            });
+        }
+
+        return metrics;
+    }
+
+    private async Task<IReadOnlyCollection<AiSupplierPurchaseMetricDto>> GetAiSupplierPurchaseMetricsAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var metrics = new List<AiSupplierPurchaseMetricDto>();
+        var whereClause = BuildAiPurchaseWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            WITH filtered_purchases AS (
+                SELECT p.id,
+                       p.supplier_id,
+                       p.total_amount
+                FROM {schemaName}.purchases p
+                {whereClause}
+            ),
+            purchase_quantities AS (
+                SELECT pi.purchase_id,
+                       SUM(pi.quantity)::bigint AS purchased_quantity
+                FROM {schemaName}.purchase_items pi
+                INNER JOIN filtered_purchases fp ON fp.id = pi.purchase_id
+                GROUP BY pi.purchase_id
+            )
+            SELECT fp.supplier_id,
+                   COALESCE(s.name, '') AS supplier_name,
+                   COUNT(fp.id)::bigint AS purchase_count,
+                   COALESCE(SUM(fp.total_amount), 0) AS total_purchase_amount,
+                   COALESCE(SUM(COALESCE(pq.purchased_quantity, 0)), 0)::bigint AS total_purchased_quantity
+            FROM filtered_purchases fp
+            LEFT JOIN {schemaName}.suppliers s ON s.id = fp.supplier_id
+            LEFT JOIN purchase_quantities pq ON pq.purchase_id = fp.id
+            GROUP BY fp.supplier_id, s.name
+            ORDER BY total_purchase_amount DESC, purchase_count DESC, supplier_name ASC;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            metrics.Add(new AiSupplierPurchaseMetricDto
+            {
+                SupplierId = reader.GetInt32(0),
+                SupplierName = reader.GetString(1),
+                PurchaseCount = reader.GetInt64(2),
+                TotalPurchaseAmount = reader.GetDecimal(3),
+                TotalPurchasedQuantity = reader.GetInt64(4)
+            });
+        }
+
+        return metrics;
+    }
+
     public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
@@ -2979,6 +3244,143 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
             : $"WHERE {string.Join(" AND ", conditions)}";
     }
 
+    private static string BuildAiSalesWhereClause(AiBusinessDataQuery query, InventoryScope scope)
+    {
+        var conditions = BuildSalesScopeConditions(scope);
+
+        if (query.From.HasValue)
+        {
+            conditions.Add("s.sale_date >= @from");
+        }
+
+        if (query.To.HasValue)
+        {
+            conditions.Add("s.sale_date <= @to");
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            conditions.Add("s.market_id = @market_id");
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            conditions.Add("s.department_id = @department_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiInventoryWhereClause(AiBusinessDataQuery query, InventoryScope scope)
+    {
+        var conditions = BuildInventoryScopeConditions(scope);
+        conditions.Add("i.quantity <= p.min_stock_alert");
+
+        if (query.MarketId.HasValue)
+        {
+            conditions.Add("i.market_id = @market_id");
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            conditions.Add("i.department_id = @department_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiInventoryMovementWhereClause(AiBusinessDataQuery query, InventoryScope scope)
+    {
+        var conditions = BuildInventoryScopeConditions(scope);
+
+        if (query.From.HasValue)
+        {
+            conditions.Add("im.created_at >= @from");
+        }
+
+        if (query.To.HasValue)
+        {
+            conditions.Add("im.created_at < @to + INTERVAL '1 day'");
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            conditions.Add("i.market_id = @market_id");
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            conditions.Add("i.department_id = @department_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static string BuildAiPurchaseWhereClause(AiBusinessDataQuery query, InventoryScope scope)
+    {
+        var conditions = new List<string>();
+
+        switch (scope.Kind)
+        {
+            case InventoryScopeKind.Company:
+                break;
+            case InventoryScopeKind.Market:
+            case InventoryScopeKind.Department:
+                conditions.Add("p.market_id = @scope_market_id");
+                break;
+            default:
+                conditions.Add("FALSE");
+                break;
+        }
+
+        if (query.From.HasValue)
+        {
+            conditions.Add("p.purchase_date >= @from");
+        }
+
+        if (query.To.HasValue)
+        {
+            conditions.Add("p.purchase_date <= @to");
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            conditions.Add("p.market_id = @market_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
+    private static List<string> BuildSalesScopeConditions(InventoryScope scope)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => [],
+            InventoryScopeKind.Market => ["s.market_id = @scope_market_id"],
+            InventoryScopeKind.Department => ["s.market_id = @scope_market_id", "s.department_id = @scope_department_id"],
+            _ => ["FALSE"]
+        };
+    }
+
+    private static List<string> BuildInventoryScopeConditions(InventoryScope scope)
+    {
+        return scope.Kind switch
+        {
+            InventoryScopeKind.Company => [],
+            InventoryScopeKind.Market => ["i.market_id = @scope_market_id"],
+            InventoryScopeKind.Department => ["i.market_id = @scope_market_id", "i.department_id = @scope_department_id"],
+            _ => ["FALSE"]
+        };
+    }
+
     private static void AddSalesHistoryParameters(NpgsqlCommand command, SaleHistoryQuery query)
     {
         if (query.DateFrom.HasValue)
@@ -3017,6 +3419,29 @@ public sealed class TenantQueryService : ITenantQueryService, IMarketQueryServic
         if (query.To.HasValue)
         {
             command.Parameters.AddWithValue("to", query.To.Value);
+        }
+    }
+
+    private static void AddAiBusinessDataParameters(NpgsqlCommand command, AiBusinessDataQuery query)
+    {
+        if (query.From.HasValue)
+        {
+            command.Parameters.AddWithValue("from", query.From.Value);
+        }
+
+        if (query.To.HasValue)
+        {
+            command.Parameters.AddWithValue("to", query.To.Value);
+        }
+
+        if (query.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", query.MarketId.Value);
+        }
+
+        if (query.DepartmentId.HasValue)
+        {
+            command.Parameters.AddWithValue("department_id", query.DepartmentId.Value);
         }
     }
 
