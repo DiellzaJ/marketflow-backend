@@ -13,7 +13,8 @@ public class AiController(
     IAiDashboardService aiDashboardService,
     IAiInventoryForecastService aiInventoryForecastService,
     IAiInventoryInsightService aiInventoryInsightService,
-    IAiPurchaseRecommendationService aiPurchaseRecommendationService) : ControllerBase
+    IAiPurchaseRecommendationService aiPurchaseRecommendationService,
+    IAiSupplierInsightService aiSupplierInsightService) : ControllerBase
 {
     [HttpPost("dashboard-summary")]
     [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
@@ -68,6 +69,20 @@ public class AiController(
         CancellationToken cancellationToken)
     {
         var result = await aiPurchaseRecommendationService.GeneratePurchaseRecommendationsAsync(request, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
+    [HttpPost("suppliers/performance")]
+    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>>> GenerateSupplierPerformanceInsightsAsync(
+        AiSupplierInsightRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await aiSupplierInsightService.GenerateSupplierPerformanceInsightsAsync(request, cancellationToken);
         return result.Succeeded ? Ok(result) : BadRequest(result);
     }
 }

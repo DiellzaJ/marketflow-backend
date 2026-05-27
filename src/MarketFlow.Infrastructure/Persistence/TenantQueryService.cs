@@ -41,7 +41,8 @@ public sealed class TenantQueryService :
     ISupplierStore,
     IAiInventoryForecastDataService,
     IAiInventoryInsightDataService,
-    IAiPurchaseRecommendationDataService
+    IAiPurchaseRecommendationDataService,
+    IAiSupplierInsightDataService
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -2317,6 +2318,62 @@ public sealed class TenantQueryService :
         return products;
     }
 
+    public async Task<IReadOnlyCollection<AiSupplierInsightDataDto>> GetAiSupplierInsightDataAsync(
+        AiSupplierInsightRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var scope = await GetCurrentInventoryScopeAsync(schemaName, cancellationToken);
+        var purchaseWhereClause = BuildAiSupplierInsightPurchaseWhereClause(request, scope);
+        var insights = new List<AiSupplierInsightDataDto>();
+
+        await using var command = await CreateCommandAsync($"""
+            WITH filtered_purchases AS (
+                SELECT p.id,
+                       p.supplier_id,
+                       p.purchase_date,
+                       p.status,
+                       p.total_amount,
+                       p.received_at
+                FROM {schemaName}.purchases p
+                {purchaseWhereClause}
+            )
+            SELECT s.id,
+                   s.name,
+                   COUNT(fp.id)::bigint AS total_purchases,
+                   COUNT(fp.id) FILTER (WHERE fp.status = 'Received')::bigint AS received_purchases,
+                   COUNT(fp.id) FILTER (WHERE fp.status = 'Cancelled')::bigint AS cancelled_purchases,
+                   AVG((fp.received_at::date - fp.purchase_date)::numeric)
+                       FILTER (WHERE fp.status = 'Received' AND fp.received_at IS NOT NULL) AS average_delivery_days,
+                   COALESCE(SUM(fp.total_amount) FILTER (WHERE fp.status = 'Received'), 0) AS total_amount_spent
+            FROM {schemaName}.suppliers s
+            LEFT JOIN filtered_purchases fp ON fp.supplier_id = s.id
+            WHERE s.is_active = TRUE
+            GROUP BY s.id, s.name
+            ORDER BY s.name ASC, s.id ASC;
+            """, cancellationToken);
+        AddAiSupplierInsightParameters(command, request);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            insights.Add(new AiSupplierInsightDataDto
+            {
+                SupplierId = reader.GetInt32(0),
+                SupplierName = reader.GetString(1),
+                TotalPurchases = reader.GetInt64(2),
+                ReceivedPurchases = reader.GetInt64(3),
+                CancelledPurchases = reader.GetInt64(4),
+                AverageDeliveryDays = reader.IsDBNull(5) ? null : reader.GetDecimal(5),
+                TotalAmountSpent = reader.GetDecimal(6)
+            });
+        }
+
+        return insights;
+    }
+
     public async Task<SaleDetailsResponse?> GetSaleDetailsAsync(
         int id,
         CancellationToken cancellationToken = default)
@@ -3668,6 +3725,32 @@ public sealed class TenantQueryService :
             : $"WHERE {string.Join(" AND ", conditions)}";
     }
 
+    private static string BuildAiSupplierInsightPurchaseWhereClause(
+        AiSupplierInsightRequest request,
+        InventoryScope scope)
+    {
+        var conditions = BuildPurchaseRecommendationPurchaseScopeConditions(scope);
+
+        if (request.From.HasValue)
+        {
+            conditions.Add("p.purchase_date >= @from");
+        }
+
+        if (request.To.HasValue)
+        {
+            conditions.Add("p.purchase_date <= @to");
+        }
+
+        if (request.MarketId.HasValue)
+        {
+            conditions.Add("p.market_id = @market_id");
+        }
+
+        return conditions.Count == 0
+            ? string.Empty
+            : $"WHERE {string.Join(" AND ", conditions)}";
+    }
+
     private static string BuildAiInventoryMovementWhereClause(AiBusinessDataQuery query, InventoryScope scope)
     {
         var conditions = BuildInventoryScopeConditions(scope);
@@ -3879,6 +3962,26 @@ public sealed class TenantQueryService :
         if (request.DepartmentId.HasValue)
         {
             command.Parameters.AddWithValue("department_id", request.DepartmentId.Value);
+        }
+    }
+
+    private static void AddAiSupplierInsightParameters(
+        NpgsqlCommand command,
+        AiSupplierInsightRequest request)
+    {
+        if (request.From.HasValue)
+        {
+            command.Parameters.AddWithValue("from", request.From.Value);
+        }
+
+        if (request.To.HasValue)
+        {
+            command.Parameters.AddWithValue("to", request.To.Value);
+        }
+
+        if (request.MarketId.HasValue)
+        {
+            command.Parameters.AddWithValue("market_id", request.MarketId.Value);
         }
     }
 
