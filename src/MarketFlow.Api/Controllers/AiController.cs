@@ -15,8 +15,23 @@ public class AiController(
     IAiInventoryInsightService aiInventoryInsightService,
     IAiPurchaseRecommendationService aiPurchaseRecommendationService,
     IAiSupplierInsightService aiSupplierInsightService,
-    IAiAnomalyDetectionService aiAnomalyDetectionService) : ControllerBase
+    IAiAnomalyDetectionService aiAnomalyDetectionService,
+    IAiReportQueryService aiReportQueryService) : ControllerBase
 {
+    [HttpPost("reports/query")]
+    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [ProducesResponseType(typeof(ServiceResult<NaturalLanguageReportResponseDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ServiceResult<NaturalLanguageReportResponseDto>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ServiceResult<NaturalLanguageReportResponseDto>>> QueryReportAsync(
+        NaturalLanguageReportRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await aiReportQueryService.QueryAsync(request, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("dashboard-summary")]
     [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
     [ProducesResponseType(typeof(ServiceResult<AiDashboardSummaryResponse>), StatusCodes.Status200OK)]

@@ -1868,7 +1868,10 @@ public sealed class TenantQueryService :
             TopSellingProducts = await GetAiTopSellingProductsAsync(schemaName, query, scope, cancellationToken),
             LowStockProducts = await GetAiLowStockProductsAsync(schemaName, query, scope, cancellationToken),
             InventoryMovementMetrics = await GetAiInventoryMovementMetricsAsync(schemaName, query, scope, cancellationToken),
-            SupplierPurchaseMetrics = await GetAiSupplierPurchaseMetricsAsync(schemaName, query, scope, cancellationToken)
+            SupplierPurchaseMetrics = await GetAiSupplierPurchaseMetricsAsync(schemaName, query, scope, cancellationToken),
+            SalesByMarket = await GetAiSalesByMarketAsync(schemaName, query, scope, cancellationToken),
+            SalesByCategory = await GetAiSalesByCategoryAsync(schemaName, query, scope, cancellationToken),
+            DailySalesSummaries = await GetAiDailySalesSummariesAsync(schemaName, query, scope, cancellationToken)
         };
     }
 
@@ -2110,6 +2113,154 @@ public sealed class TenantQueryService :
         }
 
         return metrics;
+    }
+
+    private async Task<IReadOnlyCollection<AiSalesByMarketDto>> GetAiSalesByMarketAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var markets = new List<AiSalesByMarketDto>();
+        var whereClause = BuildAiSalesWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            WITH filtered_sales AS (
+                SELECT s.id,
+                       s.market_id,
+                       s.total_amount
+                FROM {schemaName}.sales s
+                {whereClause}
+            ),
+            sale_quantities AS (
+                SELECT si.sale_id,
+                       SUM(si.quantity)::bigint AS items_sold
+                FROM {schemaName}.sale_items si
+                INNER JOIN filtered_sales fs ON fs.id = si.sale_id
+                GROUP BY si.sale_id
+            )
+            SELECT fs.market_id,
+                   COALESCE(m.name, '') AS market_name,
+                   COUNT(fs.id)::bigint AS sales_count,
+                   COALESCE(SUM(COALESCE(sq.items_sold, 0)), 0)::bigint AS items_sold,
+                   COALESCE(SUM(fs.total_amount), 0) AS revenue
+            FROM filtered_sales fs
+            LEFT JOIN {schemaName}.markets m ON m.id = fs.market_id
+            LEFT JOIN sale_quantities sq ON sq.sale_id = fs.id
+            GROUP BY fs.market_id, m.name
+            ORDER BY revenue DESC, sales_count DESC, market_name ASC;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            markets.Add(new AiSalesByMarketDto
+            {
+                MarketId = reader.GetInt32(0),
+                MarketName = reader.GetString(1),
+                SalesCount = reader.GetInt64(2),
+                ItemsSold = reader.GetInt64(3),
+                Revenue = reader.GetDecimal(4)
+            });
+        }
+
+        return markets;
+    }
+
+    private async Task<IReadOnlyCollection<AiSalesByCategoryDto>> GetAiSalesByCategoryAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var categories = new List<AiSalesByCategoryDto>();
+        var whereClause = BuildAiSalesWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            SELECT p.category_id,
+                   COALESCE(c.name, 'Uncategorized') AS category_name,
+                   COALESCE(SUM(si.quantity), 0)::bigint AS quantity_sold,
+                   COALESCE(SUM(si.line_total), 0) AS revenue
+            FROM {schemaName}.sale_items si
+            INNER JOIN {schemaName}.sales s ON s.id = si.sale_id
+            LEFT JOIN {schemaName}.products p ON p.id = si.product_id
+            LEFT JOIN {schemaName}.categories c ON c.id = p.category_id
+            {whereClause}
+            GROUP BY p.category_id, c.name
+            ORDER BY revenue DESC, quantity_sold DESC, category_name ASC;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            categories.Add(new AiSalesByCategoryDto
+            {
+                CategoryId = reader.IsDBNull(0) ? null : reader.GetInt32(0),
+                CategoryName = reader.GetString(1),
+                QuantitySold = reader.GetInt64(2),
+                Revenue = reader.GetDecimal(3)
+            });
+        }
+
+        return categories;
+    }
+
+    private async Task<IReadOnlyCollection<AiDailySalesSummaryDto>> GetAiDailySalesSummariesAsync(
+        string schemaName,
+        AiBusinessDataQuery query,
+        InventoryScope scope,
+        CancellationToken cancellationToken)
+    {
+        var summaries = new List<AiDailySalesSummaryDto>();
+        var whereClause = BuildAiSalesWhereClause(query, scope);
+
+        await using var command = await CreateCommandAsync($"""
+            WITH filtered_sales AS (
+                SELECT s.id,
+                       s.sale_date,
+                       s.total_amount
+                FROM {schemaName}.sales s
+                {whereClause}
+            ),
+            sale_quantities AS (
+                SELECT si.sale_id,
+                       SUM(si.quantity)::bigint AS items_sold
+                FROM {schemaName}.sale_items si
+                INNER JOIN filtered_sales fs ON fs.id = si.sale_id
+                GROUP BY si.sale_id
+            )
+            SELECT fs.sale_date,
+                   COUNT(fs.id)::bigint AS sales_count,
+                   COALESCE(SUM(COALESCE(sq.items_sold, 0)), 0)::bigint AS items_sold,
+                   COALESCE(SUM(fs.total_amount), 0) AS revenue
+            FROM filtered_sales fs
+            LEFT JOIN sale_quantities sq ON sq.sale_id = fs.id
+            GROUP BY fs.sale_date
+            ORDER BY fs.sale_date DESC;
+            """, cancellationToken);
+        AddAiBusinessDataParameters(command, query);
+        AddInventoryScopeParameters(command, scope);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            summaries.Add(new AiDailySalesSummaryDto
+            {
+                SaleDate = reader.GetFieldValue<DateOnly>(0),
+                SalesCount = reader.GetInt64(1),
+                ItemsSold = reader.GetInt64(2),
+                Revenue = reader.GetDecimal(3)
+            });
+        }
+
+        return summaries;
     }
 
     public async Task<IReadOnlyCollection<AiInventoryForecastDataDto>> GetAiInventoryForecastDataAsync(

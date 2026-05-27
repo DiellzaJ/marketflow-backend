@@ -13,6 +13,12 @@ public class AiBusinessDataDto
     public IReadOnlyCollection<AiInventoryMovementMetricDto> InventoryMovementMetrics { get; set; } = [];
 
     public IReadOnlyCollection<AiSupplierPurchaseMetricDto> SupplierPurchaseMetrics { get; set; } = [];
+
+    public IReadOnlyCollection<AiSalesByMarketDto> SalesByMarket { get; set; } = [];
+
+    public IReadOnlyCollection<AiSalesByCategoryDto> SalesByCategory { get; set; } = [];
+
+    public IReadOnlyCollection<AiDailySalesSummaryDto> DailySalesSummaries { get; set; } = [];
 }
 
 public class AiBusinessDataFilterDto
@@ -93,4 +99,39 @@ public class AiSupplierPurchaseMetricDto
     public decimal TotalPurchaseAmount { get; set; }
 
     public long TotalPurchasedQuantity { get; set; }
+}
+
+public class AiSalesByMarketDto
+{
+    public int MarketId { get; set; }
+
+    public string MarketName { get; set; } = string.Empty;
+
+    public long SalesCount { get; set; }
+
+    public long ItemsSold { get; set; }
+
+    public decimal Revenue { get; set; }
+}
+
+public class AiSalesByCategoryDto
+{
+    public int? CategoryId { get; set; }
+
+    public string CategoryName { get; set; } = string.Empty;
+
+    public long QuantitySold { get; set; }
+
+    public decimal Revenue { get; set; }
+}
+
+public class AiDailySalesSummaryDto
+{
+    public DateOnly SaleDate { get; set; }
+
+    public long SalesCount { get; set; }
+
+    public long ItemsSold { get; set; }
+
+    public decimal Revenue { get; set; }
 }
