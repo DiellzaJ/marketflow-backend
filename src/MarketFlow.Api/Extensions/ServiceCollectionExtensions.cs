@@ -144,6 +144,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
         services.AddScoped<IAiBusinessDataService, AiBusinessDataService>();
+        services.AddScoped<IAiDashboardService, AiDashboardService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<ICategoryService, CategoryService>();
@@ -184,6 +185,9 @@ public static class ServiceCollectionExtensions
     {
         options.AddPolicy(AuthorizationPolicies.RootAdminOnly, policy =>
             policy.RequireRole("RootAdmin"));
+
+        options.AddPolicy(AuthorizationPolicies.CompanyAdminOnly, policy =>
+            policy.RequireRole("CompanyAdmin"));
 
         options.AddPolicy(AuthorizationPolicies.ManageCompanies, policy =>
             policy.Requirements.Add(new PermissionRequirement("company")));
