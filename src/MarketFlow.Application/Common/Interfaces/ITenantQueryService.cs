@@ -6,6 +6,7 @@ using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Sales.DTOs;
 using MarketFlow.Application.Features.Suppliers.DTOs;
+using MarketFlow.Application.Features.AI.DTOs;
 
 namespace MarketFlow.Application.Common.Interfaces;
 
@@ -100,6 +101,10 @@ public interface ITenantQueryService
 
     Task<SalesSummaryDto> GetSalesSummaryAsync(
         SalesSummaryQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<AiBusinessDataDto> GetAiBusinessDataAsync(
+        AiBusinessDataQuery query,
         CancellationToken cancellationToken = default);
 
     Task<SaleDetailsResponse?> GetSaleDetailsAsync(
