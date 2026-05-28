@@ -185,11 +185,20 @@ public static class ServiceCollectionExtensions
         services.AddScoped<PasswordHasher>();
         services.Configure<OpenAiOptions>(
             configuration.GetSection(OpenAiOptions.SectionName));
-        services.AddHttpClient<IOpenAiClient, OpenAiClient>((serviceProvider, httpClient) =>
+
+        if (configuration.GetValue<bool>($"{OpenAiOptions.SectionName}:UseFakeClient"))
         {
-            var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-            httpClient.BaseAddress = options.BaseUrl;
-        });
+            services.AddScoped<IOpenAiClient, FakeOpenAiClient>();
+        }
+        else
+        {
+            services.AddHttpClient<IOpenAiClient, OpenAiClient>((serviceProvider, httpClient) =>
+            {
+                var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
+                httpClient.BaseAddress = options.BaseUrl;
+            });
+        }
+
         services.AddScoped<TenantProvider>();
         services.AddSingleton<RedisCacheService>();
         services.Configure<StockAlertJobOptions>(
