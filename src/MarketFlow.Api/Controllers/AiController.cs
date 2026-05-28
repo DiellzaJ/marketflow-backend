@@ -16,8 +16,23 @@ public class AiController(
     IAiPurchaseRecommendationService aiPurchaseRecommendationService,
     IAiSupplierInsightService aiSupplierInsightService,
     IAiAnomalyDetectionService aiAnomalyDetectionService,
-    IAiReportQueryService aiReportQueryService) : ControllerBase
+    IAiReportQueryService aiReportQueryService,
+    IAiChatService aiChatService) : ControllerBase
 {
+    [HttpPost("chat")]
+    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [ProducesResponseType(typeof(ServiceResult<AiChatResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ServiceResult<AiChatResponse>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ServiceResult<AiChatResponse>>> ChatAsync(
+        AiChatRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await aiChatService.ChatAsync(request, cancellationToken);
+        return result.Succeeded ? Ok(result) : BadRequest(result);
+    }
+
     [HttpPost("reports/query")]
     [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
     [ProducesResponseType(typeof(ServiceResult<NaturalLanguageReportResponseDto>), StatusCodes.Status200OK)]

@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Data;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.AI.DTOs;
@@ -43,7 +45,8 @@ public sealed class TenantQueryService :
     IAiInventoryInsightDataService,
     IAiPurchaseRecommendationDataService,
     IAiSupplierInsightDataService,
-    IAiAnomalyDetectionDataService
+    IAiAnomalyDetectionDataService,
+    IAiChatSessionStore
 {
     private const int DefaultBarcodeLookupCacheTtlSeconds = 300;
     private const string InventoryMovementSavepointName = "before_inventory_movement_insert";
@@ -51,6 +54,11 @@ public sealed class TenantQueryService :
 
     private static readonly ConcurrentDictionary<string, byte> InventoryMovementTableRepairCache = new();
     private static readonly ConcurrentDictionary<string, DateTimeOffset> SaleReferenceNumberRepairCache = new();
+    private static readonly JsonSerializerOptions AiChatJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     private readonly ApplicationDbContext _dbContext;
     private readonly TenantProvider _tenantProvider;
@@ -1872,6 +1880,74 @@ public sealed class TenantQueryService :
             SalesByMarket = await GetAiSalesByMarketAsync(schemaName, query, scope, cancellationToken),
             SalesByCategory = await GetAiSalesByCategoryAsync(schemaName, query, scope, cancellationToken),
             DailySalesSummaries = await GetAiDailySalesSummariesAsync(schemaName, query, scope, cancellationToken)
+        };
+    }
+
+    public async Task<AiChatSessionDto> AppendMessagesAsync(
+        int? sessionId,
+        int userId,
+        int? marketId,
+        IReadOnlyCollection<AiChatMessageDto> messages,
+        CancellationToken cancellationToken = default)
+    {
+        var schemaName = await GetQuotedCurrentSchemaNameAsync(cancellationToken);
+        var existingMessages = new List<AiChatMessageDto>();
+
+        if (sessionId.HasValue)
+        {
+            await using var readCommand = await CreateCommandAsync($"""
+                SELECT messages
+                FROM {schemaName}.ai_chat_sessions
+                WHERE id = @id AND user_id = @user_id;
+                """, cancellationToken);
+            readCommand.Parameters.AddWithValue("id", sessionId.Value);
+            readCommand.Parameters.AddWithValue("user_id", userId);
+
+            var existingJson = (await readCommand.ExecuteScalarAsync(cancellationToken))?.ToString();
+
+            if (existingJson is null)
+            {
+                throw new UnauthorizedAccessException("Chat session was not found for the current tenant.");
+            }
+
+            existingMessages.AddRange(ParseAiChatMessages(existingJson));
+            existingMessages.AddRange(messages);
+
+            await using var updateCommand = await CreateCommandAsync($"""
+                UPDATE {schemaName}.ai_chat_sessions
+                SET messages = @messages::jsonb,
+                    updated_at = NOW()
+                WHERE id = @id AND user_id = @user_id;
+                """, cancellationToken);
+            updateCommand.Parameters.AddWithValue("id", sessionId.Value);
+            updateCommand.Parameters.AddWithValue("user_id", userId);
+            updateCommand.Parameters.AddWithValue("messages", JsonSerializer.Serialize(existingMessages, AiChatJsonOptions));
+            await updateCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            return new AiChatSessionDto
+            {
+                Id = sessionId.Value,
+                Messages = existingMessages
+            };
+        }
+
+        existingMessages.AddRange(messages);
+
+        await using var insertCommand = await CreateCommandAsync($"""
+            INSERT INTO {schemaName}.ai_chat_sessions (user_id, market_id, messages)
+            VALUES (@user_id, @market_id, @messages::jsonb)
+            RETURNING id;
+            """, cancellationToken);
+        insertCommand.Parameters.AddWithValue("user_id", userId);
+        insertCommand.Parameters.AddWithValue("market_id", DbValue(marketId));
+        insertCommand.Parameters.AddWithValue("messages", JsonSerializer.Serialize(existingMessages, AiChatJsonOptions));
+
+        var createdId = await insertCommand.ExecuteScalarAsync(cancellationToken);
+
+        return new AiChatSessionDto
+        {
+            Id = createdId is int intId ? intId : Convert.ToInt32(createdId),
+            Messages = existingMessages
         };
     }
 
@@ -6484,6 +6560,20 @@ public sealed class TenantQueryService :
         command.Parameters.AddWithValue("phone", DbValue(phone));
         command.Parameters.AddWithValue("email", DbValue(email));
         command.Parameters.AddWithValue("address", DbValue(address));
+    }
+
+    private static IReadOnlyCollection<AiChatMessageDto> ParseAiChatMessages(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<IReadOnlyCollection<AiChatMessageDto>>(
+                json,
+                AiChatJsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private static object DbValue<T>(T? value)
