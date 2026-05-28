@@ -351,6 +351,8 @@ public sealed class ProductLiveSmokeTests
         string commandText,
         params NpgsqlParameter[] parameters)
     {
+        await EnsureOpenAsync(connection);
+
         await using var command = new NpgsqlCommand(commandText, connection);
         command.Parameters.AddRange(parameters);
         await command.ExecuteNonQueryAsync();
@@ -361,10 +363,20 @@ public sealed class ProductLiveSmokeTests
         string commandText,
         params NpgsqlParameter[] parameters)
     {
+        await EnsureOpenAsync(connection);
+
         await using var command = new NpgsqlCommand(commandText, connection);
         command.Parameters.AddRange(parameters);
         var result = await command.ExecuteScalarAsync();
         return Assert.IsType<T>(result);
+    }
+
+    private static async Task EnsureOpenAsync(NpgsqlConnection connection)
+    {
+        if (connection.State != System.Data.ConnectionState.Open)
+        {
+            await connection.OpenAsync();
+        }
     }
 
     private static async Task EnsureSaleReferenceNumbersAsync(
