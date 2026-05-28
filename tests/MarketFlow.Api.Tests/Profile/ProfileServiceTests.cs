@@ -140,6 +140,23 @@ public sealed class ProfileServiceTests
     }
 
     [Fact]
+    public async Task ChangePasswordAsync_ClearsRefreshTokenHash_WhenPasswordChanges()
+    {
+        var store = new FakeUserStore();
+        var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2 };
+        var companyStore = new FakeCompanyStore();
+        store.AddUserWithPassword(1, "user@x.test", "OldPass123");
+        store.SetRefreshTokenHash(1, "existing-refresh-token-hash");
+
+        var service = new ProfileService(store, current, companyStore);
+
+        var result = await service.ChangePasswordAsync(new ChangePasswordRequest { CurrentPassword = "OldPass123", NewPassword = "NewPass456" });
+
+        Assert.True(result.Succeeded);
+        Assert.Null(store.GetRefreshTokenHash(1));
+    }
+
+    [Fact]
     public async Task ChangePasswordAsync_Fails_WithInvalidCurrentPassword()
     {
         var store = new FakeUserStore();
@@ -162,10 +179,22 @@ public sealed class ProfileServiceTests
 
         private readonly Dictionary<int, string> _passwordHashes = new();
 
+        private readonly Dictionary<int, string?> _refreshTokenHashes = new();
+
         public void AddUserWithPassword(int id, string email, string password)
         {
             Users.Add(new UserDto { Id = id, FullName = "User", Email = email, RoleName = "Seller", IsActive = true });
             _passwordHashes[id] = BCrypt.Net.BCrypt.HashPassword(password);
+        }
+
+        public void SetRefreshTokenHash(int id, string refreshTokenHash)
+        {
+            _refreshTokenHashes[id] = refreshTokenHash;
+        }
+
+        public string? GetRefreshTokenHash(int id)
+        {
+            return _refreshTokenHashes.GetValueOrDefault(id);
         }
 
         public Task<IReadOnlyCollection<UserDto>> GetUsersAsync(int? companyId, bool includeAllCompanies, CancellationToken cancellationToken = default)
@@ -226,6 +255,7 @@ public sealed class ProfileServiceTests
             }
 
             _passwordHashes[id] = BCrypt.Net.BCrypt.HashPassword(newPassword);
+            _refreshTokenHashes[id] = null;
 
             return Task.FromResult(true);
         }

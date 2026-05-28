@@ -374,6 +374,7 @@ public sealed class UserStore : IUserStore
         }
 
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.RefreshTokenHash = null;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
