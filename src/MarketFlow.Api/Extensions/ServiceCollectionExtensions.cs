@@ -129,6 +129,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TenantQueryService>();
         services.AddScoped<ITenantQueryService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiChatSessionStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IMarketQueryService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IMarketStore>(serviceProvider =>
@@ -161,6 +163,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IAiSupplierInsightService, AiSupplierInsightService>();
         services.AddScoped<IAiAnomalyDetectionService, AiAnomalyDetectionService>();
         services.AddScoped<IAiReportQueryService, AiReportQueryService>();
+        services.AddScoped<IAiChatService, AiChatService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<ICategoryService, CategoryService>();

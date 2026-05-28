@@ -9,6 +9,43 @@ namespace MarketFlow.Api.Tests.AI;
 public sealed class AiControllerTests
 {
     [Fact]
+    public async Task ChatAsync_WhenRequestSucceeds_ReturnsOk()
+    {
+        var response = new AiChatResponse
+        {
+            SessionId = 12,
+            Answer = "Sales are strongest in coffee.",
+            ReportType = AiReportType.TopSellingProducts
+        };
+        var controller = new AiController(
+            new StubAiDashboardService(
+                ServiceResult<AiDashboardSummaryResponse>.Success(new AiDashboardSummaryResponse())),
+            new StubAiInventoryForecastService(
+                ServiceResult<AiInventoryForecastResponse>.Success(new AiInventoryForecastResponse())),
+            new StubAiInventoryInsightService(
+                ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success([])),
+            new StubAiPurchaseRecommendationService(
+                ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>.Success([])),
+            new StubAiSupplierInsightService(
+                ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>.Success([])),
+            new StubAiAnomalyDetectionService(
+                ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success([])),
+            new StubAiReportQueryService(
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(response)));
+
+        var result = await controller.ChatAsync(
+            new AiChatRequest { Message = "How are sales?" },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var serviceResult = Assert.IsType<ServiceResult<AiChatResponse>>(ok.Value);
+        Assert.True(serviceResult.Succeeded);
+        Assert.Same(response, serviceResult.Data);
+    }
+
+    [Fact]
     public async Task QueryReportAsync_WhenRequestSucceeds_ReturnsOk()
     {
         var response = new NaturalLanguageReportResponseDto
@@ -30,7 +67,9 @@ public sealed class AiControllerTests
             new StubAiAnomalyDetectionService(
                 ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success([])),
             new StubAiReportQueryService(
-                ServiceResult<NaturalLanguageReportResponseDto>.Success(response)));
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(response)),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(new AiChatResponse())));
 
         var result = await controller.QueryReportAsync(
             new NaturalLanguageReportRequest { Question = "Which products sold best this week?" },
@@ -63,7 +102,9 @@ public sealed class AiControllerTests
             new StubAiAnomalyDetectionService(
                 ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success([])),
             new StubAiReportQueryService(
-                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())));
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(new AiChatResponse())));
 
         var result = await controller.GenerateDashboardSummaryAsync(
             new AiDashboardSummaryRequest(),
@@ -93,7 +134,9 @@ public sealed class AiControllerTests
             new StubAiAnomalyDetectionService(
                 ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success([])),
             new StubAiReportQueryService(
-                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())));
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(new AiChatResponse())));
 
         var result = await controller.GenerateDashboardSummaryAsync(
             new AiDashboardSummaryRequest(),
@@ -130,7 +173,9 @@ public sealed class AiControllerTests
             new StubAiAnomalyDetectionService(
                 ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success([])),
             new StubAiReportQueryService(
-                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())));
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(new AiChatResponse())));
 
         var result = await controller.GenerateInventoryRecommendationsAsync(
             new AiInventoryRecommendationRequest(),
@@ -168,7 +213,9 @@ public sealed class AiControllerTests
             new StubAiAnomalyDetectionService(
                 ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success([])),
             new StubAiReportQueryService(
-                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())));
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(new AiChatResponse())));
 
         var result = await controller.GeneratePurchaseRecommendationsAsync(
             new AiPurchaseRecommendationRequest(),
@@ -206,7 +253,9 @@ public sealed class AiControllerTests
             new StubAiAnomalyDetectionService(
                 ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success([])),
             new StubAiReportQueryService(
-                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())));
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(new AiChatResponse())));
 
         var result = await controller.GenerateSupplierPerformanceInsightsAsync(
             new AiSupplierInsightRequest(),
@@ -244,7 +293,9 @@ public sealed class AiControllerTests
             new StubAiAnomalyDetectionService(
                 ServiceResult<IReadOnlyCollection<AiAnomalyDto>>.Success(response)),
             new StubAiReportQueryService(
-                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())));
+                ServiceResult<NaturalLanguageReportResponseDto>.Success(new NaturalLanguageReportResponseDto())),
+            new StubAiChatService(
+                ServiceResult<AiChatResponse>.Success(new AiChatResponse())));
 
         var result = await controller.DetectAnomaliesAsync(
             new AiAnomalyDetectionRequest(),
@@ -315,6 +366,14 @@ public sealed class AiControllerTests
     {
         public Task<ServiceResult<NaturalLanguageReportResponseDto>> QueryAsync(
             NaturalLanguageReportRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(result);
+    }
+
+    private sealed class StubAiChatService(ServiceResult<AiChatResponse> result) : IAiChatService
+    {
+        public Task<ServiceResult<AiChatResponse>> ChatAsync(
+            AiChatRequest request,
             CancellationToken cancellationToken = default) =>
             Task.FromResult(result);
     }
