@@ -177,6 +177,11 @@ public sealed class ProfileServiceTests
         public Task<UserDto?> CreateUserAsync(int companyId, MarketFlow.Application.Features.Users.DTOs.CreateUserRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult<UserDto?>(null);
 
+        public Task<bool> CompanyExistsAsync(
+            int companyId,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(true);
+
         public Task<bool> MarketExistsAsync(int companyId, int marketId, CancellationToken cancellationToken = default)
             => Task.FromResult(true);
 
