@@ -29,6 +29,8 @@ using MarketFlow.Application.Features.Suppliers.Interfaces;
 using MarketFlow.Application.Features.Suppliers.Services;
 using MarketFlow.Application.Features.Users.Interfaces;
 using MarketFlow.Application.Features.Users.Services;
+using MarketFlow.Application.Features.Profile.Interfaces;
+using MarketFlow.Application.Features.Profile.Services;
 using MarketFlow.Infrastructure.BackgroundJobs;
 using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Infrastructure.MultiTenancy;
@@ -121,6 +123,7 @@ public static class ServiceCollectionExtensions
             });
 
         services.AddAuthorization(options => options.AddMarketFlowPolicies());
+        services.AddScoped<IAuthorizationHandler, ActiveUserAuthorizationHandler>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
@@ -171,6 +174,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IDepartmentService, DepartmentService>();
         services.AddScoped<IUserCreationValidator, UserCreationValidator>();
         services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IProfileService, ProfileService>();
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IInventoryService, InventoryService>();
         services.AddScoped<IPurchaseService, PurchaseService>();
@@ -211,6 +215,12 @@ public static class ServiceCollectionExtensions
 
     public static AuthorizationOptions AddMarketFlowPolicies(this AuthorizationOptions options)
     {
+        options.AddPolicy(AuthorizationPolicies.ActiveUser, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
         options.AddPolicy(AuthorizationPolicies.RootAdminOnly, policy =>
             policy.RequireRole("RootAdmin"));
 

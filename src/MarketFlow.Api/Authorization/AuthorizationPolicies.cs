@@ -2,6 +2,8 @@ namespace MarketFlow.Api.Authorization;
 
 public static class AuthorizationPolicies
 {
+    public const string ActiveUser = "ActiveUser";
+
     public const string RootAdminOnly = "RootAdminOnly";
     public const string CompanyAdminOnly = "CompanyAdminOnly";
     public const string CompanyAdminOrMainOperator = "CompanyAdminOrMainOperator";

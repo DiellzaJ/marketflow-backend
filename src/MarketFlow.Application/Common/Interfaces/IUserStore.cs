@@ -48,6 +48,14 @@ public interface IUserStore
         UpdateUserRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<bool> ChangePasswordAsync(
+        int id,
+        string currentPassword,
+        string newPassword,
+        int? companyId,
+        bool includeAllCompanies,
+        CancellationToken cancellationToken = default);
+
     Task<UserDto?> PatchUserAsync(
         int id,
         int? companyId,

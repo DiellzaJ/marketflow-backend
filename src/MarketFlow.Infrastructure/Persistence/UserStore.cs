@@ -352,6 +352,35 @@ public sealed class UserStore : IUserStore
         return await MapUserWithAssignmentAsync(user, user.Role.Name, cancellationToken);
     }
 
+    public async Task<bool> ChangePasswordAsync(
+        int id,
+        string currentPassword,
+        string newPassword,
+        int? companyId,
+        bool includeAllCompanies,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await FindEditableUserAsync(id, companyId, includeAllCompanies, cancellationToken);
+
+        if (user is null)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(user.PasswordHash) ||
+            !BCrypt.Net.BCrypt.Verify(currentPassword, user.PasswordHash))
+        {
+            return false;
+        }
+
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(newPassword);
+        user.RefreshTokenHash = null;
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        return true;
+    }
+
     public async Task<bool> DeleteUserAsync(
         int id,
         int? companyId,
