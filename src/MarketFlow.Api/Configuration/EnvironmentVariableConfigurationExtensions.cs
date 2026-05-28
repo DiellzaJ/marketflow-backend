@@ -24,6 +24,7 @@ public static class EnvironmentVariableConfigurationExtensions
             ["REDIS_BARCODE_LOOKUP_TTL_SECONDS"] = "Redis:BarcodeLookupTtlSeconds",
             ["OPENAI_API_KEY"] = "OpenAi:ApiKey",
             ["OPENAI_MODEL"] = "OpenAi:Model",
+            ["OPENAI_USE_FAKE_CLIENT"] = "OpenAi:UseFakeClient",
             ["FRONTEND_URL"] = "Cors:FrontendUrl"
         };
 

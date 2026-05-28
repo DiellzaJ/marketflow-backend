@@ -5,6 +5,8 @@ public static class AuthorizationPolicies
     public const string ActiveUser = "ActiveUser";
 
     public const string RootAdminOnly = "RootAdminOnly";
+    public const string CompanyAdminOnly = "CompanyAdminOnly";
+    public const string CompanyAdminOrMainOperator = "CompanyAdminOrMainOperator";
     public const string ManageCompanies = "ManageCompanies";
 
     public const string ReadUsers = "ReadUsers";
@@ -21,6 +23,11 @@ public static class AuthorizationPolicies
     public const string CreatePurchases = "CreatePurchases";
     public const string UpdatePurchases = "UpdatePurchases";
     public const string DeletePurchases = "DeletePurchases";
+
+    public const string ReadSuppliers = "ReadSuppliers";
+    public const string CreateSuppliers = "CreateSuppliers";
+    public const string UpdateSuppliers = "UpdateSuppliers";
+    public const string DeleteSuppliers = "DeleteSuppliers";
 
     public const string ReadSales = "ReadSales";
     public const string CreateSales = "CreateSales";

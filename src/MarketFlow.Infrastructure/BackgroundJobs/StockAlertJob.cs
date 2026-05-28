@@ -188,15 +188,9 @@ public sealed partial class StockAlertJob
         }
 
         await using var createCommand = await CreateCommandAsync($"""
-            WITH inserted_alerts AS (
-                INSERT INTO {schemaName}.low_stock_alerts (
-                    inventory_id,
-                    product_id,
-                    market_id,
-                    department_id,
-                    quantity,
-                    min_stock_alert)
-                SELECT i.id,
+            WITH low_stock_candidates AS (
+                SELECT DISTINCT ON (i.product_id, i.market_id, COALESCE(i.department_id, -1))
+                       i.id AS inventory_id,
                        i.product_id,
                        i.market_id,
                        i.department_id,
@@ -214,6 +208,30 @@ public sealed partial class StockAlertJob
                         AND existing.market_id = i.market_id
                         AND COALESCE(existing.department_id, -1) = COALESCE(i.department_id, -1)
                   )
+                ORDER BY i.product_id,
+                         i.market_id,
+                         COALESCE(i.department_id, -1),
+                         i.quantity ASC,
+                         i.id ASC
+            ),
+            inserted_alerts AS (
+                INSERT INTO {schemaName}.low_stock_alerts (
+                    inventory_id,
+                    product_id,
+                    market_id,
+                    department_id,
+                    quantity,
+                    min_stock_alert)
+                SELECT inventory_id,
+                       product_id,
+                       market_id,
+                       department_id,
+                       quantity,
+                       min_stock_alert
+                FROM low_stock_candidates
+                ON CONFLICT (product_id, market_id, (COALESCE(department_id, -1)))
+                    WHERE status = 'Active'
+                    DO NOTHING
                 RETURNING id, product_id, market_id, department_id, quantity, min_stock_alert
             ),
             recipient_users AS (

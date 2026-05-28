@@ -11,6 +11,8 @@ public class PurchaseService : IPurchaseService
     {
         "Draft",
         "Ordered",
+        "PartiallyReceived",
+        "Cancelled",
         "Received"
     };
 
@@ -194,7 +196,7 @@ public class PurchaseService : IPurchaseService
 
         if (!CreateOrUpdateStatuses.Contains(status.Trim()))
         {
-            return ServiceResult<PurchaseDto>.Failure("Purchase status must be Draft, Ordered, or Received.");
+            return ServiceResult<PurchaseDto>.Failure("Purchase status must be Draft, Ordered, Partially Received, Received, or Cancelled.");
         }
 
         if (items is null)

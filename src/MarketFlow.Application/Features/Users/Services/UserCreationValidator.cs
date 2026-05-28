@@ -21,19 +21,10 @@ public sealed class UserCreationValidator : IUserCreationValidator
     public async Task<ServiceResult<int>> ValidateAsync(
         CreateUserRequest request,
         bool isRootAdmin,
+        string? currentRole,
         int? currentCompanyId,
         CancellationToken cancellationToken = default)
     {
-        var companyId = isRootAdmin ? request.CompanyId : currentCompanyId;
-
-        if (companyId is null)
-        {
-            return ServiceResult<int>.Failure(
-                isRootAdmin
-                    ? "Company is required when RootAdmin creates a user."
-                    : "Current company is required.");
-        }
-
         if (string.IsNullOrWhiteSpace(request.FullName) ||
             string.IsNullOrWhiteSpace(request.Email) ||
             string.IsNullOrWhiteSpace(request.Password))
@@ -41,8 +32,37 @@ public sealed class UserCreationValidator : IUserCreationValidator
             return ServiceResult<int>.Failure("Full name, email, and password are required.");
         }
 
+        var normalizedRoleName = RoleAssignmentRules.NormalizeRoleName(request.RoleName ?? string.Empty);
+        var roleValidation = RoleAssignmentRules.ValidateCreatePermission(currentRole, normalizedRoleName);
+
+        if (!string.IsNullOrWhiteSpace(roleValidation))
+        {
+            return ServiceResult<int>.Failure(roleValidation);
+        }
+
+        var companyValidation = ResolveCompanyId(request, isRootAdmin, currentCompanyId);
+
+        if (!companyValidation.Succeeded)
+        {
+            return companyValidation;
+        }
+
+        var companyId = companyValidation.Data;
+
+        if (companyId <= 0)
+        {
+            return ServiceResult<int>.Failure("Company ID must be greater than zero.");
+        }
+
+        var companyExists = await _userStore.CompanyExistsAsync(companyId, cancellationToken);
+
+        if (!companyExists)
+        {
+            return ServiceResult<int>.Failure($"Company ID {companyId} not found or inactive.");
+        }
+
         var assignmentValidation = RoleAssignmentRules.ValidateAssignment(
-            request.RoleName ?? string.Empty,
+            normalizedRoleName,
             request.MarketId,
             request.DepartmentId);
 
@@ -54,20 +74,20 @@ public sealed class UserCreationValidator : IUserCreationValidator
         if (request.MarketId.HasValue)
         {
             var marketExists = await _userStore.MarketExistsAsync(
-                companyId.Value,
+                companyId,
                 request.MarketId.Value,
                 cancellationToken);
 
             if (!marketExists)
             {
-                return ServiceResult<int>.Failure($"Market ID {request.MarketId.Value} not found.");
+                return ServiceResult<int>.Failure($"Market ID {request.MarketId.Value} not found or inactive.");
             }
         }
 
         if (request.MarketId.HasValue && request.DepartmentId.HasValue)
         {
             var departmentExists = await _userStore.DepartmentExistsAsync(
-                companyId.Value,
+                companyId,
                 request.MarketId.Value,
                 request.DepartmentId.Value,
                 cancellationToken);
@@ -75,10 +95,36 @@ public sealed class UserCreationValidator : IUserCreationValidator
             if (!departmentExists)
             {
                 return ServiceResult<int>.Failure(
-                    $"Department ID {request.DepartmentId.Value} not found in market {request.MarketId.Value}.");
+                    $"Department ID {request.DepartmentId.Value} not found or inactive in market {request.MarketId.Value}.");
             }
         }
 
-        return ServiceResult<int>.Success(companyId.Value);
+        return ServiceResult<int>.Success(companyId);
+    }
+
+    private static ServiceResult<int> ResolveCompanyId(
+        CreateUserRequest request,
+        bool isRootAdmin,
+        int? currentCompanyId)
+    {
+        if (isRootAdmin)
+        {
+            return request.CompanyId is null
+                ? ServiceResult<int>.Failure("Company is required when RootAdmin creates a user.")
+                : ServiceResult<int>.Success(request.CompanyId.Value);
+        }
+
+        if (currentCompanyId is null)
+        {
+            return ServiceResult<int>.Failure("Current company is required.");
+        }
+
+        if (request.CompanyId.HasValue && request.CompanyId.Value != currentCompanyId.Value)
+        {
+            return ServiceResult<int>.Failure(
+                $"Company ID {request.CompanyId.Value} does not match the authenticated user's company.");
+        }
+
+        return ServiceResult<int>.Success(currentCompanyId.Value);
     }
 }

@@ -8,6 +8,7 @@ public interface IUserCreationValidator
     Task<ServiceResult<int>> ValidateAsync(
         CreateUserRequest request,
         bool isRootAdmin,
+        string? currentRole,
         int? currentCompanyId,
         CancellationToken cancellationToken = default);
 }

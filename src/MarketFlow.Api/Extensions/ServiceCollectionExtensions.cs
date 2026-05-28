@@ -4,6 +4,8 @@ using System.Text;
 using MarketFlow.Api.Authorization;
 using MarketFlow.Api.Services;
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.AI.Interfaces;
+using MarketFlow.Application.Features.AI.Services;
 using MarketFlow.Application.Features.Auth.Interfaces;
 using MarketFlow.Application.Features.Categories.Interfaces;
 using MarketFlow.Application.Features.Categories.Services;
@@ -23,6 +25,8 @@ using MarketFlow.Application.Features.Purchases.Interfaces;
 using MarketFlow.Application.Features.Purchases.Services;
 using MarketFlow.Application.Features.Sales.Interfaces;
 using MarketFlow.Application.Features.Sales.Services;
+using MarketFlow.Application.Features.Suppliers.Interfaces;
+using MarketFlow.Application.Features.Suppliers.Services;
 using MarketFlow.Application.Features.Users.Interfaces;
 using MarketFlow.Application.Features.Users.Services;
 using MarketFlow.Application.Features.Profile.Interfaces;
@@ -30,6 +34,7 @@ using MarketFlow.Application.Features.Profile.Services;
 using MarketFlow.Infrastructure.BackgroundJobs;
 using MarketFlow.Infrastructure.Caching;
 using MarketFlow.Infrastructure.MultiTenancy;
+using MarketFlow.Infrastructure.OpenAI;
 using MarketFlow.Infrastructure.Persistence;
 using MarketFlow.Infrastructure.Repositories;
 using MarketFlow.Infrastructure.Services;
@@ -37,6 +42,7 @@ using MarketFlow.Infrastructure.Services.Auth;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 
@@ -126,6 +132,8 @@ public static class ServiceCollectionExtensions
         services.AddScoped<TenantQueryService>();
         services.AddScoped<ITenantQueryService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiChatSessionStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IMarketQueryService>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IMarketStore>(serviceProvider =>
@@ -134,10 +142,31 @@ public static class ServiceCollectionExtensions
             serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IDepartmentStore>(serviceProvider =>
             serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<ISupplierStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiInventoryForecastDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiInventoryInsightDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiPurchaseRecommendationDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiSupplierInsightDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiAnomalyDetectionDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
         services.AddScoped<IUserStore, UserStore>();
 
         services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
         services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IAiBusinessDataService, AiBusinessDataService>();
+        services.AddScoped<IAiDashboardService, AiDashboardService>();
+        services.AddScoped<IAiInventoryForecastService, AiInventoryForecastService>();
+        services.AddScoped<IAiInventoryInsightService, AiInventoryInsightService>();
+        services.AddScoped<IAiPurchaseRecommendationService, AiPurchaseRecommendationService>();
+        services.AddScoped<IAiSupplierInsightService, AiSupplierInsightService>();
+        services.AddScoped<IAiAnomalyDetectionService, AiAnomalyDetectionService>();
+        services.AddScoped<IAiReportQueryService, AiReportQueryService>();
+        services.AddScoped<IAiChatService, AiChatService>();
         services.AddScoped<ICompanyService, CompanyService>();
         services.AddScoped<IDashboardService, DashboardService>();
         services.AddScoped<ICategoryService, CategoryService>();
@@ -149,6 +178,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductService, ProductService>();
         services.AddScoped<IInventoryService, InventoryService>();
         services.AddScoped<IPurchaseService, PurchaseService>();
+        services.AddScoped<ISupplierService, SupplierService>();
         services.AddScoped<ISalesService, SalesService>();
 
         services.AddScoped<ProductRepository>();
@@ -157,7 +187,22 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<JwtTokenService>();
         services.AddScoped<PasswordHasher>();
-        services.AddScoped<OpenAiService>();
+        services.Configure<OpenAiOptions>(
+            configuration.GetSection(OpenAiOptions.SectionName));
+
+        if (configuration.GetValue<bool>($"{OpenAiOptions.SectionName}:UseFakeClient"))
+        {
+            services.AddScoped<IOpenAiClient, FakeOpenAiClient>();
+        }
+        else
+        {
+            services.AddHttpClient<IOpenAiClient, OpenAiClient>((serviceProvider, httpClient) =>
+            {
+                var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
+                httpClient.BaseAddress = options.BaseUrl;
+            });
+        }
+
         services.AddScoped<TenantProvider>();
         services.AddSingleton<RedisCacheService>();
         services.Configure<StockAlertJobOptions>(
@@ -178,6 +223,12 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.RootAdminOnly, policy =>
             policy.RequireRole("RootAdmin"));
+
+        options.AddPolicy(AuthorizationPolicies.CompanyAdminOnly, policy =>
+            policy.RequireRole("CompanyAdmin"));
+
+        options.AddPolicy(AuthorizationPolicies.CompanyAdminOrMainOperator, policy =>
+            policy.RequireRole("CompanyAdmin", "MainOperator"));
 
         options.AddPolicy(AuthorizationPolicies.ManageCompanies, policy =>
             policy.Requirements.Add(new PermissionRequirement("company")));
@@ -217,6 +268,18 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.DeletePurchases, policy =>
             policy.Requirements.Add(new PermissionRequirement("purchases", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "delete")));
 
         options.AddPolicy(AuthorizationPolicies.ReadSales, policy =>
             policy.Requirements.Add(new PermissionRequirement("sales", "read")));

@@ -57,6 +57,7 @@ public class UserService : IUserService
         var validation = await _userCreationValidator.ValidateAsync(
             request,
             isRootAdmin,
+            _currentUserService.Role,
             _currentUserService.CompanyId,
             cancellationToken);
 
