@@ -615,7 +615,16 @@ public sealed partial class AiAnalysisBackgroundJob
             INNER JOIN public.roles r ON r.id = u.role_id
             WHERE u.company_id = @company_id
               AND u.is_active = TRUE
-              AND r.name = 'CompanyAdmin';
+              AND r.name = 'CompanyAdmin'
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM {schemaName}.notifications existing
+                  WHERE existing.user_id = u.id
+                    AND existing.type = 'AiWarning'
+                    AND existing.title = @title
+                    AND COALESCE(existing.body, '') = COALESCE(@body, '')
+                    AND existing.is_read = FALSE
+              );
             """, cancellationToken);
 
         command.Parameters.AddWithValue("company_id", tenant.CompanyId);

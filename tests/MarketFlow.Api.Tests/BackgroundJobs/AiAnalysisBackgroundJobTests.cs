@@ -46,6 +46,40 @@ public sealed class AiAnalysisBackgroundJobTests
     }
 
     [PostgresIntegrationFact]
+    public async Task ExecuteLowStockRecommendationCheckAsync_DoesNotDuplicateUnreadWarnings()
+    {
+        var options = TenantIntegrationTestOptions.FromEnvironment();
+        await using var database = new TenantIntegrationTestDatabase(options);
+        var company = await database.CreateCompanyAsync();
+        var admin = await database.CreateUserAsync(company, roleName: "CompanyAdmin");
+        var market = await database.InsertMarketAsync(company.SchemaName);
+        var product = await database.InsertProductAsync(
+            company.SchemaName,
+            minStockAlert: 5);
+        await database.InsertInventoryAsync(
+            company.SchemaName,
+            product.Id,
+            market.Id,
+            quantity: 2);
+        await using var dbContext = CreateDbContext(options.ConnectionString);
+        var job = new AiAnalysisBackgroundJob(
+            dbContext,
+            new FakeAiClient(),
+            NullLogger<AiAnalysisBackgroundJob>.Instance);
+
+        await job.ExecuteLowStockRecommendationCheckAsync();
+        await job.ExecuteLowStockRecommendationCheckAsync();
+
+        Assert.Equal(2, await CountAnalysisRequestsAsync(
+            options.ConnectionString,
+            company.SchemaName,
+            "LowStockRecommendationCheck",
+            "Completed"));
+        Assert.Equal(2, await CountAnalysisResultsAsync(options.ConnectionString, company.SchemaName));
+        Assert.Equal(1, await CountNotificationsAsync(options.ConnectionString, company.SchemaName, admin.Id));
+    }
+
+    [PostgresIntegrationFact]
     public async Task ExecuteDailyDashboardSummaryAsync_WhenAiProviderFails_MarksRequestFailed()
     {
         var options = TenantIntegrationTestOptions.FromEnvironment();
