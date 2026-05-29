@@ -9,6 +9,12 @@ public static class AuthorizationPolicies
     public const string CompanyAdminOrMainOperator = "CompanyAdminOrMainOperator";
     public const string ManageCompanies = "ManageCompanies";
 
+    public const string CanViewAiDashboard = "CanViewAiDashboard";
+    public const string CanUseAiAssistant = "CanUseAiAssistant";
+    public const string CanViewInventoryAiRecommendations = "CanViewInventoryAiRecommendations";
+    public const string CanViewSupplierAiInsights = "CanViewSupplierAiInsights";
+    public const string CanViewAnomalyInsights = "CanViewAnomalyInsights";
+
     public const string ReadUsers = "ReadUsers";
     public const string CreateUsers = "CreateUsers";
     public const string UpdateUsers = "UpdateUsers";

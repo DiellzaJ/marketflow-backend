@@ -125,6 +125,7 @@ public static class ServiceCollectionExtensions
         services.AddAuthorization(options => options.AddMarketFlowPolicies());
         services.AddScoped<IAuthorizationHandler, ActiveUserAuthorizationHandler>();
         services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        services.AddScoped<AiTenantScopeAuthorizationFilter>();
 
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<ICompanyStore, CompanyStore>();
@@ -273,6 +274,41 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.CompanyAdminOrMainOperator, policy =>
             policy.RequireRole("CompanyAdmin", "MainOperator"));
+
+        options.AddPolicy(AuthorizationPolicies.CanViewAiDashboard, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanUseAiAssistant, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanViewInventoryAiRecommendations, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager", "InventoryEmployee");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanViewSupplierAiInsights, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanViewAnomalyInsights, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
 
         options.AddPolicy(AuthorizationPolicies.ManageCompanies, policy =>
             policy.Requirements.Add(new PermissionRequirement("company")));
