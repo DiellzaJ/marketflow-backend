@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.AI.DTOs;
 using MarketFlow.Application.Features.AI.Interfaces;
@@ -8,8 +9,13 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiDashboardService(
     IAiBusinessDataService businessDataService,
-    IAiClient aiClient) : IAiDashboardService
+    IAiClient aiClient,
+    IAiResultCache? aiResultCache = null,
+    IAiRuntimeInfo? aiRuntimeInfo = null,
+    ICurrentUserService? currentUserService = null) : IAiDashboardService
 {
+    private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(30);
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -29,6 +35,19 @@ public class AiDashboardService(
         {
             return ServiceResult<AiDashboardSummaryResponse>.Failure(
                 "Market and department filters must be positive values.");
+        }
+
+        var cacheKey = CreateCacheKey(request);
+        if (cacheKey is not null && aiResultCache is not null)
+        {
+            var cachedSummary = await aiResultCache.GetAsync<AiDashboardSummaryResponse>(
+                cacheKey,
+                cancellationToken);
+
+            if (cachedSummary is not null)
+            {
+                return ServiceResult<AiDashboardSummaryResponse>.Success(cachedSummary);
+            }
         }
 
         var dataResult = await businessDataService.GetBusinessDataAsync(new AiBusinessDataQuery
@@ -60,13 +79,31 @@ public class AiDashboardService(
 
         var aiSummary = ParseAiSummary(completion.Text);
 
-        return ServiceResult<AiDashboardSummaryResponse>.Success(new AiDashboardSummaryResponse
+        var response = new AiDashboardSummaryResponse
         {
             Kpis = kpis,
             Summary = aiSummary.Summary,
             RecommendedActions = aiSummary.RecommendedActions,
             Model = completion.Model
-        });
+        };
+
+        if (cacheKey is not null && aiResultCache is not null)
+        {
+            await aiResultCache.SetAsync(cacheKey, response, CacheExpiration, cancellationToken);
+        }
+
+        return ServiceResult<AiDashboardSummaryResponse>.Success(response);
+    }
+
+    private string? CreateCacheKey(AiDashboardSummaryRequest request)
+    {
+        if (currentUserService?.CompanyId is not { } companyId ||
+            aiRuntimeInfo is null)
+        {
+            return null;
+        }
+
+        return AiCacheKeys.Dashboard(companyId, request, aiRuntimeInfo.Provider, aiRuntimeInfo.Model);
     }
 
     private static AiDashboardKpisDto CreateKpis(AiBusinessDataDto data)

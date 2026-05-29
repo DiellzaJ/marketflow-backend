@@ -65,6 +65,38 @@ public sealed class RedisCacheService
             cancellationToken);
     }
 
+    public Task RemoveByPrefixAsync(
+        string prefix,
+        CancellationToken cancellationToken = default)
+    {
+        return ExecuteAsync(
+            async database =>
+            {
+                if (string.IsNullOrWhiteSpace(prefix))
+                {
+                    return;
+                }
+
+                var connection = await GetConnectionAsync(cancellationToken);
+
+                if (connection is null)
+                {
+                    return;
+                }
+
+                foreach (var endpoint in connection.GetEndPoints())
+                {
+                    var server = connection.GetServer(endpoint);
+
+                    foreach (var key in server.Keys(pattern: $"{prefix}*"))
+                    {
+                        await database.KeyDeleteAsync(key);
+                    }
+                }
+            },
+            cancellationToken);
+    }
+
     private async Task ExecuteAsync(
         Func<IDatabase, Task> action,
         CancellationToken cancellationToken)

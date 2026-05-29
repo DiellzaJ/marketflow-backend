@@ -1,6 +1,7 @@
 using MarketFlow.Application.Common.Exceptions;
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Sales.Configuration;
 using MarketFlow.Application.Features.Sales.DTOs;
 using MarketFlow.Application.Features.Sales.Interfaces;
@@ -13,13 +14,16 @@ public class SalesService : ISalesService
 
     private readonly ITenantQueryService _tenantQueryService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IAiResultCache? _aiResultCache;
 
     public SalesService(
         ITenantQueryService tenantQueryService,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IAiResultCache? aiResultCache = null)
     {
         _tenantQueryService = tenantQueryService;
         _currentUserService = currentUserService;
+        _aiResultCache = aiResultCache;
     }
 
     public async Task<ServiceResult<IReadOnlyCollection<SaleDto>>> GetSalesAsync(
@@ -123,9 +127,13 @@ public class SalesService : ISalesService
         {
             var sale = await _tenantQueryService.CreateSaleAsync(request, userId, cancellationToken);
 
-            return sale is null
-                ? ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.")
-                : ServiceResult<SaleDto>.Success(sale, "Sale created.");
+            if (sale is null)
+            {
+                return ServiceResult<SaleDto>.Failure("Insufficient inventory stock for one or more sale items.");
+            }
+
+            await InvalidateAiCacheAsync(cancellationToken);
+            return ServiceResult<SaleDto>.Success(sale, "Sale created.");
         }
         catch (SaleReferenceNumberRepairException)
         {
@@ -167,9 +175,13 @@ public class SalesService : ISalesService
         {
             var sale = await _tenantQueryService.UpdateSaleAsync(id, request, cancellationToken);
 
-            return sale is null
-                ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
-                : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
+            if (sale is null)
+            {
+                return ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound);
+            }
+
+            await InvalidateAiCacheAsync(cancellationToken);
+            return ServiceResult<SaleDto>.Success(sale, "Sale updated.");
         }
         catch (SaleReferenceNumberRepairException)
         {
@@ -187,9 +199,13 @@ public class SalesService : ISalesService
         {
             var sale = await _tenantQueryService.PatchSaleAsync(id, request, cancellationToken);
 
-            return sale is null
-                ? ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound)
-                : ServiceResult<SaleDto>.Success(sale, "Sale updated.");
+            if (sale is null)
+            {
+                return ServiceResult<SaleDto>.Failure("Sale was not found.", ServiceResultFailureType.NotFound);
+            }
+
+            await InvalidateAiCacheAsync(cancellationToken);
+            return ServiceResult<SaleDto>.Success(sale, "Sale updated.");
         }
         catch (SaleReferenceNumberRepairException)
         {
@@ -204,8 +220,17 @@ public class SalesService : ISalesService
     {
         var deleted = await _tenantQueryService.DeleteSaleAsync(id, cancellationToken);
 
-        return deleted
-            ? ServiceResult<bool>.Success(true, "Sale deleted.")
-            : ServiceResult<bool>.Failure("Sale was not found.", ServiceResultFailureType.NotFound);
+        if (!deleted)
+        {
+            return ServiceResult<bool>.Failure("Sale was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<bool>.Success(true, "Sale deleted.");
     }
+
+    private Task InvalidateAiCacheAsync(CancellationToken cancellationToken) =>
+        _currentUserService.CompanyId is { } companyId && _aiResultCache is not null
+            ? _aiResultCache.InvalidateCompanyAsync(companyId, cancellationToken)
+            : Task.CompletedTask;
 }

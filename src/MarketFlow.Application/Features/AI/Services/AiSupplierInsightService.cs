@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.AI.DTOs;
 using MarketFlow.Application.Features.AI.Interfaces;
@@ -8,8 +9,13 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiSupplierInsightService(
     IAiSupplierInsightDataService supplierInsightDataService,
-    IAiClient aiClient) : IAiSupplierInsightService
+    IAiClient aiClient,
+    IAiResultCache? aiResultCache = null,
+    IAiRuntimeInfo? aiRuntimeInfo = null,
+    ICurrentUserService? currentUserService = null) : IAiSupplierInsightService
 {
+    private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(30);
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -29,6 +35,19 @@ public class AiSupplierInsightService(
         {
             return ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>.Failure(
                 "Market filter must be a positive value.");
+        }
+
+        var cacheKey = CreateCacheKey(request);
+        if (cacheKey is not null && aiResultCache is not null)
+        {
+            var cachedInsights = await aiResultCache.GetAsync<IReadOnlyCollection<AiSupplierInsightDto>>(
+                cacheKey,
+                cancellationToken);
+
+            if (cachedInsights is not null)
+            {
+                return ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>.Success(cachedInsights);
+            }
         }
 
         var data = await supplierInsightDataService.GetAiSupplierInsightDataAsync(
@@ -56,7 +75,27 @@ public class AiSupplierInsightService(
                 : CreateFallbackRecommendation(insight);
         }
 
+        if (cacheKey is not null && aiResultCache is not null)
+        {
+            await aiResultCache.SetAsync<IReadOnlyCollection<AiSupplierInsightDto>>(
+                cacheKey,
+                insights,
+                CacheExpiration,
+                cancellationToken);
+        }
+
         return ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>.Success(insights);
+    }
+
+    private string? CreateCacheKey(AiSupplierInsightRequest request)
+    {
+        if (currentUserService?.CompanyId is not { } companyId ||
+            aiRuntimeInfo is null)
+        {
+            return null;
+        }
+
+        return AiCacheKeys.Supplier(companyId, request, aiRuntimeInfo.Provider, aiRuntimeInfo.Model);
     }
 
     private static AiSupplierInsightDto CreateInsight(AiSupplierInsightDataDto data)

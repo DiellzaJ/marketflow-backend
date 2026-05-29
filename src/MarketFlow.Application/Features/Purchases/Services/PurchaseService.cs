@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Purchases.DTOs;
 using MarketFlow.Application.Features.Purchases.Interfaces;
 
@@ -18,13 +19,16 @@ public class PurchaseService : IPurchaseService
 
     private readonly ITenantQueryService _tenantQueryService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IAiResultCache? _aiResultCache;
 
     public PurchaseService(
         ITenantQueryService tenantQueryService,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IAiResultCache? aiResultCache = null)
     {
         _tenantQueryService = tenantQueryService;
         _currentUserService = currentUserService;
+        _aiResultCache = aiResultCache;
     }
 
     public async Task<ServiceResult<IReadOnlyCollection<PurchaseDto>>> GetPurchasesAsync(
@@ -62,9 +66,13 @@ public class PurchaseService : IPurchaseService
 
         var purchase = await _tenantQueryService.CreatePurchaseAsync(request, userId, cancellationToken);
 
-        return purchase is null
-            ? ServiceResult<PurchaseDto>.Failure("Purchase could not be created. Verify supplier, market, products, and access.")
-            : ServiceResult<PurchaseDto>.Success(purchase, "Purchase created.");
+        if (purchase is null)
+        {
+            return ServiceResult<PurchaseDto>.Failure("Purchase could not be created. Verify supplier, market, products, and access.");
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<PurchaseDto>.Success(purchase, "Purchase created.");
     }
 
     public async Task<ServiceResult<PurchaseDto>> UpdatePurchaseAsync(
@@ -88,9 +96,13 @@ public class PurchaseService : IPurchaseService
             _currentUserService.UserId,
             cancellationToken);
 
-        return purchase is null
-            ? await ResolveMissingPurchaseUpdateAsync(id, cancellationToken)
-            : ServiceResult<PurchaseDto>.Success(purchase, "Purchase updated.");
+        if (purchase is null)
+        {
+            return await ResolveMissingPurchaseUpdateAsync(id, cancellationToken);
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<PurchaseDto>.Success(purchase, "Purchase updated.");
     }
 
     public async Task<ServiceResult<PurchaseDto>> PatchPurchaseAsync(
@@ -104,9 +116,13 @@ public class PurchaseService : IPurchaseService
             _currentUserService.UserId,
             cancellationToken);
 
-        return purchase is null
-            ? await ResolveMissingPurchaseUpdateAsync(id, cancellationToken)
-            : ServiceResult<PurchaseDto>.Success(purchase, "Purchase updated.");
+        if (purchase is null)
+        {
+            return await ResolveMissingPurchaseUpdateAsync(id, cancellationToken);
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<PurchaseDto>.Success(purchase, "Purchase updated.");
     }
 
     public async Task<ServiceResult<PurchaseDto>> ReceivePurchaseAsync(
@@ -130,9 +146,13 @@ public class PurchaseService : IPurchaseService
             _currentUserService.UserId,
             cancellationToken);
 
-        return purchase is null
-            ? ServiceResult<PurchaseDto>.Failure("Purchase could not be received. Verify status, quantities, and inventory access.", ServiceResultFailureType.Conflict)
-            : ServiceResult<PurchaseDto>.Success(purchase, "Purchase received.");
+        if (purchase is null)
+        {
+            return ServiceResult<PurchaseDto>.Failure("Purchase could not be received. Verify status, quantities, and inventory access.", ServiceResultFailureType.Conflict);
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<PurchaseDto>.Success(purchase, "Purchase received.");
     }
 
     public async Task<ServiceResult<PurchaseDto>> CancelPurchaseAsync(
@@ -141,9 +161,13 @@ public class PurchaseService : IPurchaseService
     {
         var purchase = await _tenantQueryService.CancelPurchaseAsync(id, cancellationToken);
 
-        return purchase is null
-            ? await ResolveMissingPurchaseCancelAsync(id, cancellationToken)
-            : ServiceResult<PurchaseDto>.Success(purchase, "Purchase cancelled.");
+        if (purchase is null)
+        {
+            return await ResolveMissingPurchaseCancelAsync(id, cancellationToken);
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<PurchaseDto>.Success(purchase, "Purchase cancelled.");
     }
 
     public async Task<ServiceResult<bool>> DeletePurchaseAsync(
@@ -152,10 +176,19 @@ public class PurchaseService : IPurchaseService
     {
         var deleted = await _tenantQueryService.DeletePurchaseAsync(id, cancellationToken);
 
-        return deleted
-            ? ServiceResult<bool>.Success(true, "Purchase deleted.")
-            : ServiceResult<bool>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound);
+        if (!deleted)
+        {
+            return ServiceResult<bool>.Failure("Purchase was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<bool>.Success(true, "Purchase deleted.");
     }
+
+    private Task InvalidateAiCacheAsync(CancellationToken cancellationToken) =>
+        _currentUserService.CompanyId is { } companyId && _aiResultCache is not null
+            ? _aiResultCache.InvalidateCompanyAsync(companyId, cancellationToken)
+            : Task.CompletedTask;
 
     private async Task<ServiceResult<PurchaseDto>> ResolveMissingPurchaseUpdateAsync(
         int id,
