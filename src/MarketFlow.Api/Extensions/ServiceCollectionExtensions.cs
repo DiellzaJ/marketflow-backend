@@ -225,8 +225,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RedisCacheService>();
         services.Configure<StockAlertJobOptions>(
             configuration.GetSection("BackgroundJobs:LowStockAlerts"));
+        services.Configure<AiAnalysisBackgroundJobOptions>(
+            configuration.GetSection("BackgroundJobs:AiAnalysis"));
         services.AddScoped<StockAlertJob>();
+        services.AddScoped<AiAnalysisBackgroundJob>();
         services.AddHostedService<StockAlertHostedService>();
+        services.AddHostedService<AiAnalysisHostedService>();
 
         return services;
     }
