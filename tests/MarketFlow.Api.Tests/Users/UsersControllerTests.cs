@@ -2,6 +2,7 @@ using MarketFlow.Api.Controllers;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Users.DTOs;
 using MarketFlow.Application.Features.Users.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketFlow.Api.Tests.Users;
@@ -45,6 +46,22 @@ public sealed class UsersControllerTests
         Assert.Equal("Central Market", user.Assignment?.MarketName);
         Assert.Equal(4, user.Assignment?.DepartmentId);
         Assert.Equal("Produce", user.Assignment?.DepartmentName);
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenServiceReturnsForbidden_ReturnsForbidden()
+    {
+        var controller = new UsersController(new FakeUserService
+        {
+            GetUsersResult = ServiceResult<IReadOnlyCollection<UserDto>>.Failure(
+                "Forbidden user list access.",
+                ServiceResultFailureType.Forbidden)
+        });
+
+        var response = await controller.GetAsync(CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(response.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
     }
 
     [Fact]
@@ -127,6 +144,37 @@ public sealed class UsersControllerTests
         Assert.Equal(4, result.Data?.Assignment?.DepartmentId);
     }
 
+    [Fact]
+    public async Task GetByIdAsync_WhenServiceReturnsForbidden_ReturnsForbidden()
+    {
+        var controller = new UsersController(new FakeUserService
+        {
+            GetUserResult = ServiceResult<UserDto>.Failure(
+                "Forbidden user access.",
+                ServiceResultFailureType.Forbidden)
+        });
+
+        var response = await controller.GetByIdAsync(7, CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(response.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenServiceReturnsValidation_ReturnsBadRequest()
+    {
+        var controller = new UsersController(new FakeUserService
+        {
+            DeleteUserResult = ServiceResult<bool>.Failure("You cannot deactivate your own account.")
+        });
+
+        var response = await controller.DeleteAsync(7, CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(response.Result);
+        var result = Assert.IsType<ServiceResult<bool>>(badRequest.Value);
+        Assert.Equal("You cannot deactivate your own account.", result.Message);
+    }
+
     private sealed class FakeUserService : IUserService
     {
         public ServiceResult<IReadOnlyCollection<UserDto>> GetUsersResult { get; init; } =
@@ -137,6 +185,9 @@ public sealed class UsersControllerTests
 
         public ServiceResult<UserDto> GetUserResult { get; init; } =
             ServiceResult<UserDto>.Failure("Not configured.");
+
+        public ServiceResult<bool> DeleteUserResult { get; init; } =
+            ServiceResult<bool>.Failure("Not configured.");
 
         public Task<ServiceResult<IReadOnlyCollection<UserDto>>> GetUsersAsync(
             CancellationToken cancellationToken = default)
@@ -178,7 +229,7 @@ public sealed class UsersControllerTests
             int id,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ServiceResult<bool>.Failure("Not configured."));
+            return Task.FromResult(DeleteUserResult);
         }
     }
 }

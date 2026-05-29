@@ -48,6 +48,9 @@ public sealed class PermissionEvaluatorTests
 
     private const string MainOperatorPermissions = """
         {
+            "users:read": true,
+            "users:update": true,
+            "users:delete": true,
             "products:read": true,
             "products:create": true,
             "products:update": true,
@@ -85,6 +88,9 @@ public sealed class PermissionEvaluatorTests
         { RootAdminPermissions, "users", "delete" },
         { CompanyAdminPermissions, "users", "create" },
         { CompanyAdminPermissions, "products", "delete" },
+        { MainOperatorPermissions, "users", "read" },
+        { MainOperatorPermissions, "users", "update" },
+        { MainOperatorPermissions, "users", "delete" },
         { MainOperatorPermissions, "products", "update" },
         { MainOperatorPermissions, "purchases", "create" },
         { MainOperatorPermissions, "purchases", "delete" },
@@ -101,7 +107,6 @@ public sealed class PermissionEvaluatorTests
 
     public static TheoryData<string, string, string?> ForbiddenPermissions => new()
     {
-        { MainOperatorPermissions, "users", "read" },
         { MainOperatorPermissions, "users", "create" },
         { RootAdminPermissions, "inventory", "read" },
         { RootAdminPermissions, "stock", "update" },

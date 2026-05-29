@@ -1,4 +1,5 @@
 using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 using MarketFlow.Application.Features.Users.Services;
@@ -441,6 +442,85 @@ public sealed class UserServiceTests
     }
 
     [Fact]
+    public async Task GetUsersAsync_ForSeller_ReturnsForbidden()
+    {
+        var service = CreateUserService(
+            new FakeUserStore(),
+            new FakeCurrentUserService { CompanyId = 12, Role = "Seller" });
+
+        var result = await service.GetUsersAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Forbidden, result.FailureType);
+        Assert.Equal("Your role is not allowed to manage users.", result.Message);
+    }
+
+    [Fact]
+    public async Task GetUsersAsync_ForMainOperator_ReturnsOnlyLowerRoleUsersInSameCompany()
+    {
+        var store = new FakeUserStore();
+        store.Users.AddRange(
+        [
+            new UserDto
+            {
+                Id = 7,
+                FullName = "Store Seller",
+                Email = "seller@freshmarket.test",
+                RoleName = "Seller",
+                IsActive = true,
+                CompanyId = 12,
+                CompanyName = "Fresh Market",
+                CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero)
+            },
+            new UserDto
+            {
+                Id = 8,
+                FullName = "Department Manager",
+                Email = "manager@freshmarket.test",
+                RoleName = "DepartmentManager",
+                IsActive = true,
+                CompanyId = 12,
+                CompanyName = "Fresh Market",
+                CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero)
+            },
+            new UserDto
+            {
+                Id = 9,
+                FullName = "Other Operator",
+                Email = "operator2@freshmarket.test",
+                RoleName = "MainOperator",
+                IsActive = true,
+                CompanyId = 12,
+                CompanyName = "Fresh Market",
+                CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero)
+            },
+            new UserDto
+            {
+                Id = 10,
+                FullName = "Other Company Seller",
+                Email = "seller@other.test",
+                RoleName = "Seller",
+                IsActive = true,
+                CompanyId = 99,
+                CompanyName = "Other Company",
+                CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero)
+            }
+        ]);
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.GetUsersAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Data);
+        Assert.Collection(
+            result.Data.OrderBy(user => user.Id),
+            user => Assert.Equal(7, user.Id),
+            user => Assert.Equal(8, user.Id));
+    }
+
+    [Fact]
     public async Task CreateUserAsync_WithMarketThatDoesNotExist_ReturnsValidationError()
     {
         var store = new FakeUserStore();
@@ -523,6 +603,46 @@ public sealed class UserServiceTests
     }
 
     [Fact]
+    public async Task GetUserAsync_ForCompanyAdminTargetingCompanyAdmin_ReturnsForbidden()
+    {
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 7,
+            FullName = "Other Admin",
+            Email = "other-admin@freshmarket.test",
+            RoleName = "CompanyAdmin",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero)
+        });
+        var service = CreateCompanyAdminService(store);
+
+        var result = await service.GetUserAsync(7);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Forbidden, result.FailureType);
+        Assert.Equal("CompanyAdmin can only manage lower-role users within their own company.", result.Message);
+    }
+
+    [Fact]
+    public async Task GetUserAsync_ForMainOperatorLowerRoleUserInSameCompany_Succeeds()
+    {
+        var store = new FakeUserStore();
+        AddMainOperatorWithTargetSeller(store);
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.GetUserAsync(7);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(7, result.Data?.Id);
+        Assert.Equal("Seller", result.Data?.RoleName);
+    }
+
+    [Fact]
     public async Task UpdateUserAsync_UpdatesSafeFieldsAndAssignment()
     {
         var store = new FakeUserStore();
@@ -568,7 +688,34 @@ public sealed class UserServiceTests
     }
 
     [Fact]
-    public async Task PatchUserAsync_ForCompanyAdminRole_ClearsAssignment()
+    public async Task UpdateUserAsync_ForMainOperator_UpdatesLowerRoleUserInSameCompany()
+    {
+        var store = new FakeUserStore();
+        AddMainOperatorWithTargetSeller(store);
+        store.ExistingDepartmentIds.Add((3, 5));
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.UpdateUserAsync(
+            7,
+            new UpdateUserRequest
+            {
+                FullName = "Updated Seller",
+                RoleName = "Seller",
+                MarketId = 3,
+                DepartmentId = 5,
+                IsActive = true
+            });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Updated Seller", result.Data?.FullName);
+        Assert.Equal(3, result.Data?.Assignment?.MarketId);
+        Assert.Equal(5, result.Data?.Assignment?.DepartmentId);
+    }
+
+    [Fact]
+    public async Task PatchUserAsync_ForCompanyAdminTargetRole_ReturnsForbidden()
     {
         var store = new FakeUserStore();
         store.Users.Add(new UserDto
@@ -599,9 +746,93 @@ public sealed class UserServiceTests
                 IsActive = true
             });
 
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Forbidden, result.FailureType);
+        Assert.Equal("CompanyAdmin can only manage lower-role users within their own company.", result.Message);
+    }
+
+    [Fact]
+    public async Task PatchUserAsync_ForMainOperator_ActivatesLowerRoleUserInSameCompany()
+    {
+        var store = new FakeUserStore();
+        AddMainOperatorWithTargetSeller(store);
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.PatchUserAsync(
+            7,
+            new PatchUserRequest
+            {
+                IsActive = true
+            });
+
         Assert.True(result.Succeeded);
-        Assert.Equal("CompanyAdmin", result.Data?.RoleName);
-        Assert.Null(result.Data?.Assignment);
+        Assert.True(result.Data?.IsActive);
+        Assert.Equal("User activated.", result.Message);
+    }
+
+    [Fact]
+    public async Task PatchUserAsync_ForMainOperatorWithProfileEdit_UpdatesLowerRoleUser()
+    {
+        var store = new FakeUserStore();
+        AddMainOperatorWithTargetSeller(store);
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.PatchUserAsync(
+            7,
+            new PatchUserRequest
+            {
+                FullName = "Edited Name",
+                DepartmentId = 4
+            });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Edited Name", result.Data?.FullName);
+        Assert.Equal(4, result.Data?.Assignment?.DepartmentId);
+    }
+
+    [Fact]
+    public async Task PatchUserAsync_ForMainOperatorDeactivation_DeactivatesLowerRoleUser()
+    {
+        var store = new FakeUserStore();
+        AddMainOperatorWithTargetSeller(store);
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.PatchUserAsync(
+            7,
+            new PatchUserRequest
+            {
+                IsActive = false
+            });
+
+        Assert.True(result.Succeeded);
+        Assert.False(result.Data?.IsActive);
+    }
+
+    [Fact]
+    public async Task PatchUserAsync_ForMainOperatorTargetingSameRole_ReturnsForbidden()
+    {
+        var store = new FakeUserStore();
+        AddMainOperatorWithTargetSeller(store, targetRoleName: "MainOperator");
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.PatchUserAsync(
+            7,
+            new PatchUserRequest
+            {
+                IsActive = true
+            });
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Forbidden, result.FailureType);
+        Assert.Equal("MainOperator can only manage lower-role users.", result.Message);
     }
 
     [Fact]
@@ -626,6 +857,48 @@ public sealed class UserServiceTests
         Assert.True(result.Succeeded);
         Assert.Equal("User deactivated.", result.Message);
         Assert.False(store.Users.Single().IsActive);
+    }
+
+    [Fact]
+    public async Task DeleteUserAsync_ForMainOperator_DeactivatesLowerRoleUserInSameCompany()
+    {
+        var store = new FakeUserStore();
+        AddMainOperatorWithTargetSeller(store, targetIsActive: true);
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 20, CompanyId = 12, Role = "MainOperator" });
+
+        var result = await service.DeleteUserAsync(7);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("User deactivated.", result.Message);
+        Assert.False(store.Users.Single(user => user.Id == 7).IsActive);
+    }
+
+    [Fact]
+    public async Task DeleteUserAsync_WhenUserTargetsSelf_ReturnsValidationError()
+    {
+        var store = new FakeUserStore();
+        store.Users.Add(new UserDto
+        {
+            Id = 7,
+            FullName = "Company Admin",
+            Email = "admin@freshmarket.test",
+            RoleName = "CompanyAdmin",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero)
+        });
+        var service = CreateUserService(
+            store,
+            new FakeCurrentUserService { UserId = 7, CompanyId = 12, Role = "CompanyAdmin" });
+
+        var result = await service.DeleteUserAsync(7);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(ServiceResultFailureType.Validation, result.FailureType);
+        Assert.Equal("You cannot deactivate your own account.", result.Message);
     }
 
     private static UserService CreateCompanyAdminService(FakeUserStore? store = null)
@@ -654,6 +927,46 @@ public sealed class UserServiceTests
             Password = "User12345",
             RoleName = roleName
         };
+    }
+
+    private static void AddMainOperatorWithTargetSeller(
+        FakeUserStore store,
+        string targetRoleName = "Seller",
+        int targetCompanyId = 12,
+        bool targetIsActive = false)
+    {
+        store.Users.Add(new UserDto
+        {
+            Id = 20,
+            FullName = "Main Operator",
+            Email = "operator@freshmarket.test",
+            RoleName = "MainOperator",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market"
+            }
+        });
+        store.Users.Add(new UserDto
+        {
+            Id = 7,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = targetRoleName,
+            IsActive = targetIsActive,
+            CompanyId = targetCompanyId,
+            CompanyName = targetCompanyId == 12 ? "Fresh Market" : $"Company {targetCompanyId}",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market"
+            }
+        });
     }
 
     private sealed class FakeUserStore : IUserStore

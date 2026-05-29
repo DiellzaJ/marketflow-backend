@@ -235,7 +235,7 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.ReadUsers, policy =>
         {
-            policy.RequireRole("RootAdmin", "CompanyAdmin");
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
             policy.Requirements.Add(new PermissionRequirement("users", "read"));
         });
 
@@ -247,13 +247,13 @@ public static class ServiceCollectionExtensions
 
         options.AddPolicy(AuthorizationPolicies.UpdateUsers, policy =>
         {
-            policy.RequireRole("RootAdmin", "CompanyAdmin");
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
             policy.Requirements.Add(new PermissionRequirement("users", "update"));
         });
 
         options.AddPolicy(AuthorizationPolicies.DeleteUsers, policy =>
         {
-            policy.RequireRole("RootAdmin", "CompanyAdmin");
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
             policy.Requirements.Add(new PermissionRequirement("users", "delete"));
         });
 

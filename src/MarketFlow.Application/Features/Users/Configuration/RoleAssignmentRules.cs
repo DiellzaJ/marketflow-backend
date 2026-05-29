@@ -9,6 +9,17 @@ public static class RoleAssignmentRules
     public const string DepartmentManager = "DepartmentManager";
     public const string InventoryEmployee = "InventoryEmployee";
 
+    private static readonly IReadOnlyDictionary<string, int> RoleRanks = new Dictionary<string, int>(
+        StringComparer.OrdinalIgnoreCase)
+    {
+        [RootAdmin] = 600,
+        [CompanyAdmin] = 500,
+        [MainOperator] = 400,
+        [DepartmentManager] = 300,
+        [InventoryEmployee] = 200,
+        [Seller] = 100
+    };
+
     private static readonly Dictionary<string, RoleRequirements> Rules = new(StringComparer.OrdinalIgnoreCase)
     {
         [Seller] = new RoleRequirements(RequiresMarket: true),
@@ -55,7 +66,29 @@ public static class RoleAssignmentRules
         var normalizedRoleName = NormalizeRoleName(roleName ?? string.Empty);
 
         return string.Equals(normalizedRoleName, RootAdmin, StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(normalizedRoleName, CompanyAdmin, StringComparison.OrdinalIgnoreCase);
+               string.Equals(normalizedRoleName, CompanyAdmin, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(normalizedRoleName, MainOperator, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static int CompareRoleRank(string? leftRoleName, string? rightRoleName)
+    {
+        var leftRank = GetRoleRank(leftRoleName);
+        var rightRank = GetRoleRank(rightRoleName);
+
+        return leftRank.CompareTo(rightRank);
+    }
+
+    public static bool IsLowerRole(string? actorRoleName, string? targetRoleName)
+    {
+        return CompareRoleRank(actorRoleName, targetRoleName) > 0;
+    }
+
+    public static bool IsSameRole(string? leftRoleName, string? rightRoleName)
+    {
+        return string.Equals(
+            NormalizeRoleName(leftRoleName ?? string.Empty),
+            NormalizeRoleName(rightRoleName ?? string.Empty),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -104,6 +137,15 @@ public static class RoleAssignmentRules
         }
 
         return $"Role '{normalizedCallerRoleName}' is not allowed to create {normalizedTargetRoleName} users.";
+    }
+
+    private static int GetRoleRank(string? roleName)
+    {
+        var normalizedRoleName = NormalizeRoleName(roleName ?? string.Empty);
+
+        return RoleRanks.TryGetValue(normalizedRoleName, out var rank)
+            ? rank
+            : 0;
     }
 
     private sealed record RoleRequirements(

@@ -9,19 +9,20 @@ namespace MarketFlow.Api.Tests.Authorization;
 
 public sealed class UsersAuthorizationPolicyTests
 {
-    public static TheoryData<string, string> UserPolicies => new()
+    public static TheoryData<string, string, string[]> UserPolicies => new()
     {
-        { AuthorizationPolicies.ReadUsers, "read" },
-        { AuthorizationPolicies.CreateUsers, "create" },
-        { AuthorizationPolicies.UpdateUsers, "update" },
-        { AuthorizationPolicies.DeleteUsers, "delete" }
+        { AuthorizationPolicies.ReadUsers, "read", ["RootAdmin", "CompanyAdmin", "MainOperator"] },
+        { AuthorizationPolicies.CreateUsers, "create", ["RootAdmin", "CompanyAdmin"] },
+        { AuthorizationPolicies.UpdateUsers, "update", ["RootAdmin", "CompanyAdmin", "MainOperator"] },
+        { AuthorizationPolicies.DeleteUsers, "delete", ["RootAdmin", "CompanyAdmin", "MainOperator"] }
     };
 
     [Theory]
     [MemberData(nameof(UserPolicies))]
     public void UserPolicy_RequiresExpectedPermissionAndManagementRoles(
         string policyName,
-        string expectedAccess)
+        string expectedAccess,
+        string[] expectedRoles)
     {
         using var serviceProvider = new ServiceCollection()
             .AddAuthorization(options => options.AddMarketFlowPolicies())
@@ -37,8 +38,11 @@ public sealed class UsersAuthorizationPolicyTests
 
         Assert.Equal("users", permissionRequirement.Permission);
         Assert.Equal(expectedAccess, permissionRequirement.Access);
-        Assert.Contains("RootAdmin", rolesRequirement.AllowedRoles);
-        Assert.Contains("CompanyAdmin", rolesRequirement.AllowedRoles);
-        Assert.Equal(2, rolesRequirement.AllowedRoles.Count());
+        Assert.Equal(expectedRoles.Length, rolesRequirement.AllowedRoles.Count());
+
+        foreach (var expectedRole in expectedRoles)
+        {
+            Assert.Contains(expectedRole, rolesRequirement.AllowedRoles);
+        }
     }
 }
