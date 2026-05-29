@@ -296,11 +296,22 @@ public static class ServiceCollectionExtensions
             policy.Requirements.Add(new ActiveUserRequirement());
         });
 
+        options.AddPolicy(AuthorizationPolicies.CanViewPurchaseAiRecommendations, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new ActiveUserRequirement());
+            policy.Requirements.Add(new PermissionRequirement("purchases", "read"));
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "read"));
+        });
+
         options.AddPolicy(AuthorizationPolicies.CanViewSupplierAiInsights, policy =>
         {
             policy.RequireAuthenticatedUser();
             policy.RequireRole("CompanyAdmin", "MainOperator");
             policy.Requirements.Add(new ActiveUserRequirement());
+            policy.Requirements.Add(new PermissionRequirement("purchases", "read"));
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "read"));
         });
 
         options.AddPolicy(AuthorizationPolicies.CanViewAnomalyInsights, policy =>

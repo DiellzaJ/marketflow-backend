@@ -12,6 +12,7 @@ public static class AuthorizationPolicies
     public const string CanViewAiDashboard = "CanViewAiDashboard";
     public const string CanUseAiAssistant = "CanUseAiAssistant";
     public const string CanViewInventoryAiRecommendations = "CanViewInventoryAiRecommendations";
+    public const string CanViewPurchaseAiRecommendations = "CanViewPurchaseAiRecommendations";
     public const string CanViewSupplierAiInsights = "CanViewSupplierAiInsights";
     public const string CanViewAnomalyInsights = "CanViewAnomalyInsights";
 

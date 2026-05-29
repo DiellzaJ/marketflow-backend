@@ -14,7 +14,7 @@ public sealed class EndpointAuthorizationPolicyTests
         { typeof(AiController), nameof(AiController.GenerateDashboardSummaryAsync), AuthorizationPolicies.CanViewAiDashboard },
         { typeof(AiController), nameof(AiController.GenerateInventoryForecastAsync), AuthorizationPolicies.CanViewInventoryAiRecommendations },
         { typeof(AiController), nameof(AiController.GenerateInventoryRecommendationsAsync), AuthorizationPolicies.CanViewInventoryAiRecommendations },
-        { typeof(AiController), nameof(AiController.GeneratePurchaseRecommendationsAsync), AuthorizationPolicies.CanViewInventoryAiRecommendations },
+        { typeof(AiController), nameof(AiController.GeneratePurchaseRecommendationsAsync), AuthorizationPolicies.CanViewPurchaseAiRecommendations },
         { typeof(AiController), nameof(AiController.GenerateSupplierPerformanceInsightsAsync), AuthorizationPolicies.CanViewSupplierAiInsights },
         { typeof(AiController), nameof(AiController.DetectAnomaliesAsync), AuthorizationPolicies.CanViewAnomalyInsights },
         { typeof(ProductsController), nameof(ProductsController.GetAsync), AuthorizationPolicies.ReadProducts },

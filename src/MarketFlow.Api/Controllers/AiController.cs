@@ -91,7 +91,7 @@ public class AiController(
     }
 
     [HttpPost("purchases/recommendations")]
-    [Authorize(Policy = AuthorizationPolicies.CanViewInventoryAiRecommendations)]
+    [Authorize(Policy = AuthorizationPolicies.CanViewPurchaseAiRecommendations)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
