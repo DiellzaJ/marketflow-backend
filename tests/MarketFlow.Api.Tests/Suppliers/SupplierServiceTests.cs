@@ -1,4 +1,6 @@
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Suppliers.DTOs;
 using MarketFlow.Application.Features.Suppliers.Interfaces;
 using MarketFlow.Application.Features.Suppliers.Services;
@@ -109,6 +111,35 @@ public sealed class SupplierServiceTests
         Assert.True(store.SetSupplierActiveStateWasCalled);
         Assert.False(store.LastActiveState);
         Assert.False(result.Data?.IsActive);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_WhenSupplierChanges_InvalidatesTenantAiCache()
+    {
+        var store = new RecordingSupplierStore();
+        var cache = new RecordingAiResultCache();
+        var service = new SupplierService(store, cache, new StubCurrentUserService());
+
+        var result = await service.UpdateSupplierAsync(6, new UpdateSupplierRequest
+        {
+            Name = "Renamed Supplier"
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, cache.InvalidatedCompanyId);
+    }
+
+    [Fact]
+    public async Task SetSupplierActiveStateAsync_WhenSupplierChanges_InvalidatesTenantAiCache()
+    {
+        var store = new RecordingSupplierStore();
+        var cache = new RecordingAiResultCache();
+        var service = new SupplierService(store, cache, new StubCurrentUserService());
+
+        var result = await service.SetSupplierActiveStateAsync(6, isActive: false);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, cache.InvalidatedCompanyId);
     }
 
     [Fact]
@@ -246,5 +277,43 @@ public sealed class SupplierServiceTests
             CurrentSupplier.IsActive = isActive;
             return Task.FromResult<SupplierDto?>(CurrentSupplier);
         }
+    }
+
+    private sealed class RecordingAiResultCache : IAiResultCache
+    {
+        public int? InvalidatedCompanyId { get; private set; }
+
+        public Task<T?> GetAsync<T>(
+            string key,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<T?>(default);
+
+        public Task SetAsync<T>(
+            string key,
+            T value,
+            TimeSpan? expiration = null,
+            CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task InvalidateCompanyAsync(
+            int companyId,
+            CancellationToken cancellationToken = default)
+        {
+            InvalidatedCompanyId = companyId;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class StubCurrentUserService : ICurrentUserService
+    {
+        public int? UserId => 1;
+
+        public int? CompanyId => 1;
+
+        public string? Email => "supplier-cache@example.test";
+
+        public string? Role => "CompanyAdmin";
+
+        public string? SchemaName => "tenant_test";
     }
 }
