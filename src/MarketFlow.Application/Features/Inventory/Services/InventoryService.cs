@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Inventory.Configuration;
 using MarketFlow.Application.Features.Inventory.DTOs;
 using MarketFlow.Application.Features.Inventory.Interfaces;
@@ -14,13 +15,16 @@ public class InventoryService : IInventoryService
 
     private readonly ITenantQueryService _tenantQueryService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IAiResultCache? _aiResultCache;
 
     public InventoryService(
         ITenantQueryService tenantQueryService,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IAiResultCache? aiResultCache = null)
     {
         _tenantQueryService = tenantQueryService;
         _currentUserService = currentUserService;
+        _aiResultCache = aiResultCache;
     }
 
     public async Task<ServiceResult<PagedResult<InventoryItemDto>>> GetInventoryAsync(
@@ -167,9 +171,13 @@ public class InventoryService : IInventoryService
             _currentUserService.UserId,
             cancellationToken);
 
-        return inventoryItem is null
-            ? ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.")
-            : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item created.");
+        if (inventoryItem is null)
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.");
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item created.");
     }
 
     public async Task<ServiceResult<InventoryItemDto>> UpdateInventoryItemAsync(
@@ -188,9 +196,13 @@ public class InventoryService : IInventoryService
             _currentUserService.UserId,
             cancellationToken);
 
-        return inventoryItem is null
-            ? ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.")
-            : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item updated.");
+        if (inventoryItem is null)
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.");
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item updated.");
     }
 
     public async Task<ServiceResult<InventoryItemDto>> PatchInventoryItemAsync(
@@ -209,9 +221,13 @@ public class InventoryService : IInventoryService
             _currentUserService.UserId,
             cancellationToken);
 
-        return inventoryItem is null
-            ? ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.")
-            : ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item updated.");
+        if (inventoryItem is null)
+        {
+            return ServiceResult<InventoryItemDto>.Failure("Inventory item was not found.");
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory item updated.");
     }
 
     public async Task<ServiceResult<InventoryItemDto>> AdjustInventoryItemAsync(
@@ -255,6 +271,7 @@ public class InventoryService : IInventoryService
 
         if (inventoryItem is not null)
         {
+            await InvalidateAiCacheAsync(cancellationToken);
             return ServiceResult<InventoryItemDto>.Success(inventoryItem, "Inventory stock adjusted.");
         }
 
@@ -273,9 +290,13 @@ public class InventoryService : IInventoryService
     {
         var deleted = await _tenantQueryService.DeleteInventoryItemAsync(id, cancellationToken);
 
-        return deleted
-            ? ServiceResult<bool>.Success(true, "Inventory item deleted.")
-            : ServiceResult<bool>.Failure("Inventory item was not found.");
+        if (!deleted)
+        {
+            return ServiceResult<bool>.Failure("Inventory item was not found.");
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<bool>.Success(true, "Inventory item deleted.");
     }
 
     public async Task<ServiceResult<bool>> TransferInventoryAsync(
@@ -305,10 +326,19 @@ public class InventoryService : IInventoryService
             _currentUserService.UserId,
             cancellationToken);
 
-        return transferred
-            ? ServiceResult<bool>.Success(true, "Inventory stock transferred.")
-            : ServiceResult<bool>.Failure("Inventory transfer could not be completed.");
+        if (!transferred)
+        {
+            return ServiceResult<bool>.Failure("Inventory transfer could not be completed.");
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<bool>.Success(true, "Inventory stock transferred.");
     }
+
+    private Task InvalidateAiCacheAsync(CancellationToken cancellationToken) =>
+        _currentUserService.CompanyId is { } companyId && _aiResultCache is not null
+            ? _aiResultCache.InvalidateCompanyAsync(companyId, cancellationToken)
+            : Task.CompletedTask;
 
     private static string? ValidateMovementQuery(InventoryMovementListQuery query)
     {

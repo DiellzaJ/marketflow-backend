@@ -1,5 +1,7 @@
 using System.Net.Mail;
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Suppliers.DTOs;
 using MarketFlow.Application.Features.Suppliers.Interfaces;
 
@@ -12,10 +14,17 @@ public class SupplierService : ISupplierService
         "Use the supplier status or deactivate endpoint to change active state.";
 
     private readonly ISupplierStore _supplierStore;
+    private readonly IAiResultCache? _aiResultCache;
+    private readonly ICurrentUserService? _currentUserService;
 
-    public SupplierService(ISupplierStore supplierStore)
+    public SupplierService(
+        ISupplierStore supplierStore,
+        IAiResultCache? aiResultCache = null,
+        ICurrentUserService? currentUserService = null)
     {
         _supplierStore = supplierStore;
+        _aiResultCache = aiResultCache;
+        _currentUserService = currentUserService;
     }
 
     public async Task<ServiceResult<IReadOnlyCollection<SupplierDto>>> GetSuppliersAsync(
@@ -56,6 +65,7 @@ public class SupplierService : ISupplierService
 
         var supplier = await _supplierStore.CreateSupplierAsync(request, cancellationToken);
 
+        await InvalidateAiCacheAsync(cancellationToken);
         return ServiceResult<SupplierDto>.Success(supplier, "Supplier created.");
     }
 
@@ -83,9 +93,13 @@ public class SupplierService : ISupplierService
 
         var supplier = await _supplierStore.UpdateSupplierAsync(id, request, cancellationToken);
 
-        return supplier is null
-            ? ServiceResult<SupplierDto>.Failure("Supplier was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<SupplierDto>.Success(supplier, "Supplier updated.");
+        if (supplier is null)
+        {
+            return ServiceResult<SupplierDto>.Failure("Supplier was not found.", ServiceResultFailureType.NotFound);
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<SupplierDto>.Success(supplier, "Supplier updated.");
     }
 
     public async Task<ServiceResult<SupplierDto>> SetSupplierActiveStateAsync(
@@ -115,12 +129,21 @@ public class SupplierService : ISupplierService
             isActive,
             cancellationToken);
 
-        return supplier is null
-            ? ServiceResult<SupplierDto>.Failure("Supplier active state could not be changed.")
-            : ServiceResult<SupplierDto>.Success(
-                supplier,
-                isActive ? "Supplier activated." : "Supplier deactivated.");
+        if (supplier is null)
+        {
+            return ServiceResult<SupplierDto>.Failure("Supplier active state could not be changed.");
+        }
+
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<SupplierDto>.Success(
+            supplier,
+            isActive ? "Supplier activated." : "Supplier deactivated.");
     }
+
+    private Task InvalidateAiCacheAsync(CancellationToken cancellationToken) =>
+        _currentUserService?.CompanyId is { } companyId && _aiResultCache is not null
+            ? _aiResultCache.InvalidateCompanyAsync(companyId, cancellationToken)
+            : Task.CompletedTask;
 
     private static ServiceResult<SupplierDto>? ValidateSupplierShape(string name, string? email)
     {

@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
@@ -219,6 +220,24 @@ public sealed class InventoryServiceTests
         Assert.Equal("ManualCorrection", tenantQueryService.LastAdjustmentRequest?.Reason);
         Assert.Equal("Initial stock count correction", tenantQueryService.LastAdjustmentRequest?.Note);
         Assert.Equal(1, tenantQueryService.LastAdjustmentUpdatedByUserId);
+    }
+
+    [Fact]
+    public async Task AdjustInventoryItemAsync_WhenStockChanges_InvalidatesTenantAiCache()
+    {
+        var tenantQueryService = new RecordingTenantQueryService
+        {
+            InventoryItem = new InventoryItemDto { Id = 7, Quantity = 5 }
+        };
+        var cache = new RecordingAiResultCache();
+        var service = new InventoryService(tenantQueryService, new FakeCurrentUserService(), cache);
+
+        var result = await service.AdjustInventoryItemAsync(
+            7,
+            new AdjustInventoryRequest { QuantityChange = 1, Reason = "ManualCorrection" });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, cache.InvalidatedCompanyId);
     }
 
     [Fact]
@@ -536,5 +555,30 @@ public sealed class InventoryServiceTests
         public string? Email => "inventory@example.test";
         public string? Role => "CompanyAdmin";
         public string? SchemaName => "tenant_test";
+    }
+
+    private sealed class RecordingAiResultCache : IAiResultCache
+    {
+        public int? InvalidatedCompanyId { get; private set; }
+
+        public Task<T?> GetAsync<T>(
+            string key,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<T?>(default);
+
+        public Task SetAsync<T>(
+            string key,
+            T value,
+            TimeSpan? expiration = null,
+            CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task InvalidateCompanyAsync(
+            int companyId,
+            CancellationToken cancellationToken = default)
+        {
+            InvalidatedCompanyId = companyId;
+            return Task.CompletedTask;
+        }
     }
 }

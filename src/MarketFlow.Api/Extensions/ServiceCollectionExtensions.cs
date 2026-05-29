@@ -187,6 +187,8 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<JwtTokenService>();
         services.AddScoped<PasswordHasher>();
+        services.AddScoped<IAiRuntimeInfo, AiRuntimeInfo>();
+        services.AddScoped<IAiResultCache, RedisAiResultCache>();
         services.Configure<AiOptions>(
             configuration.GetSection(AiOptions.SectionName));
         services.Configure<OpenAiOptions>(

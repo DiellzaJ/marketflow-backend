@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.AI.DTOs;
 using MarketFlow.Application.Features.AI.Interfaces;
@@ -8,11 +9,15 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiInventoryInsightService(
     IAiInventoryInsightDataService insightDataService,
-    IAiClient aiClient) : IAiInventoryInsightService
+    IAiClient aiClient,
+    IAiResultCache? aiResultCache = null,
+    IAiRuntimeInfo? aiRuntimeInfo = null,
+    ICurrentUserService? currentUserService = null) : IAiInventoryInsightService
 {
     private const string LowStockIssue = "LowStock";
     private const string CriticalLowStockIssue = "CriticalLowStock";
     private const string OverstockIssue = "Overstock";
+    private static readonly TimeSpan CacheExpiration = TimeSpan.FromMinutes(30);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -47,6 +52,19 @@ public class AiInventoryInsightService(
             DepartmentId = request.DepartmentId
         };
 
+        var cacheKey = CreateCacheKey(normalizedRequest);
+        if (cacheKey is not null && aiResultCache is not null)
+        {
+            var cachedRecommendations = await aiResultCache.GetAsync<IReadOnlyCollection<AiInventoryRecommendationDto>>(
+                cacheKey,
+                cancellationToken);
+
+            if (cachedRecommendations is not null)
+            {
+                return ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success(cachedRecommendations);
+            }
+        }
+
         var data = await insightDataService.GetAiInventoryInsightDataAsync(
             normalizedRequest,
             cancellationToken);
@@ -73,7 +91,27 @@ public class AiInventoryInsightService(
                 : recommendation.Reason;
         }
 
+        if (cacheKey is not null && aiResultCache is not null)
+        {
+            await aiResultCache.SetAsync<IReadOnlyCollection<AiInventoryRecommendationDto>>(
+                cacheKey,
+                recommendations,
+                CacheExpiration,
+                cancellationToken);
+        }
+
         return ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>.Success(recommendations);
+    }
+
+    private string? CreateCacheKey(AiInventoryRecommendationRequest request)
+    {
+        if (currentUserService?.CompanyId is not { } companyId ||
+            aiRuntimeInfo is null)
+        {
+            return null;
+        }
+
+        return AiCacheKeys.Inventory(companyId, request, aiRuntimeInfo.Provider, aiRuntimeInfo.Model);
     }
 
     private static AiInventoryRecommendationDto? CreateRecommendation(
