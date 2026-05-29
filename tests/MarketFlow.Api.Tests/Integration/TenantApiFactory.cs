@@ -44,7 +44,8 @@ public sealed class TenantApiFactory : WebApplicationFactory<Program>
                 ["Jwt:Issuer"] = _options.JwtIssuer,
                 ["Jwt:Audience"] = _options.JwtAudience,
                 ["Jwt:Secret"] = _options.JwtSecret,
-                ["Jwt:AccessTokenMinutes"] = _options.AccessTokenMinutes.ToString()
+                ["Jwt:AccessTokenMinutes"] = _options.AccessTokenMinutes.ToString(),
+                ["Ai:Provider"] = "Fake"
             });
         });
 
