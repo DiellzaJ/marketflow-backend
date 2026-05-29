@@ -1,3 +1,4 @@
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.AI.DTOs;
 using MarketFlow.Application.Features.AI.Interfaces;
@@ -74,6 +75,57 @@ public sealed class AiReportQueryServiceTests
         Assert.DoesNotContain("SELECT", aiClient.Request?.Prompt, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task QueryAsync_WhenDepartmentManagerRequestsSupplierReport_ReturnsFailureWithoutLoadingBusinessData()
+    {
+        var businessDataService = new StubBusinessDataService(new AiBusinessDataDto());
+        var service = new AiReportQueryService(
+            businessDataService,
+            new StubAiClient("""{"reportType":"SupplierPerformance","confidence":1}"""),
+            new StubCurrentUserService { Role = "DepartmentManager" });
+
+        var result = await service.QueryAsync(new NaturalLanguageReportRequest
+        {
+            Question = "How are suppliers performing?"
+        });
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("not authorized", result.Message);
+        Assert.Null(businessDataService.Query);
+    }
+
+    [Fact]
+    public async Task QueryAsync_WhenMainOperatorRequestsPurchaseReport_ReturnsPurchaseSummary()
+    {
+        var businessDataService = new StubBusinessDataService(new AiBusinessDataDto
+        {
+            SupplierPurchaseMetrics =
+            [
+                new AiSupplierPurchaseMetricDto
+                {
+                    SupplierId = 3,
+                    SupplierName = "Acme Supplies",
+                    PurchaseCount = 2,
+                    TotalPurchaseAmount = 100m,
+                    TotalPurchasedQuantity = 12
+                }
+            ]
+        });
+        var service = new AiReportQueryService(
+            businessDataService,
+            new StubAiClient("""{"reportType":"PurchaseSummary","confidence":1}"""),
+            new StubCurrentUserService { Role = "MainOperator" });
+
+        var result = await service.QueryAsync(new NaturalLanguageReportRequest
+        {
+            Question = "Summarize purchases"
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(AiReportType.PurchaseSummary, result.Data?.Intent.ReportType);
+        Assert.NotNull(businessDataService.Query);
+    }
+
     private sealed class StubBusinessDataService(AiBusinessDataDto data) : IAiBusinessDataService
     {
         public AiBusinessDataQuery? Query { get; private set; }
@@ -102,5 +154,18 @@ public sealed class AiReportQueryServiceTests
                 Model = "test-model"
             });
         }
+    }
+
+    private sealed class StubCurrentUserService : ICurrentUserService
+    {
+        public int? UserId { get; init; } = 1;
+
+        public int? CompanyId { get; init; } = 1;
+
+        public string? Email { get; init; } = "user@example.test";
+
+        public string? Role { get; init; }
+
+        public string? SchemaName { get; init; } = "tenant_1";
     }
 }

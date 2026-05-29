@@ -9,12 +9,14 @@ public sealed class EndpointAuthorizationPolicyTests
 {
     public static TheoryData<Type, string, string> EndpointPolicies => new()
     {
-        { typeof(AiController), nameof(AiController.GenerateDashboardSummaryAsync), AuthorizationPolicies.CompanyAdminOnly },
-        { typeof(AiController), nameof(AiController.GenerateInventoryForecastAsync), AuthorizationPolicies.CompanyAdminOnly },
-        { typeof(AiController), nameof(AiController.GenerateInventoryRecommendationsAsync), AuthorizationPolicies.CompanyAdminOnly },
-        { typeof(AiController), nameof(AiController.GeneratePurchaseRecommendationsAsync), AuthorizationPolicies.CompanyAdminOrMainOperator },
-        { typeof(AiController), nameof(AiController.GenerateSupplierPerformanceInsightsAsync), AuthorizationPolicies.CompanyAdminOnly },
-        { typeof(AiController), nameof(AiController.DetectAnomaliesAsync), AuthorizationPolicies.CompanyAdminOnly },
+        { typeof(AiController), nameof(AiController.ChatAsync), AuthorizationPolicies.CanUseAiAssistant },
+        { typeof(AiController), nameof(AiController.QueryReportAsync), AuthorizationPolicies.CanUseAiAssistant },
+        { typeof(AiController), nameof(AiController.GenerateDashboardSummaryAsync), AuthorizationPolicies.CanViewAiDashboard },
+        { typeof(AiController), nameof(AiController.GenerateInventoryForecastAsync), AuthorizationPolicies.CanViewInventoryAiRecommendations },
+        { typeof(AiController), nameof(AiController.GenerateInventoryRecommendationsAsync), AuthorizationPolicies.CanViewInventoryAiRecommendations },
+        { typeof(AiController), nameof(AiController.GeneratePurchaseRecommendationsAsync), AuthorizationPolicies.CanViewPurchaseAiRecommendations },
+        { typeof(AiController), nameof(AiController.GenerateSupplierPerformanceInsightsAsync), AuthorizationPolicies.CanViewSupplierAiInsights },
+        { typeof(AiController), nameof(AiController.DetectAnomaliesAsync), AuthorizationPolicies.CanViewAnomalyInsights },
         { typeof(ProductsController), nameof(ProductsController.GetAsync), AuthorizationPolicies.ReadProducts },
         { typeof(ProductsController), nameof(ProductsController.CreateAsync), AuthorizationPolicies.CreateProducts },
         { typeof(ProductsController), nameof(ProductsController.UpdateAsync), AuthorizationPolicies.UpdateProducts },

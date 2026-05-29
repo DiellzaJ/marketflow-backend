@@ -9,6 +9,7 @@ namespace MarketFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/ai")]
+[ServiceFilter(typeof(AiTenantScopeAuthorizationFilter))]
 public class AiController(
     IAiDashboardService aiDashboardService,
     IAiInventoryForecastService aiInventoryForecastService,
@@ -20,7 +21,7 @@ public class AiController(
     IAiChatService aiChatService) : ControllerBase
 {
     [HttpPost("chat")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [Authorize(Policy = AuthorizationPolicies.CanUseAiAssistant)]
     [ProducesResponseType(typeof(ServiceResult<AiChatResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<AiChatResponse>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -34,7 +35,7 @@ public class AiController(
     }
 
     [HttpPost("reports/query")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [Authorize(Policy = AuthorizationPolicies.CanUseAiAssistant)]
     [ProducesResponseType(typeof(ServiceResult<NaturalLanguageReportResponseDto>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<NaturalLanguageReportResponseDto>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -48,7 +49,7 @@ public class AiController(
     }
 
     [HttpPost("dashboard-summary")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [Authorize(Policy = AuthorizationPolicies.CanViewAiDashboard)]
     [ProducesResponseType(typeof(ServiceResult<AiDashboardSummaryResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<AiDashboardSummaryResponse>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -62,7 +63,7 @@ public class AiController(
     }
 
     [HttpPost("inventory-forecast")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [Authorize(Policy = AuthorizationPolicies.CanViewInventoryAiRecommendations)]
     [ProducesResponseType(typeof(ServiceResult<AiInventoryForecastResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<AiInventoryForecastResponse>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -76,7 +77,7 @@ public class AiController(
     }
 
     [HttpPost("inventory/recommendations")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [Authorize(Policy = AuthorizationPolicies.CanViewInventoryAiRecommendations)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiInventoryRecommendationDto>>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -90,7 +91,7 @@ public class AiController(
     }
 
     [HttpPost("purchases/recommendations")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOrMainOperator)]
+    [Authorize(Policy = AuthorizationPolicies.CanViewPurchaseAiRecommendations)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiPurchaseRecommendationDto>>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -104,7 +105,7 @@ public class AiController(
     }
 
     [HttpPost("suppliers/performance")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [Authorize(Policy = AuthorizationPolicies.CanViewSupplierAiInsights)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiSupplierInsightDto>>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
@@ -118,7 +119,7 @@ public class AiController(
     }
 
     [HttpPost("anomalies/detect")]
-    [Authorize(Policy = AuthorizationPolicies.CompanyAdminOnly)]
+    [Authorize(Policy = AuthorizationPolicies.CanViewAnomalyInsights)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiAnomalyDto>>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ServiceResult<IReadOnlyCollection<AiAnomalyDto>>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

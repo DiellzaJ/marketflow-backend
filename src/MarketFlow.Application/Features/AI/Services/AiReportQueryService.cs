@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.AI.DTOs;
 using MarketFlow.Application.Features.AI.Interfaces;
@@ -8,7 +9,8 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public sealed class AiReportQueryService(
     IAiBusinessDataService businessDataService,
-    IAiClient aiClient) : IAiReportQueryService
+    IAiClient aiClient,
+    ICurrentUserService? currentUserService = null) : IAiReportQueryService
 {
     private const string UnsupportedMessage =
         "I can only answer supported company report questions. Try asking about sales, inventory, purchases, suppliers, or stock movements.";
@@ -46,6 +48,13 @@ public sealed class AiReportQueryService(
             return ServiceResult<NaturalLanguageReportResponseDto>.Failure(UnsupportedMessage);
         }
 
+        if (IsPurchaseOrSupplierReport(intent.ReportType) &&
+            !CanViewPurchaseAndSupplierReports(currentUserService?.Role))
+        {
+            return ServiceResult<NaturalLanguageReportResponseDto>.Failure(
+                "You are not authorized to view purchase or supplier AI reports.");
+        }
+
         var query = CreateDataQuery(request);
         var dataResult = await businessDataService.GetBusinessDataAsync(query, cancellationToken);
 
@@ -64,6 +73,17 @@ public sealed class AiReportQueryService(
             Intent = intent,
             Report = report
         });
+    }
+
+    private static bool IsPurchaseOrSupplierReport(AiReportType reportType)
+    {
+        return reportType is AiReportType.SupplierPerformance or AiReportType.PurchaseSummary;
+    }
+
+    private static bool CanViewPurchaseAndSupplierReports(string? role)
+    {
+        return string.Equals(role, "CompanyAdmin", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(role, "MainOperator", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<NaturalLanguageReportIntentDto?> ClassifyIntentAsync(
