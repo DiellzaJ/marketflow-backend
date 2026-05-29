@@ -25,7 +25,7 @@ public sealed class AiReportQueryServiceTests
         });
         var service = new AiReportQueryService(
             businessDataService,
-            new StubOpenAiClient("""{"reportType":"TopSellingProducts","confidence":0.98}"""));
+            new StubAiClient("""{"reportType":"TopSellingProducts","confidence":0.98}"""));
 
         var result = await service.QueryAsync(new NaturalLanguageReportRequest
         {
@@ -46,7 +46,7 @@ public sealed class AiReportQueryServiceTests
     {
         var service = new AiReportQueryService(
             new StubBusinessDataService(new AiBusinessDataDto()),
-            new StubOpenAiClient("""{"reportType":"Unsupported","confidence":0}"""));
+            new StubAiClient("""{"reportType":"Unsupported","confidence":0}"""));
 
         var result = await service.QueryAsync(new NaturalLanguageReportRequest
         {
@@ -60,18 +60,18 @@ public sealed class AiReportQueryServiceTests
     [Fact]
     public async Task QueryAsync_SendsClassificationOnlyPromptThatRejectsSql()
     {
-        var openAiClient = new StubOpenAiClient("""{"reportType":"LowStockProducts","confidence":1}""");
+        var aiClient = new StubAiClient("""{"reportType":"LowStockProducts","confidence":1}""");
         var service = new AiReportQueryService(
             new StubBusinessDataService(new AiBusinessDataDto()),
-            openAiClient);
+            aiClient);
 
         await service.QueryAsync(new NaturalLanguageReportRequest
         {
             Question = "Show low stock products"
         });
 
-        Assert.Contains("Never write SQL", openAiClient.Request?.SystemPrompt);
-        Assert.DoesNotContain("SELECT", openAiClient.Request?.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Never write SQL", aiClient.Request?.SystemPrompt);
+        Assert.DoesNotContain("SELECT", aiClient.Request?.Prompt, StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class StubBusinessDataService(AiBusinessDataDto data) : IAiBusinessDataService
@@ -87,7 +87,7 @@ public sealed class AiReportQueryServiceTests
         }
     }
 
-    private sealed class StubOpenAiClient(string text) : IOpenAiClient
+    private sealed class StubAiClient(string text) : IAiClient
     {
         public AiCompletionRequestDto? Request { get; private set; }
 

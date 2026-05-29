@@ -26,12 +26,12 @@ public sealed class AiChatServiceTests
                 }
             }));
         var store = new RecordingChatSessionStore();
-        var openAiClient = new StubOpenAiClient("Coffee Beans sold best.");
+        var aiClient = new StubAiClient("Coffee Beans sold best.");
         var service = new AiChatService(
             new StubCurrentUserService(),
             reportService,
             store,
-            openAiClient);
+            aiClient);
 
         var result = await service.ChatAsync(new AiChatRequest
         {
@@ -43,7 +43,7 @@ public sealed class AiChatServiceTests
         Assert.Equal(AiReportType.TopSellingProducts, result.Data?.ReportType);
         Assert.Equal("Coffee Beans sold best.", result.Data?.Answer);
         Assert.Equal("Which products sold best this week?", reportService.Request?.Question);
-        Assert.Contains("tenant-safe report JSON", openAiClient.Request?.SystemPrompt);
+        Assert.Contains("tenant-safe report JSON", aiClient.Request?.SystemPrompt);
         Assert.Equal(2, store.Messages.Count);
         Assert.Equal("user", store.Messages[0].Role);
         Assert.Equal("assistant", store.Messages[1].Role);
@@ -55,12 +55,12 @@ public sealed class AiChatServiceTests
         var reportService = new StubReportQueryService(
             ServiceResult<NaturalLanguageReportResponseDto>.Failure("Should not be called."));
         var store = new RecordingChatSessionStore();
-        var openAiClient = new StubOpenAiClient("Should not be called.");
+        var aiClient = new StubAiClient("Should not be called.");
         var service = new AiChatService(
             new StubCurrentUserService(),
             reportService,
             store,
-            openAiClient);
+            aiClient);
 
         var result = await service.ChatAsync(new AiChatRequest
         {
@@ -70,7 +70,7 @@ public sealed class AiChatServiceTests
         Assert.False(result.Succeeded);
         Assert.Contains("cannot provide raw SQL", result.Message);
         Assert.Null(reportService.Request);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
         Assert.Equal(2, store.Messages.Count);
     }
 
@@ -81,7 +81,7 @@ public sealed class AiChatServiceTests
             new StubCurrentUserService(),
             new StubReportQueryService(ServiceResult<NaturalLanguageReportResponseDto>.Failure("Should not be called.")),
             new RecordingChatSessionStore(),
-            new StubOpenAiClient("Should not be called."));
+            new StubAiClient("Should not be called."));
 
         var result = await service.ChatAsync(new AiChatRequest
         {
@@ -99,7 +99,7 @@ public sealed class AiChatServiceTests
             new StubCurrentUserService(),
             new StubReportQueryService(ServiceResult<NaturalLanguageReportResponseDto>.Failure("Should not be called.")),
             new RecordingChatSessionStore(),
-            new StubOpenAiClient("Should not be called."));
+            new StubAiClient("Should not be called."));
 
         var result = await service.ChatAsync(new AiChatRequest
         {
@@ -158,7 +158,7 @@ public sealed class AiChatServiceTests
         }
     }
 
-    private sealed class StubOpenAiClient(string text) : IOpenAiClient
+    private sealed class StubAiClient(string text) : IAiClient
     {
         public AiCompletionRequestDto? Request { get; private set; }
 

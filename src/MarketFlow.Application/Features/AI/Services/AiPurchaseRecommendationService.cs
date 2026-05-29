@@ -8,7 +8,7 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiPurchaseRecommendationService(
     IAiPurchaseRecommendationDataService recommendationDataService,
-    IOpenAiClient openAiClient) : IAiPurchaseRecommendationService
+    IAiClient aiClient) : IAiPurchaseRecommendationService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -109,7 +109,7 @@ public class AiPurchaseRecommendationService(
         IReadOnlyCollection<AiPurchaseRecommendationDto> recommendations,
         CancellationToken cancellationToken)
     {
-        var completion = await openAiClient.GenerateTextAsync(new AiCompletionRequestDto
+        var completion = await aiClient.GenerateTextAsync(new AiCompletionRequestDto
         {
             SystemPrompt = """
                 You explain purchase recommendations for retail operators.

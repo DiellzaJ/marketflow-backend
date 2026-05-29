@@ -12,14 +12,14 @@ public sealed class AiDashboardServiceTests
     {
         var data = CreateBusinessData();
         var businessDataService = new StubAiBusinessDataService(ServiceResult<AiBusinessDataDto>.Success(data));
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = """
                 {"summary":"Revenue is strong and stock needs attention.","recommendedActions":["Restock Coffee Beans.","Promote Milk."]}
                 """,
             Model = "test-model"
         });
-        var service = new AiDashboardService(businessDataService, openAiClient);
+        var service = new AiDashboardService(businessDataService, aiClient);
 
         var result = await service.GenerateDashboardSummaryAsync(
             new AiDashboardSummaryRequest { TopProductsLimit = 5, LowStockLimit = 10 },
@@ -40,34 +40,34 @@ public sealed class AiDashboardServiceTests
     {
         var businessDataService = new StubAiBusinessDataService(
             ServiceResult<AiBusinessDataDto>.Success(CreateBusinessData()));
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"summary\":\"Summary.\",\"recommendedActions\":[]}",
             Model = "test-model"
         });
-        var service = new AiDashboardService(businessDataService, openAiClient);
+        var service = new AiDashboardService(businessDataService, aiClient);
 
         await service.GenerateDashboardSummaryAsync(new AiDashboardSummaryRequest(), CancellationToken.None);
 
-        Assert.NotNull(openAiClient.Request);
-        Assert.Contains("\"totalSales\":250", openAiClient.Request.Prompt);
-        Assert.Contains("Coffee Beans", openAiClient.Request.Prompt);
-        Assert.DoesNotContain("productId", openAiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("sale_id", openAiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("customer", openAiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(aiClient.Request);
+        Assert.Contains("\"totalSales\":250", aiClient.Request.Prompt);
+        Assert.Contains("Coffee Beans", aiClient.Request.Prompt);
+        Assert.DoesNotContain("productId", aiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sale_id", aiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("customer", aiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public async Task GenerateDashboardSummaryAsync_WhenDatesAreInvalid_ReturnsFailureWithoutCallingOpenAi()
     {
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "unused",
             Model = "unused"
         });
         var service = new AiDashboardService(
             new StubAiBusinessDataService(ServiceResult<AiBusinessDataDto>.Success(CreateBusinessData())),
-            openAiClient);
+            aiClient);
 
         var result = await service.GenerateDashboardSummaryAsync(new AiDashboardSummaryRequest
         {
@@ -76,7 +76,7 @@ public sealed class AiDashboardServiceTests
         }, CancellationToken.None);
 
         Assert.False(result.Succeeded);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
     }
 
     private static AiBusinessDataDto CreateBusinessData()
@@ -124,7 +124,7 @@ public sealed class AiDashboardServiceTests
             Task.FromResult(result);
     }
 
-    private sealed class StubOpenAiClient(AiCompletionResponseDto response) : IOpenAiClient
+    private sealed class StubAiClient(AiCompletionResponseDto response) : IAiClient
     {
         public AiCompletionRequestDto? Request { get; private set; }
 

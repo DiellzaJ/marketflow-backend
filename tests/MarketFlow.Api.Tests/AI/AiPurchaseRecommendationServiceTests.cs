@@ -9,7 +9,7 @@ public sealed class AiPurchaseRecommendationServiceTests
     [Fact]
     public async Task GeneratePurchaseRecommendationsAsync_RecommendsOnlyProductsBelowForecastNeed()
     {
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = """
                 {"explanations":[{"productId":1,"explanation":"Buy coffee from Acme to cover demand."}]}
@@ -40,7 +40,7 @@ public sealed class AiPurchaseRecommendationServiceTests
                     PreferredSupplierName = "Tea Supplier"
                 }
             ]),
-            openAiClient);
+            aiClient);
 
         var result = await service.GeneratePurchaseRecommendationsAsync(new AiPurchaseRecommendationRequest
         {
@@ -63,7 +63,7 @@ public sealed class AiPurchaseRecommendationServiceTests
     [Fact]
     public async Task GeneratePurchaseRecommendationsAsync_ConsidersPendingPurchasesAndNeverReturnsNegativeQuantity()
     {
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"explanations\":[]}",
             Model = "test-model"
@@ -80,7 +80,7 @@ public sealed class AiPurchaseRecommendationServiceTests
                     PendingPurchaseQuantity = 20
                 }
             ]),
-            openAiClient);
+            aiClient);
 
         var result = await service.GeneratePurchaseRecommendationsAsync(new AiPurchaseRecommendationRequest
         {
@@ -90,7 +90,7 @@ public sealed class AiPurchaseRecommendationServiceTests
 
         Assert.True(result.Succeeded);
         Assert.Empty(result.Data!);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
     }
 
     [Fact]
@@ -108,7 +108,7 @@ public sealed class AiPurchaseRecommendationServiceTests
                     PendingPurchaseQuantity = 0
                 }
             ]),
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = """
                     {"explanations":[{"productId":4,"explanation":"Buy 999 units, phrased by AI only."}]}
@@ -133,7 +133,7 @@ public sealed class AiPurchaseRecommendationServiceTests
         var dataService = new StubAiPurchaseRecommendationDataService([]);
         var service = new AiPurchaseRecommendationService(
             dataService,
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = "{\"explanations\":[]}",
                 Model = "test-model"
@@ -155,12 +155,12 @@ public sealed class AiPurchaseRecommendationServiceTests
     public async Task GeneratePurchaseRecommendationsAsync_WhenRequestIsInvalid_ReturnsFailureWithoutCallingDependencies()
     {
         var dataService = new StubAiPurchaseRecommendationDataService([]);
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"explanations\":[]}",
             Model = "test-model"
         });
-        var service = new AiPurchaseRecommendationService(dataService, openAiClient);
+        var service = new AiPurchaseRecommendationService(dataService, aiClient);
 
         var result = await service.GeneratePurchaseRecommendationsAsync(new AiPurchaseRecommendationRequest
         {
@@ -169,7 +169,7 @@ public sealed class AiPurchaseRecommendationServiceTests
 
         Assert.False(result.Succeeded);
         Assert.Null(dataService.Request);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
     }
 
     private sealed class StubAiPurchaseRecommendationDataService(
@@ -186,7 +186,7 @@ public sealed class AiPurchaseRecommendationServiceTests
         }
     }
 
-    private sealed class StubOpenAiClient(AiCompletionResponseDto response) : IOpenAiClient
+    private sealed class StubAiClient(AiCompletionResponseDto response) : IAiClient
     {
         public AiCompletionRequestDto? Request { get; private set; }
 

@@ -187,20 +187,36 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<JwtTokenService>();
         services.AddScoped<PasswordHasher>();
+        services.Configure<AiOptions>(
+            configuration.GetSection(AiOptions.SectionName));
         services.Configure<OpenAiOptions>(
             configuration.GetSection(OpenAiOptions.SectionName));
+        services.Configure<OllamaOptions>(
+            configuration.GetSection(OllamaOptions.SectionName));
 
-        if (configuration.GetValue<bool>($"{OpenAiOptions.SectionName}:UseFakeClient"))
+        var aiProvider = GetAiProvider(configuration);
+
+        switch (aiProvider)
         {
-            services.AddScoped<IOpenAiClient, FakeOpenAiClient>();
-        }
-        else
-        {
-            services.AddHttpClient<IOpenAiClient, OpenAiClient>((serviceProvider, httpClient) =>
-            {
-                var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-                httpClient.BaseAddress = options.BaseUrl;
-            });
+            case AiProvider.Fake:
+                services.AddScoped<IAiClient, FakeAiClient>();
+                break;
+            case AiProvider.OpenAI:
+                services.AddHttpClient<IAiClient, OpenAiClient>((serviceProvider, httpClient) =>
+                {
+                    var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
+                    httpClient.BaseAddress = options.BaseUrl;
+                });
+                break;
+            case AiProvider.Ollama:
+                services.AddHttpClient<IAiClient, OllamaAiClient>((serviceProvider, httpClient) =>
+                {
+                    var options = serviceProvider.GetRequiredService<IOptions<OllamaOptions>>().Value;
+                    httpClient.BaseAddress = options.BaseUrl;
+                });
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported AI provider '{aiProvider}'.");
         }
 
         services.AddScoped<TenantProvider>();
@@ -211,6 +227,28 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<StockAlertHostedService>();
 
         return services;
+    }
+
+    private static AiProvider GetAiProvider(IConfiguration configuration)
+    {
+        var providerName = configuration[$"{AiOptions.SectionName}:Provider"];
+
+        if (string.IsNullOrWhiteSpace(providerName))
+        {
+            var legacyUseFakeClient = configuration[$"{OpenAiOptions.SectionName}:UseFakeClient"];
+
+            if (bool.TryParse(legacyUseFakeClient, out var useFakeClient))
+            {
+                return useFakeClient ? AiProvider.Fake : AiProvider.OpenAI;
+            }
+
+            return AiProvider.Fake;
+        }
+
+        return Enum.TryParse<AiProvider>(providerName, ignoreCase: true, out var provider)
+            ? provider
+            : throw new InvalidOperationException(
+                $"Unsupported AI provider '{providerName}'. Use Fake, OpenAI, or Ollama.");
     }
 
     public static AuthorizationOptions AddMarketFlowPolicies(this AuthorizationOptions options)

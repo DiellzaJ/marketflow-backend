@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace MarketFlow.Infrastructure.OpenAI;
 
-public sealed class OpenAiClient : IOpenAiClient
+public sealed class OpenAiClient : IAiClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

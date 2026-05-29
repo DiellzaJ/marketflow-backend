@@ -2,7 +2,7 @@ using MarketFlow.Application.Features.AI.DTOs;
 
 namespace MarketFlow.Application.Features.AI.Interfaces;
 
-public interface IOpenAiClient
+public interface IAiClient
 {
     Task<AiCompletionResponseDto> GenerateTextAsync(
         AiCompletionRequestDto request,

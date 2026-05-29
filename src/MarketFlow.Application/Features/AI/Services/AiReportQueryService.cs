@@ -8,7 +8,7 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public sealed class AiReportQueryService(
     IAiBusinessDataService businessDataService,
-    IOpenAiClient openAiClient) : IAiReportQueryService
+    IAiClient aiClient) : IAiReportQueryService
 {
     private const string UnsupportedMessage =
         "I can only answer supported company report questions. Try asking about sales, inventory, purchases, suppliers, or stock movements.";
@@ -70,7 +70,7 @@ public sealed class AiReportQueryService(
         string question,
         CancellationToken cancellationToken)
     {
-        var completion = await openAiClient.GenerateTextAsync(new AiCompletionRequestDto
+        var completion = await aiClient.GenerateTextAsync(new AiCompletionRequestDto
         {
             SystemPrompt = """
                 Classify the user's business question into exactly one allowed report type.

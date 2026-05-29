@@ -22,9 +22,13 @@ public static class EnvironmentVariableConfigurationExtensions
             ["TENANT_SCHEMA_PREFIX"] = "Tenant:SchemaPrefix",
             ["REDIS_CONNECTION"] = "Redis:Configuration",
             ["REDIS_BARCODE_LOOKUP_TTL_SECONDS"] = "Redis:BarcodeLookupTtlSeconds",
+            ["AI_PROVIDER"] = "Ai:Provider",
             ["OPENAI_API_KEY"] = "OpenAi:ApiKey",
             ["OPENAI_MODEL"] = "OpenAi:Model",
+            ["OPENAI_BASE_URL"] = "OpenAi:BaseUrl",
             ["OPENAI_USE_FAKE_CLIENT"] = "OpenAi:UseFakeClient",
+            ["OLLAMA_BASE_URL"] = "Ollama:BaseUrl",
+            ["OLLAMA_MODEL"] = "Ollama:Model",
             ["FRONTEND_URL"] = "Cors:FrontendUrl"
         };
 

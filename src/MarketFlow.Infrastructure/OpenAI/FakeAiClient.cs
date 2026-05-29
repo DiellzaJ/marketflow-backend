@@ -1,12 +1,11 @@
 using MarketFlow.Application.Features.AI.DTOs;
 using MarketFlow.Application.Features.AI.Interfaces;
-using Microsoft.Extensions.Options;
 
 namespace MarketFlow.Infrastructure.OpenAI;
 
-public sealed class FakeOpenAiClient(IOptions<OpenAiOptions> options) : IOpenAiClient
+public sealed class FakeAiClient : IAiClient
 {
-    private const string FakeModel = "fake-openai-development";
+    private const string FakeModel = "fake-ai-development";
 
     public Task<AiCompletionResponseDto> GenerateTextAsync(
         AiCompletionRequestDto request,
@@ -19,7 +18,7 @@ public sealed class FakeOpenAiClient(IOptions<OpenAiOptions> options) : IOpenAiC
         return Task.FromResult(new AiCompletionResponseDto
         {
             Text = text,
-            Model = string.IsNullOrWhiteSpace(options.Value.Model) ? FakeModel : $"{FakeModel}:{options.Value.Model}"
+            Model = FakeModel
         });
     }
 
@@ -36,7 +35,7 @@ public sealed class FakeOpenAiClient(IOptions<OpenAiOptions> options) : IOpenAiC
         if (Contains(systemPrompt, "dashboard"))
         {
             return """
-                {"summary":"Fake development summary based on tenant-safe dashboard data.","recommendedActions":["Review the highlighted metrics.","Use real OpenAI by setting OpenAi:UseFakeClient to false."]}
+                {"summary":"Fake development summary based on tenant-safe dashboard data.","recommendedActions":["Review the highlighted metrics.","Switch Ai:Provider to OpenAI or Ollama when you need real model responses."]}
                 """;
         }
 
