@@ -6,24 +6,110 @@ Copy `.env.example` to `.env` for local development and keep real credentials in
 
 Do not store secrets in tracked files such as `appsettings.json`, `appsettings.Development.json`, or `launchSettings.json`.
 
-## AI Providers
+## AI Module
 
-MarketFlow AI features use one shared `IAiClient` abstraction and can run in three modes selected by `Ai:Provider` or the `AI_PROVIDER` environment variable:
+MarketFlow AI features are backend-only. The frontend calls MarketFlow `/api/ai/*` endpoints and never calls OpenAI or Ollama directly. The backend resolves the current tenant, loads tenant-safe business data, performs deterministic calculations in application services, and sends only scoped summary data to the configured `IAiClient` provider for wording, explanations, or summaries.
 
-- `Fake`: deterministic local responses for development and tests. This is the default in development and does not require an OpenAI API key.
-- `OpenAI`: real OpenAI API responses. Set `AI_PROVIDER=OpenAI`, `OPENAI_API_KEY`, and optionally `OPENAI_MODEL` or `OPENAI_BASE_URL`.
-- `Ollama`: local free LLM responses through Ollama. Start Ollama locally, pull the configured model, then set `AI_PROVIDER=Ollama`, `OLLAMA_BASE_URL`, and `OLLAMA_MODEL`.
+### Architecture
 
-Example local Ollama setup:
+- Controllers in `MarketFlow.Api.Controllers.AiController` expose the AI API and enforce endpoint policies.
+- `AiTenantScopeAuthorizationFilter` applies tenant and assignment scope before the service runs.
+- Application services calculate forecasts, recommendations, supplier reliability, and anomalies from backend data first.
+- `IAiClient` implementations provide model text only:
+  - `FakeAiClient` returns deterministic local JSON/text for development and tests.
+  - `OpenAiClient` calls OpenAI chat completions.
+  - `OllamaAiClient` calls a local Ollama `/api/chat` server.
+- AI responses are treated as explanatory text. The backend does not let the model change calculated quantities, stock levels, supplier metrics, anomaly thresholds, or tenant scope.
 
-```bash
-ollama pull llama3.1
-AI_PROVIDER=Ollama
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1
+### Endpoints
+
+| Endpoint | Purpose | Roles |
+| --- | --- | --- |
+| `POST /api/ai/chat` | Tenant-safe business assistant response. | `CompanyAdmin`, `MainOperator`, `DepartmentManager` |
+| `POST /api/ai/reports/query` | Converts a natural-language question into a scoped report. | `CompanyAdmin`, `MainOperator`, `DepartmentManager` |
+| `POST /api/ai/dashboard-summary` | Summarizes dashboard KPIs and recommends actions. | `CompanyAdmin`, `MainOperator`, `DepartmentManager` |
+| `POST /api/ai/inventory-forecast` | Calculates inventory demand forecast by product. | `CompanyAdmin`, `MainOperator`, `DepartmentManager`, `InventoryEmployee` |
+| `POST /api/ai/inventory/recommendations` | Detects low stock, critical stock, and overstock recommendations. | `CompanyAdmin`, `MainOperator`, `DepartmentManager`, `InventoryEmployee` |
+| `POST /api/ai/purchases/recommendations` | Calculates purchase quantities and supplier suggestions. | `CompanyAdmin`, `MainOperator` with purchase and supplier read permissions |
+| `POST /api/ai/suppliers/performance` | Calculates supplier reliability and performance insights. | `CompanyAdmin`, `MainOperator` with purchase and supplier read permissions |
+| `POST /api/ai/anomalies/detect` | Detects discount, below-cost sale, stock movement, and sales spike anomalies. | `CompanyAdmin`, `MainOperator`, `DepartmentManager` |
+
+`Seller` and `RootAdmin` do not have tenant AI endpoint access by default.
+
+### Request And Response Examples
+
+Inventory forecast request:
+
+```http
+POST /api/ai/inventory-forecast
+Authorization: Bearer <access-token>
+Content-Type: application/json
 ```
 
-Provider values are configured in `appsettings*.json` like this:
+```json
+{
+  "salesHistoryDays": 30,
+  "forecastDays": 14,
+  "marketId": 1,
+  "departmentId": 2
+}
+```
+
+Example response:
+
+```json
+{
+  "succeeded": true,
+  "message": "",
+  "data": {
+    "salesHistoryDays": 30,
+    "forecastDays": 14,
+    "marketId": 1,
+    "departmentId": 2,
+    "products": [
+      {
+        "productId": 10,
+        "productName": "Coffee Beans",
+        "currentStock": 60,
+        "totalQuantitySold": 90,
+        "averageDailySales": 3,
+        "forecastDemand": 42,
+        "daysOfStockRemaining": 20
+      }
+    ]
+  }
+}
+```
+
+Chat request:
+
+```json
+{
+  "sessionId": 12,
+  "message": "Which products sold best this week?",
+  "from": "2026-05-01",
+  "to": "2026-05-31",
+  "marketId": 1
+}
+```
+
+Example response:
+
+```json
+{
+  "succeeded": true,
+  "message": "",
+  "data": {
+    "sessionId": 12,
+    "answer": "Coffee Beans led sales for the selected period.",
+    "reportType": "TopSellingProducts"
+  }
+}
+```
+
+### Provider Configuration
+
+Provider values are configured with `Ai:Provider` in `appsettings*.json` or `AI_PROVIDER` in the environment. Supported values are `Fake`, `OpenAI`, and `Ollama`. The exact .NET configuration keys are `Ai`, `OpenAi`, and `Ollama`.
 
 ```json
 {
@@ -33,7 +119,8 @@ Provider values are configured in `appsettings*.json` like this:
   "OpenAi": {
     "ApiKey": "",
     "Model": "gpt-4.1-mini",
-    "BaseUrl": "https://api.openai.com"
+    "BaseUrl": "https://api.openai.com",
+    "UseFakeClient": false
   },
   "Ollama": {
     "BaseUrl": "http://localhost:11434",
@@ -41,6 +128,77 @@ Provider values are configured in `appsettings*.json` like this:
   }
 }
 ```
+
+Friendly environment variables:
+
+```bash
+AI_PROVIDER=Fake
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=https://api.openai.com
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1
+```
+
+`MaxOutputTokens` is not currently wired into the backend provider options. Add it to `OpenAiOptions` and the request payload before relying on that setting.
+
+### Fake Provider
+
+Use `Fake` for local development, automated tests, CI, and demos where deterministic responses are preferred. It does not require network access, OpenAI billing, an API key, or a running Ollama instance. Development defaults to `Fake` in `appsettings.Development.json`, and integration tests pin `Ai:Provider` to `Fake`.
+
+```bash
+AI_PROVIDER=Fake
+dotnet run --project src/MarketFlow.Api/MarketFlow.Api.csproj
+```
+
+### OpenAI Provider
+
+Use `OpenAI` when real hosted model responses are needed. Configure an API key in `.env`, a secret store, or deployment environment variables. Do not commit keys to `appsettings*.json`.
+
+```bash
+AI_PROVIDER=OpenAI
+OPENAI_API_KEY=<your-api-key>
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=https://api.openai.com
+```
+
+OpenAI usage may require billing to be enabled on the OpenAI account, and API calls may incur cost. The backend will fail fast if `OpenAi:ApiKey` or `OpenAi:Model` is missing when the provider is `OpenAI`.
+
+### Ollama Provider
+
+Use `Ollama` for local model responses without calling an external AI provider. Install Ollama, start the local service, pull a model, and point MarketFlow at the local base URL.
+
+```bash
+ollama pull llama3.1
+ollama serve
+```
+
+```bash
+AI_PROVIDER=Ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1
+dotnet run --project src/MarketFlow.Api/MarketFlow.Api.csproj
+```
+
+The configured `Ollama:Model` must match a model available locally. The backend posts to `Ollama:BaseUrl` plus `api/chat`; tests mock this HTTP call and do not require Ollama to be running.
+
+### Safety And Tenant Isolation
+
+- Tenant schema is resolved from authenticated backend user context, not from client-provided schema names.
+- AI requests can include `marketId` and `departmentId`, but operational roles are constrained to their active staff assignment.
+- `CompanyAdmin` can use company-wide tenant data. `MainOperator` is limited to the assigned market. `DepartmentManager` is limited to the assigned department. `InventoryEmployee` is limited to inventory AI features in the assigned market or department.
+- Prompt payloads contain aggregated or calculated business data, not raw credentials, API keys, tokens, user records, private customer data, or cross-company data.
+- Unsafe chat requests for SQL, database instructions, secrets, user emails, or other-company data are rejected with a safe response.
+- Anomaly explanations sanitize accusatory wording such as fraud or theft and frame findings as items needing review.
+- AI output is advisory. Backend calculations, authorization, tenant isolation, and persisted operational data remain controlled by application code.
+
+### Limitations
+
+- Model quality depends on the selected provider and model.
+- `Fake` responses are deterministic and useful for development, but they are not real analysis.
+- Ollama response speed depends on local hardware and model size.
+- OpenAI requires network access and a valid key.
+- AI services summarize and explain existing tenant data; they do not create purchases, change inventory, update suppliers, or bypass normal API permissions.
 
 ## Deployment Notes
 
