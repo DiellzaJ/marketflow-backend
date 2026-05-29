@@ -8,7 +8,7 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiInventoryInsightService(
     IAiInventoryInsightDataService insightDataService,
-    IOpenAiClient openAiClient) : IAiInventoryInsightService
+    IAiClient aiClient) : IAiInventoryInsightService
 {
     private const string LowStockIssue = "LowStock";
     private const string CriticalLowStockIssue = "CriticalLowStock";
@@ -144,7 +144,7 @@ public class AiInventoryInsightService(
         IReadOnlyCollection<AiInventoryRecommendationDto> recommendations,
         CancellationToken cancellationToken)
     {
-        var completion = await openAiClient.GenerateTextAsync(new AiCompletionRequestDto
+        var completion = await aiClient.GenerateTextAsync(new AiCompletionRequestDto
         {
             SystemPrompt = """
                 You explain inventory recommendations for retail operators.

@@ -9,7 +9,7 @@ public sealed class AiInventoryInsightServiceTests
     [Fact]
     public async Task GenerateInventoryRecommendationsAsync_DetectsLowCriticalAndOverstockProducts()
     {
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = """
                 {"explanations":[
@@ -48,7 +48,7 @@ public sealed class AiInventoryInsightServiceTests
                     TotalQuantitySold = 10
                 }
             ]),
-            openAiClient);
+            aiClient);
 
         var result = await service.GenerateInventoryRecommendationsAsync(new AiInventoryRecommendationRequest
         {
@@ -94,7 +94,7 @@ public sealed class AiInventoryInsightServiceTests
                     TotalQuantitySold = 50
                 }
             ]),
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = """
                     {"explanations":[{"productId":5,"explanation":"Buy 999 units even though this is just explanatory text."}]}
@@ -121,7 +121,7 @@ public sealed class AiInventoryInsightServiceTests
         var dataService = new StubAiInventoryInsightDataService([]);
         var service = new AiInventoryInsightService(
             dataService,
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = "{\"explanations\":[]}",
                 Model = "test-model"
@@ -143,12 +143,12 @@ public sealed class AiInventoryInsightServiceTests
     public async Task GenerateInventoryRecommendationsAsync_WhenValuesAreInvalid_ReturnsFailureWithoutCallingDependencies()
     {
         var dataService = new StubAiInventoryInsightDataService([]);
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"explanations\":[]}",
             Model = "test-model"
         });
-        var service = new AiInventoryInsightService(dataService, openAiClient);
+        var service = new AiInventoryInsightService(dataService, aiClient);
 
         var result = await service.GenerateInventoryRecommendationsAsync(new AiInventoryRecommendationRequest
         {
@@ -157,7 +157,7 @@ public sealed class AiInventoryInsightServiceTests
 
         Assert.False(result.Succeeded);
         Assert.Null(dataService.Request);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
     }
 
     private sealed class StubAiInventoryInsightDataService(
@@ -174,7 +174,7 @@ public sealed class AiInventoryInsightServiceTests
         }
     }
 
-    private sealed class StubOpenAiClient(AiCompletionResponseDto response) : IOpenAiClient
+    private sealed class StubAiClient(AiCompletionResponseDto response) : IAiClient
     {
         public AiCompletionRequestDto? Request { get; private set; }
 

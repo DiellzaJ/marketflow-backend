@@ -9,7 +9,7 @@ public sealed class AiAnomalyDetectionServiceTests
     [Fact]
     public async Task DetectAnomaliesAsync_WhenDataIsNormal_ReturnsNoAnomaliesWithoutCallingOpenAi()
     {
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"explanations\":[]}",
             Model = "test-model"
@@ -68,13 +68,13 @@ public sealed class AiAnomalyDetectionServiceTests
                     }
                 ]
             }),
-            openAiClient);
+            aiClient);
 
         var result = await service.DetectAnomaliesAsync(new AiAnomalyDetectionRequest());
 
         Assert.True(result.Succeeded);
         Assert.Empty(result.Data!);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public sealed class AiAnomalyDetectionServiceTests
     {
         var service = new AiAnomalyDetectionService(
             new StubAiAnomalyDetectionDataService(CreateAnomalyData()),
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = """
                     {"explanations":[
@@ -131,7 +131,7 @@ public sealed class AiAnomalyDetectionServiceTests
                     }
                 ]
             }),
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = """
                     {"explanations":[{"index":0,"explanation":"This looks like fraud by the cashier."}]}
@@ -152,7 +152,7 @@ public sealed class AiAnomalyDetectionServiceTests
         var dataService = new StubAiAnomalyDetectionDataService(new AiAnomalyDetectionDataDto());
         var service = new AiAnomalyDetectionService(
             dataService,
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = "{\"explanations\":[]}",
                 Model = "test-model"
@@ -178,12 +178,12 @@ public sealed class AiAnomalyDetectionServiceTests
     public async Task DetectAnomaliesAsync_WhenRequestIsInvalid_ReturnsFailureWithoutCallingDependencies()
     {
         var dataService = new StubAiAnomalyDetectionDataService(new AiAnomalyDetectionDataDto());
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"explanations\":[]}",
             Model = "test-model"
         });
-        var service = new AiAnomalyDetectionService(dataService, openAiClient);
+        var service = new AiAnomalyDetectionService(dataService, aiClient);
 
         var result = await service.DetectAnomaliesAsync(new AiAnomalyDetectionRequest
         {
@@ -193,7 +193,7 @@ public sealed class AiAnomalyDetectionServiceTests
 
         Assert.False(result.Succeeded);
         Assert.Null(dataService.Request);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
     }
 
     private static AiAnomalyDetectionDataDto CreateAnomalyData() =>
@@ -276,7 +276,7 @@ public sealed class AiAnomalyDetectionServiceTests
         }
     }
 
-    private sealed class StubOpenAiClient(AiCompletionResponseDto response) : IOpenAiClient
+    private sealed class StubAiClient(AiCompletionResponseDto response) : IAiClient
     {
         public AiCompletionRequestDto? Request { get; private set; }
 

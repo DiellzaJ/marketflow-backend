@@ -8,7 +8,7 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiAnomalyDetectionService(
     IAiAnomalyDetectionDataService anomalyDetectionDataService,
-    IOpenAiClient openAiClient) : IAiAnomalyDetectionService
+    IAiClient aiClient) : IAiAnomalyDetectionService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -230,7 +230,7 @@ public class AiAnomalyDetectionService(
         IReadOnlyCollection<AiAnomalyDto> anomalies,
         CancellationToken cancellationToken)
     {
-        var completion = await openAiClient.GenerateTextAsync(new AiCompletionRequestDto
+        var completion = await aiClient.GenerateTextAsync(new AiCompletionRequestDto
         {
             SystemPrompt = """
                 You explain retail sales and stock anomalies for operations teams.

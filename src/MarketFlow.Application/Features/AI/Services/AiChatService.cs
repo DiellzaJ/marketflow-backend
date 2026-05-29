@@ -11,7 +11,7 @@ public sealed class AiChatService(
     ICurrentUserService currentUserService,
     IAiReportQueryService reportQueryService,
     IAiChatSessionStore chatSessionStore,
-    IOpenAiClient openAiClient) : IAiChatService
+    IAiClient aiClient) : IAiChatService
 {
     private const string UnsafeRequestMessage =
         "I can help with tenant-safe business summaries, but I cannot provide raw SQL, access other companies, or expose sensitive user data.";
@@ -146,7 +146,7 @@ public sealed class AiChatService(
         NaturalLanguageReportResponseDto report,
         CancellationToken cancellationToken)
     {
-        var completion = await openAiClient.GenerateTextAsync(new AiCompletionRequestDto
+        var completion = await aiClient.GenerateTextAsync(new AiCompletionRequestDto
         {
             SystemPrompt = """
                 You are a company business assistant for MarketFlow.

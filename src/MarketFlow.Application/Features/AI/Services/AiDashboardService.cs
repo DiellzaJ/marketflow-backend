@@ -8,7 +8,7 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiDashboardService(
     IAiBusinessDataService businessDataService,
-    IOpenAiClient openAiClient) : IAiDashboardService
+    IAiClient aiClient) : IAiDashboardService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -47,7 +47,7 @@ public class AiDashboardService(
         }
 
         var kpis = CreateKpis(dataResult.Data);
-        var completion = await openAiClient.GenerateTextAsync(new AiCompletionRequestDto
+        var completion = await aiClient.GenerateTextAsync(new AiCompletionRequestDto
         {
             SystemPrompt = """
                 You are a retail business analyst. Write simple, direct business language for a company dashboard.

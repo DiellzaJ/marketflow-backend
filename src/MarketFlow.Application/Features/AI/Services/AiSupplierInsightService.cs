@@ -8,7 +8,7 @@ namespace MarketFlow.Application.Features.AI.Services;
 
 public class AiSupplierInsightService(
     IAiSupplierInsightDataService supplierInsightDataService,
-    IOpenAiClient openAiClient) : IAiSupplierInsightService
+    IAiClient aiClient) : IAiSupplierInsightService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -101,7 +101,7 @@ public class AiSupplierInsightService(
         IReadOnlyCollection<AiSupplierInsightDto> insights,
         CancellationToken cancellationToken)
     {
-        var completion = await openAiClient.GenerateTextAsync(new AiCompletionRequestDto
+        var completion = await aiClient.GenerateTextAsync(new AiCompletionRequestDto
         {
             SystemPrompt = """
                 You explain supplier performance insights for retail operators.

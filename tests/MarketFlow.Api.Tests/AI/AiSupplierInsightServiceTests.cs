@@ -9,7 +9,7 @@ public sealed class AiSupplierInsightServiceTests
     [Fact]
     public async Task GenerateSupplierPerformanceInsightsAsync_CalculatesReliabilityFlagsAndRecommendationText()
     {
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = """
                 {"recommendations":[
@@ -54,7 +54,7 @@ public sealed class AiSupplierInsightServiceTests
                     TotalAmountSpent = 300m
                 }
             ]),
-            openAiClient);
+            aiClient);
 
         var result = await service.GenerateSupplierPerformanceInsightsAsync(new AiSupplierInsightRequest());
 
@@ -79,7 +79,7 @@ public sealed class AiSupplierInsightServiceTests
     [Fact]
     public async Task GenerateSupplierPerformanceInsightsAsync_SendsOnlyCalculatedMetricsToOpenAi()
     {
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"recommendations\":[]}",
             Model = "test-model"
@@ -98,16 +98,16 @@ public sealed class AiSupplierInsightServiceTests
                     TotalAmountSpent = 250m
                 }
             ]),
-            openAiClient);
+            aiClient);
 
         await service.GenerateSupplierPerformanceInsightsAsync(new AiSupplierInsightRequest());
 
-        Assert.NotNull(openAiClient.Request);
-        Assert.Contains("Warehouse Partner", openAiClient.Request.Prompt, StringComparison.Ordinal);
-        Assert.Contains("totalPurchases", openAiClient.Request.Prompt, StringComparison.Ordinal);
-        Assert.Contains("reliabilityLevel", openAiClient.Request.Prompt, StringComparison.Ordinal);
-        Assert.DoesNotContain("purchaseId", openAiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("createdBy", openAiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(aiClient.Request);
+        Assert.Contains("Warehouse Partner", aiClient.Request.Prompt, StringComparison.Ordinal);
+        Assert.Contains("totalPurchases", aiClient.Request.Prompt, StringComparison.Ordinal);
+        Assert.Contains("reliabilityLevel", aiClient.Request.Prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("purchaseId", aiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("createdBy", aiClient.Request.Prompt, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public sealed class AiSupplierInsightServiceTests
         var dataService = new StubAiSupplierInsightDataService([]);
         var service = new AiSupplierInsightService(
             dataService,
-            new StubOpenAiClient(new AiCompletionResponseDto
+            new StubAiClient(new AiCompletionResponseDto
             {
                 Text = "{\"recommendations\":[]}",
                 Model = "test-model"
@@ -140,12 +140,12 @@ public sealed class AiSupplierInsightServiceTests
     public async Task GenerateSupplierPerformanceInsightsAsync_WhenRequestIsInvalid_ReturnsFailureWithoutCallingDependencies()
     {
         var dataService = new StubAiSupplierInsightDataService([]);
-        var openAiClient = new StubOpenAiClient(new AiCompletionResponseDto
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
         {
             Text = "{\"recommendations\":[]}",
             Model = "test-model"
         });
-        var service = new AiSupplierInsightService(dataService, openAiClient);
+        var service = new AiSupplierInsightService(dataService, aiClient);
 
         var result = await service.GenerateSupplierPerformanceInsightsAsync(new AiSupplierInsightRequest
         {
@@ -155,7 +155,7 @@ public sealed class AiSupplierInsightServiceTests
 
         Assert.False(result.Succeeded);
         Assert.Null(dataService.Request);
-        Assert.Null(openAiClient.Request);
+        Assert.Null(aiClient.Request);
     }
 
     private sealed class StubAiSupplierInsightDataService(
@@ -172,7 +172,7 @@ public sealed class AiSupplierInsightServiceTests
         }
     }
 
-    private sealed class StubOpenAiClient(AiCompletionResponseDto response) : IOpenAiClient
+    private sealed class StubAiClient(AiCompletionResponseDto response) : IAiClient
     {
         public AiCompletionRequestDto? Request { get; private set; }
 

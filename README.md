@@ -6,6 +6,42 @@ Copy `.env.example` to `.env` for local development and keep real credentials in
 
 Do not store secrets in tracked files such as `appsettings.json`, `appsettings.Development.json`, or `launchSettings.json`.
 
+## AI Providers
+
+MarketFlow AI features use one shared `IAiClient` abstraction and can run in three modes selected by `Ai:Provider` or the `AI_PROVIDER` environment variable:
+
+- `Fake`: deterministic local responses for development and tests. This is the default in development and does not require an OpenAI API key.
+- `OpenAI`: real OpenAI API responses. Set `AI_PROVIDER=OpenAI`, `OPENAI_API_KEY`, and optionally `OPENAI_MODEL` or `OPENAI_BASE_URL`.
+- `Ollama`: local free LLM responses through Ollama. Start Ollama locally, pull the configured model, then set `AI_PROVIDER=Ollama`, `OLLAMA_BASE_URL`, and `OLLAMA_MODEL`.
+
+Example local Ollama setup:
+
+```bash
+ollama pull llama3.1
+AI_PROVIDER=Ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1
+```
+
+Provider values are configured in `appsettings*.json` like this:
+
+```json
+{
+  "Ai": {
+    "Provider": "Fake"
+  },
+  "OpenAi": {
+    "ApiKey": "",
+    "Model": "gpt-4.1-mini",
+    "BaseUrl": "https://api.openai.com"
+  },
+  "Ollama": {
+    "BaseUrl": "http://localhost:11434",
+    "Model": "llama3.1"
+  }
+}
+```
+
 ## Deployment Notes
 
 Require HTTPS for API traffic in deployed environments. Company onboarding receives the initial CompanyAdmin password in plaintext over the request body before the backend hashes it with BCrypt.
