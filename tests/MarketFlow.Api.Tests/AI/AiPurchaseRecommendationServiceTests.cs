@@ -94,6 +94,44 @@ public sealed class AiPurchaseRecommendationServiceTests
     }
 
     [Fact]
+    public async Task GeneratePurchaseRecommendationsAsync_UsesMinimumStockAlertAsTargetFloor()
+    {
+        var aiClient = new StubAiClient(new AiCompletionResponseDto
+        {
+            Text = "{\"explanations\":[]}",
+            Model = "test-model"
+        });
+        var service = new AiPurchaseRecommendationService(
+            new StubAiPurchaseRecommendationDataService(
+            [
+                new AiPurchaseRecommendationDataDto
+                {
+                    ProductId = 6,
+                    ProductName = "Rice",
+                    CurrentStock = 4,
+                    MinimumStockAlert = 12,
+                    TotalQuantitySold = 0,
+                    PendingPurchaseQuantity = 2
+                }
+            ]),
+            aiClient);
+
+        var result = await service.GeneratePurchaseRecommendationsAsync(new AiPurchaseRecommendationRequest
+        {
+            SalesHistoryDays = 30,
+            TargetStockDays = 14
+        });
+
+        Assert.True(result.Succeeded);
+        var recommendation = Assert.Single(result.Data!);
+        Assert.Equal(6, recommendation.ProductId);
+        Assert.Equal(0m, recommendation.ForecastDemand);
+        Assert.Equal(2, recommendation.PendingPurchaseQuantity);
+        Assert.Equal(6, recommendation.RecommendedPurchaseQuantity);
+        Assert.Equal("Current stock plus pending purchases is below the minimum stock alert.", recommendation.Reason);
+    }
+
+    [Fact]
     public async Task GeneratePurchaseRecommendationsAsync_WhenOpenAiChangesQuantity_KeepsBackendQuantity()
     {
         var service = new AiPurchaseRecommendationService(
