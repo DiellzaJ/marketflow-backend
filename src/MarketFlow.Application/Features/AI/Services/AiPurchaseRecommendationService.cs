@@ -122,8 +122,11 @@ public class AiPurchaseRecommendationService(
             request.SalesHistoryDays,
             request.TargetStockDays);
         var effectiveStock = item.CurrentStock + item.PendingPurchaseQuantity;
+        var targetStock = Math.Max(
+            item.MinimumStockAlert,
+            (int)Math.Ceiling(forecast.ForecastDemand));
         var recommendedPurchaseQuantity = Math.Max(
-            (int)Math.Ceiling(forecast.ForecastDemand) - effectiveStock,
+            targetStock - effectiveStock,
             0);
 
         return new AiPurchaseRecommendationDto
@@ -140,7 +143,9 @@ public class AiPurchaseRecommendationService(
             PreferredSupplierName = item.PreferredSupplierName,
             Reason = recommendedPurchaseQuantity == 0
                 ? "Current stock and pending purchases cover forecast demand."
-                : "Forecast demand is greater than current stock plus pending purchases."
+                : targetStock == item.MinimumStockAlert && item.MinimumStockAlert > forecast.ForecastDemand
+                    ? "Current stock plus pending purchases is below the minimum stock alert."
+                    : "Forecast demand is greater than current stock plus pending purchases."
         };
     }
 

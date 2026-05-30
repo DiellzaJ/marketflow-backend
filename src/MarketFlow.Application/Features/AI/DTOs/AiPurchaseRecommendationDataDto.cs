@@ -8,6 +8,8 @@ public class AiPurchaseRecommendationDataDto
 
     public int CurrentStock { get; set; }
 
+    public int MinimumStockAlert { get; set; }
+
     public long TotalQuantitySold { get; set; }
 
     public int PendingPurchaseQuantity { get; set; }

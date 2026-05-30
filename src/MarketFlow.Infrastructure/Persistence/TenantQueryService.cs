@@ -2353,11 +2353,12 @@ public sealed class TenantQueryService :
             WITH inventory_totals AS (
                 SELECT p.id AS product_id,
                        p.name AS product_name,
-                       COALESCE(SUM(i.quantity), 0)::int AS current_stock
+                       COALESCE(SUM(i.quantity), 0)::int AS current_stock,
+                       p.min_stock_alert
                 FROM {schemaName}.inventory i
                 INNER JOIN {schemaName}.products p ON p.id = i.product_id
                 {inventoryWhereClause}
-                GROUP BY p.id, p.name
+                GROUP BY p.id, p.name, p.min_stock_alert
             ),
             sales_totals AS (
                 SELECT si.product_id,
@@ -2470,11 +2471,12 @@ public sealed class TenantQueryService :
             WITH inventory_totals AS (
                 SELECT p.id AS product_id,
                        p.name AS product_name,
-                       COALESCE(SUM(i.quantity), 0)::int AS current_stock
+                       COALESCE(SUM(i.quantity), 0)::int AS current_stock,
+                       p.min_stock_alert
                 FROM {schemaName}.inventory i
                 INNER JOIN {schemaName}.products p ON p.id = i.product_id
                 {inventoryWhereClause}
-                GROUP BY p.id, p.name
+                GROUP BY p.id, p.name, p.min_stock_alert
             ),
             sales_totals AS (
                 SELECT si.product_id,
@@ -2514,6 +2516,7 @@ public sealed class TenantQueryService :
             SELECT it.product_id,
                    it.product_name,
                    it.current_stock,
+                   it.min_stock_alert,
                    COALESCE(st.total_quantity_sold, 0)::bigint AS total_quantity_sold,
                    COALESCE(ppt.pending_purchase_quantity, 0)::int AS pending_purchase_quantity,
                    sh.supplier_id,
@@ -2536,10 +2539,11 @@ public sealed class TenantQueryService :
                 ProductId = reader.GetInt32(0),
                 ProductName = reader.GetString(1),
                 CurrentStock = reader.GetInt32(2),
-                TotalQuantitySold = reader.GetInt64(3),
-                PendingPurchaseQuantity = reader.GetInt32(4),
-                PreferredSupplierId = reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                PreferredSupplierName = reader.IsDBNull(6) ? null : reader.GetString(6)
+                MinimumStockAlert = reader.GetInt32(3),
+                TotalQuantitySold = reader.GetInt64(4),
+                PendingPurchaseQuantity = reader.GetInt32(5),
+                PreferredSupplierId = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                PreferredSupplierName = reader.IsDBNull(7) ? null : reader.GetString(7)
             });
         }
 

@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Categories.DTOs;
 using MarketFlow.Application.Features.Dashboard.DTOs;
 using MarketFlow.Application.Features.Inventory.DTOs;
@@ -356,6 +357,28 @@ public sealed class ProductServiceTests
     }
 
     [Fact]
+    public async Task UpdateProductAsync_WhenProductChanges_InvalidatesTenantAiCache()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var cache = new RecordingAiResultCache();
+        var service = new ProductService(
+            tenantQueryService,
+            cache,
+            new TestCurrentUserService { CompanyId = 1 });
+
+        var result = await service.UpdateProductAsync(10, new UpdateProductRequest
+        {
+            Name = "Milk",
+            Barcode = "123456789",
+            CategoryId = 1,
+            MinStockAlert = 15
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, cache.InvalidatedCompanyId);
+    }
+
+    [Fact]
     public async Task UpdateProductAsync_RejectsDuplicateBarcodeFromAnotherProduct()
     {
         var tenantQueryService = new RecordingTenantQueryService();
@@ -510,6 +533,25 @@ public sealed class ProductServiceTests
         Assert.Equal("Oat Milk", result.Data?.Name);
         Assert.Equal("987654321", result.Data?.Barcode);
         Assert.Equal(1.50m, result.Data?.UnitPrice);
+    }
+
+    [Fact]
+    public async Task PatchProductAsync_WhenProductChangesMinStockAlert_InvalidatesTenantAiCache()
+    {
+        var tenantQueryService = new RecordingTenantQueryService();
+        var cache = new RecordingAiResultCache();
+        var service = new ProductService(
+            tenantQueryService,
+            cache,
+            new TestCurrentUserService { CompanyId = 1 });
+
+        var result = await service.PatchProductAsync(10, new PatchProductRequest
+        {
+            MinStockAlert = 20
+        });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(1, cache.InvalidatedCompanyId);
     }
 
     [Fact]
@@ -1092,5 +1134,47 @@ public sealed class ProductServiceTests
         {
             throw new NotSupportedException();
         }
+    }
+
+    private sealed class RecordingAiResultCache : IAiResultCache
+    {
+        public int? InvalidatedCompanyId { get; private set; }
+
+        public Task<T?> GetAsync<T>(
+            string key,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task SetAsync<T>(
+            string key,
+            T value,
+            TimeSpan? expiration = null,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task InvalidateCompanyAsync(
+            int companyId,
+            CancellationToken cancellationToken = default)
+        {
+            InvalidatedCompanyId = companyId;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TestCurrentUserService : ICurrentUserService
+    {
+        public int? UserId { get; init; }
+
+        public int? CompanyId { get; init; }
+
+        public string? Email { get; init; }
+
+        public string? Role { get; init; }
+
+        public string? SchemaName { get; init; }
     }
 }
