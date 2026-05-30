@@ -1,5 +1,6 @@
 using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.AI.Interfaces;
 using MarketFlow.Application.Features.Products.Configuration;
 using MarketFlow.Application.Features.Products.DTOs;
 using MarketFlow.Application.Features.Products.Exceptions;
@@ -15,10 +16,17 @@ public class ProductService : IProductService
         "Use the product deactivate or reactivate endpoint to change active state.";
 
     private readonly ITenantQueryService _tenantQueryService;
+    private readonly IAiResultCache? _aiResultCache;
+    private readonly ICurrentUserService? _currentUserService;
 
-    public ProductService(ITenantQueryService tenantQueryService)
+    public ProductService(
+        ITenantQueryService tenantQueryService,
+        IAiResultCache? aiResultCache = null,
+        ICurrentUserService? currentUserService = null)
     {
         _tenantQueryService = tenantQueryService;
+        _aiResultCache = aiResultCache;
+        _currentUserService = currentUserService;
     }
 
     public async Task<ServiceResult<PagedResult<ProductDto>>> GetProductsAsync(
@@ -89,6 +97,7 @@ public class ProductService : IProductService
         try
         {
             var product = await _tenantQueryService.CreateProductAsync(request, cancellationToken);
+            await InvalidateAiCacheAsync(cancellationToken);
             return ServiceResult<ProductDto>.Success(product, "Product created.");
         }
         catch (ProductBarcodeConflictException)
@@ -137,7 +146,7 @@ public class ProductService : IProductService
 
         return product is null
             ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<ProductDto>.Success(product, "Product updated.");
+            : await SuccessWithAiCacheInvalidationAsync(product, "Product updated.", cancellationToken);
     }
 
     public async Task<ServiceResult<ProductDto>> PatchProductAsync(
@@ -190,7 +199,7 @@ public class ProductService : IProductService
 
         return product is null
             ? ServiceResult<ProductDto>.Failure("Product was not found.", ServiceResultFailureType.NotFound)
-            : ServiceResult<ProductDto>.Success(product, "Product updated.");
+            : await SuccessWithAiCacheInvalidationAsync(product, "Product updated.", cancellationToken);
     }
 
     public async Task<ServiceResult<bool>> DeleteProductAsync(
@@ -230,6 +239,7 @@ public class ProductService : IProductService
 
         if (product is not null)
         {
+            await InvalidateAiCacheAsync(cancellationToken);
             return ServiceResult<ProductDto>.Success(product, "Product deactivated.");
         }
 
@@ -274,6 +284,7 @@ public class ProductService : IProductService
 
         if (product is not null)
         {
+            await InvalidateAiCacheAsync(cancellationToken);
             return ServiceResult<ProductDto>.Success(product, "Product reactivated.");
         }
 
@@ -341,6 +352,20 @@ public class ProductService : IProductService
 
         return null;
     }
+
+    private async Task<ServiceResult<ProductDto>> SuccessWithAiCacheInvalidationAsync(
+        ProductDto product,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        await InvalidateAiCacheAsync(cancellationToken);
+        return ServiceResult<ProductDto>.Success(product, message);
+    }
+
+    private Task InvalidateAiCacheAsync(CancellationToken cancellationToken) =>
+        _currentUserService?.CompanyId is { } companyId && _aiResultCache is not null
+            ? _aiResultCache.InvalidateCompanyAsync(companyId, cancellationToken)
+            : Task.CompletedTask;
 
     private static ServiceResult<ProductDto> BarcodeConflict()
     {
