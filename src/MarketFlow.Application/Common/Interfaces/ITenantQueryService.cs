@@ -1,0 +1,189 @@
+using MarketFlow.Application.Features.Inventory.DTOs;
+using MarketFlow.Application.Features.Categories.DTOs;
+using MarketFlow.Application.Common.Models;
+using MarketFlow.Application.Features.Products.DTOs;
+using MarketFlow.Application.Features.Purchases.DTOs;
+using MarketFlow.Application.Features.Dashboard.DTOs;
+using MarketFlow.Application.Features.Sales.DTOs;
+using MarketFlow.Application.Features.Suppliers.DTOs;
+using MarketFlow.Application.Features.AI.DTOs;
+
+namespace MarketFlow.Application.Common.Interfaces;
+
+public interface ITenantQueryService
+{
+    Task<PagedResult<ProductDto>> GetProductsAsync(
+        ProductListQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<ProductDto?> GetProductAsync(
+        int id,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> CategoryExistsAsync(int categoryId, CancellationToken cancellationToken = default);
+
+    Task<bool> ProductBarcodeExistsAsync(
+        string barcode,
+        int? excludedProductId = null,
+        CancellationToken cancellationToken = default);
+
+    Task<ProductDto> CreateProductAsync(CreateProductRequest request, CancellationToken cancellationToken = default);
+
+    Task<ProductDto?> UpdateProductAsync(int id, UpdateProductRequest request, CancellationToken cancellationToken = default);
+
+    Task<ProductDto?> PatchProductAsync(int id, PatchProductRequest request, CancellationToken cancellationToken = default);
+
+    Task<ProductDto?> SetProductActiveStateAsync(
+        int id,
+        bool isActive,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<CategoryDto>> GetCategoriesAsync(CancellationToken cancellationToken = default);
+
+    Task<PagedResult<InventoryItemDto>> GetInventoryAsync(
+        InventoryListQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<InventoryItemDto>> GetLowStockInventoryAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<PosProductLookupItemDto>?> GetPosProductsAsync(
+        PosProductLookupQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<InventoryItemDto?> GetInventoryItemAsync(int id, CancellationToken cancellationToken = default);
+
+    Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsAsync(
+        InventoryMovementListQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<PagedResult<InventoryMovementDto>> GetInventoryMovementsForInventoryAsync(
+        int inventoryId,
+        InventoryMovementListQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<InventoryItemDto?> CreateInventoryItemAsync(
+        CreateInventoryItemRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<InventoryItemDto?> UpdateInventoryItemAsync(
+        int id,
+        UpdateInventoryItemRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<InventoryItemDto?> PatchInventoryItemAsync(
+        int id,
+        PatchInventoryItemRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<InventoryItemDto?> AdjustInventoryItemAsync(
+        int id,
+        AdjustInventoryRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> TransferInventoryAsync(
+        TransferInventoryRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> DeleteInventoryItemAsync(int id, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<SaleDto>> GetSalesAsync(CancellationToken cancellationToken = default);
+
+    Task<PagedResult<SaleHistoryItemDto>> GetSalesHistoryAsync(
+        SaleHistoryQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<SalesSummaryDto> GetSalesSummaryAsync(
+        SalesSummaryQuery query,
+        CancellationToken cancellationToken = default);
+
+    Task<AiBusinessDataDto> GetAiBusinessDataAsync(
+        AiBusinessDataQuery query,
+        CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    Task<SaleDetailsResponse?> GetSaleDetailsAsync(
+        int id,
+        CancellationToken cancellationToken = default);
+
+    Task<SaleDto?> CreateSaleAsync(
+        CreateSaleRequest request,
+        int createdByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<SaleDto?> UpdateSaleAsync(int id, UpdateSaleRequest request, CancellationToken cancellationToken = default);
+
+    Task<SaleDto?> PatchSaleAsync(int id, PatchSaleRequest request, CancellationToken cancellationToken = default);
+
+    Task<bool> DeleteSaleAsync(int id, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<PurchaseDto>> GetPurchasesAsync(CancellationToken cancellationToken = default);
+
+    Task<PurchaseDto?> GetPurchaseAsync(int id, CancellationToken cancellationToken = default) =>
+        Task.FromResult<PurchaseDto?>(null);
+
+    Task<PurchaseDto?> CreatePurchaseAsync(
+        CreatePurchaseRequest request,
+        int createdByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<PurchaseDto?> UpdatePurchaseAsync(
+        int id,
+        UpdatePurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<PurchaseDto?> PatchPurchaseAsync(
+        int id,
+        PatchPurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default);
+
+    Task<PurchaseDto?> ReceivePurchaseAsync(
+        int id,
+        ReceivePurchaseRequest request,
+        int? updatedByUserId,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<PurchaseDto?>(null);
+
+    Task<PurchaseDto?> CancelPurchaseAsync(
+        int id,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<PurchaseDto?>(null);
+
+    Task<bool> DeletePurchaseAsync(int id, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyCollection<SupplierDto>> GetSuppliersAsync(
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyCollection<SupplierDto>>(Array.Empty<SupplierDto>());
+
+    Task<SupplierDto?> GetSupplierAsync(
+        int id,
+        bool includeInactive = false,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<SupplierDto?>(null);
+
+    Task<SupplierDto> CreateSupplierAsync(
+        CreateSupplierRequest request,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult(new SupplierDto());
+
+    Task<SupplierDto?> UpdateSupplierAsync(
+        int id,
+        UpdateSupplierRequest request,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<SupplierDto?>(null);
+
+    Task<SupplierDto?> SetSupplierActiveStateAsync(
+        int id,
+        bool isActive,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<SupplierDto?>(null);
+}

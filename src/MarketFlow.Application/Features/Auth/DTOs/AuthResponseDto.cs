@@ -1,0 +1,29 @@
+namespace MarketFlow.Application.Features.Auth.DTOs;
+
+public class AuthResponse
+{
+    public int UserId { get; set; }
+
+    public string FullName { get; set; } = string.Empty;
+
+    public string Email { get; set; } = string.Empty;
+
+    public string Role { get; set; } = string.Empty;
+
+    public int CompanyId { get; set; }
+
+    public string SchemaName { get; set; } = string.Empty;
+
+    public AuthUserAssignmentDto? Assignment { get; set; }
+
+    public string AccessToken { get; set; } = string.Empty;
+
+    public string RefreshToken { get; set; } = string.Empty;
+}
+
+public class AuthUserAssignmentDto
+{
+    public int MarketId { get; set; }
+
+    public int? DepartmentId { get; set; }
+}

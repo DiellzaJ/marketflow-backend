@@ -1,0 +1,494 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using MarketFlow.Api.Authorization;
+using MarketFlow.Api.Services;
+using MarketFlow.Application.Common.Interfaces;
+using MarketFlow.Application.Features.AI.Interfaces;
+using MarketFlow.Application.Features.AI.Services;
+using MarketFlow.Application.Features.Auth.Interfaces;
+using MarketFlow.Application.Features.Categories.Interfaces;
+using MarketFlow.Application.Features.Categories.Services;
+using MarketFlow.Application.Features.Companies.Interfaces;
+using MarketFlow.Application.Features.Companies.Services;
+using MarketFlow.Application.Features.Dashboard.Interfaces;
+using MarketFlow.Application.Features.Dashboard.Services;
+using MarketFlow.Application.Features.Departments.Interfaces;
+using MarketFlow.Application.Features.Departments.Services;
+using MarketFlow.Application.Features.Inventory.Interfaces;
+using MarketFlow.Application.Features.Inventory.Services;
+using MarketFlow.Application.Features.Markets.Interfaces;
+using MarketFlow.Application.Features.Markets.Services;
+using MarketFlow.Application.Features.Products.Interfaces;
+using MarketFlow.Application.Features.Products.Services;
+using MarketFlow.Application.Features.Purchases.Interfaces;
+using MarketFlow.Application.Features.Purchases.Services;
+using MarketFlow.Application.Features.Sales.Interfaces;
+using MarketFlow.Application.Features.Sales.Services;
+using MarketFlow.Application.Features.Suppliers.Interfaces;
+using MarketFlow.Application.Features.Suppliers.Services;
+using MarketFlow.Application.Features.Users.Interfaces;
+using MarketFlow.Application.Features.Users.Services;
+using MarketFlow.Application.Features.Profile.Interfaces;
+using MarketFlow.Application.Features.Profile.Services;
+using MarketFlow.Infrastructure.BackgroundJobs;
+using MarketFlow.Infrastructure.Caching;
+using MarketFlow.Infrastructure.MultiTenancy;
+using MarketFlow.Infrastructure.OpenAI;
+using MarketFlow.Infrastructure.Persistence;
+using MarketFlow.Infrastructure.Repositories;
+using MarketFlow.Infrastructure.Services;
+using MarketFlow.Infrastructure.Services.Auth;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
+using Npgsql;
+
+namespace MarketFlow.Api.Extensions;
+
+public static class ServiceCollectionExtensions
+{
+    public const string FrontendCorsPolicy = "FrontendCorsPolicy";
+
+    public static IServiceCollection AddApiServices(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddHttpContextAccessor();
+
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseNpgsql(CreatePostgresConnectionString(configuration)));
+
+        services.AddCors(options =>
+        {
+            options.AddPolicy(FrontendCorsPolicy, policy =>
+            {
+                var frontendUrls = GetFrontendUrls(configuration);
+
+                if (frontendUrls.Length > 0)
+                {
+                    policy.WithOrigins(frontendUrls);
+                }
+
+                policy
+                    .AllowAnyHeader()
+                    .AllowAnyMethod();
+            });
+        });
+
+        var jwtSecret = GetRequiredConfigurationValue(configuration, "Jwt:Secret", "Jwt__Secret");
+
+        services
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = GetRequiredConfigurationValue(configuration, "Jwt:Issuer", "Jwt__Issuer"),
+                    ValidateAudience = true,
+                    ValidAudience = GetRequiredConfigurationValue(configuration, "Jwt:Audience", "Jwt__Audience"),
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.Zero
+                };
+
+                options.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = async context =>
+                    {
+                        var tokenId = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti);
+
+                        if (string.IsNullOrWhiteSpace(tokenId))
+                        {
+                            context.Fail("Access token is missing token id.");
+                            return;
+                        }
+
+                        var dbContext = context.HttpContext.RequestServices
+                            .GetRequiredService<ApplicationDbContext>();
+
+                        var tokenIsRevoked = await dbContext.RevokedAccessTokens
+                            .AnyAsync(x => x.TokenId == tokenId && x.ExpiresAt > DateTimeOffset.UtcNow);
+
+                        if (tokenIsRevoked)
+                        {
+                            context.Fail("Access token has been revoked.");
+                        }
+                    }
+                };
+            });
+
+        services.AddAuthorization(options => options.AddMarketFlowPolicies());
+        services.AddScoped<IAuthorizationHandler, ActiveUserAuthorizationHandler>();
+        services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        services.AddScoped<AiTenantScopeAuthorizationFilter>();
+
+        services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<ICompanyStore, CompanyStore>();
+        services.AddScoped<ITenantContextStore, TenantContextStore>();
+        services.AddScoped<TenantQueryService>();
+        services.AddScoped<ITenantQueryService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiChatSessionStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IMarketQueryService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IMarketStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IDepartmentQueryService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IDepartmentStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<ISupplierStore>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiInventoryForecastDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiInventoryInsightDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiPurchaseRecommendationDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiSupplierInsightDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IAiAnomalyDetectionDataService>(serviceProvider =>
+            serviceProvider.GetRequiredService<TenantQueryService>());
+        services.AddScoped<IUserStore, UserStore>();
+
+        services.AddScoped<IAuthService, MarketFlow.Infrastructure.Services.Auth.AuthService>();
+        services.AddScoped<IJwtTokenService, JwtTokenService>();
+        services.AddScoped<IAiBusinessDataService, AiBusinessDataService>();
+        services.AddScoped<IAiDashboardService, AiDashboardService>();
+        services.AddScoped<IAiInventoryForecastService, AiInventoryForecastService>();
+        services.AddScoped<IAiInventoryInsightService, AiInventoryInsightService>();
+        services.AddScoped<IAiPurchaseRecommendationService, AiPurchaseRecommendationService>();
+        services.AddScoped<IAiSupplierInsightService, AiSupplierInsightService>();
+        services.AddScoped<IAiAnomalyDetectionService, AiAnomalyDetectionService>();
+        services.AddScoped<IAiReportQueryService, AiReportQueryService>();
+        services.AddScoped<IAiChatService, AiChatService>();
+        services.AddScoped<ICompanyService, CompanyService>();
+        services.AddScoped<IDashboardService, DashboardService>();
+        services.AddScoped<ICategoryService, CategoryService>();
+        services.AddScoped<IMarketService, MarketService>();
+        services.AddScoped<IDepartmentService, DepartmentService>();
+        services.AddScoped<IUserCreationValidator, UserCreationValidator>();
+        services.AddScoped<IUserService, UserService>();
+        services.AddScoped<IProfileService, ProfileService>();
+        services.AddScoped<IProductService, ProductService>();
+        services.AddScoped<IInventoryService, InventoryService>();
+        services.AddScoped<IPurchaseService, PurchaseService>();
+        services.AddScoped<ISupplierService, SupplierService>();
+        services.AddScoped<ISalesService, SalesService>();
+
+        services.AddScoped<ProductRepository>();
+        services.AddScoped<InventoryRepository>();
+        services.AddScoped<SalesRepository>();
+
+        services.AddScoped<JwtTokenService>();
+        services.AddScoped<PasswordHasher>();
+        services.AddScoped<IAiRuntimeInfo, AiRuntimeInfo>();
+        services.AddScoped<IAiResultCache, RedisAiResultCache>();
+        services.Configure<AiOptions>(
+            configuration.GetSection(AiOptions.SectionName));
+        services.Configure<OpenAiOptions>(
+            configuration.GetSection(OpenAiOptions.SectionName));
+        services.Configure<OllamaOptions>(
+            configuration.GetSection(OllamaOptions.SectionName));
+
+        var aiProvider = GetAiProvider(configuration);
+
+        switch (aiProvider)
+        {
+            case AiProvider.Fake:
+                services.AddScoped<IAiClient, FakeAiClient>();
+                break;
+            case AiProvider.OpenAI:
+                services.AddHttpClient<IAiClient, OpenAiClient>((serviceProvider, httpClient) =>
+                {
+                    var options = serviceProvider.GetRequiredService<IOptions<OpenAiOptions>>().Value;
+                    httpClient.BaseAddress = options.BaseUrl;
+                });
+                break;
+            case AiProvider.Ollama:
+                services.AddHttpClient<IAiClient, OllamaAiClient>((serviceProvider, httpClient) =>
+                {
+                    var options = serviceProvider.GetRequiredService<IOptions<OllamaOptions>>().Value;
+                    httpClient.BaseAddress = options.BaseUrl;
+                });
+                break;
+            default:
+                throw new InvalidOperationException($"Unsupported AI provider '{aiProvider}'.");
+        }
+
+        services.AddScoped<TenantProvider>();
+        services.AddSingleton<RedisCacheService>();
+        services.Configure<StockAlertJobOptions>(
+            configuration.GetSection("BackgroundJobs:LowStockAlerts"));
+        services.Configure<AiAnalysisBackgroundJobOptions>(
+            configuration.GetSection("BackgroundJobs:AiAnalysis"));
+        services.AddScoped<StockAlertJob>();
+        services.AddScoped<AiAnalysisBackgroundJob>();
+        services.AddHostedService<StockAlertHostedService>();
+        services.AddHostedService<AiAnalysisHostedService>();
+
+        return services;
+    }
+
+    private static AiProvider GetAiProvider(IConfiguration configuration)
+    {
+        var providerName = configuration[$"{AiOptions.SectionName}:Provider"];
+
+        if (string.IsNullOrWhiteSpace(providerName))
+        {
+            var legacyUseFakeClient = configuration[$"{OpenAiOptions.SectionName}:UseFakeClient"];
+
+            if (bool.TryParse(legacyUseFakeClient, out var useFakeClient))
+            {
+                return useFakeClient ? AiProvider.Fake : AiProvider.OpenAI;
+            }
+
+            return AiProvider.Fake;
+        }
+
+        return Enum.TryParse<AiProvider>(providerName, ignoreCase: true, out var provider)
+            ? provider
+            : throw new InvalidOperationException(
+                $"Unsupported AI provider '{providerName}'. Use Fake, OpenAI, or Ollama.");
+    }
+
+    public static AuthorizationOptions AddMarketFlowPolicies(this AuthorizationOptions options)
+    {
+        options.AddPolicy(AuthorizationPolicies.ActiveUser, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.RootAdminOnly, policy =>
+            policy.RequireRole("RootAdmin"));
+
+        options.AddPolicy(AuthorizationPolicies.CompanyAdminOnly, policy =>
+            policy.RequireRole("CompanyAdmin"));
+
+        options.AddPolicy(AuthorizationPolicies.CompanyAdminOrMainOperator, policy =>
+            policy.RequireRole("CompanyAdmin", "MainOperator"));
+
+        options.AddPolicy(AuthorizationPolicies.CanViewAiDashboard, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanUseAiAssistant, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanViewInventoryAiRecommendations, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager", "InventoryEmployee");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanViewPurchaseAiRecommendations, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new ActiveUserRequirement());
+            policy.Requirements.Add(new PermissionRequirement("purchases", "read"));
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "read"));
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanViewSupplierAiInsights, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new ActiveUserRequirement());
+            policy.Requirements.Add(new PermissionRequirement("purchases", "read"));
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "read"));
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CanViewAnomalyInsights, policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireRole("CompanyAdmin", "MainOperator", "DepartmentManager");
+            policy.Requirements.Add(new ActiveUserRequirement());
+        });
+
+        options.AddPolicy(AuthorizationPolicies.ManageCompanies, policy =>
+            policy.Requirements.Add(new PermissionRequirement("company")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadUsers, policy =>
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new PermissionRequirement("users", "read"));
+        });
+
+        options.AddPolicy(AuthorizationPolicies.CreateUsers, policy =>
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin");
+            policy.Requirements.Add(new PermissionRequirement("users", "create"));
+        });
+
+        options.AddPolicy(AuthorizationPolicies.UpdateUsers, policy =>
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new PermissionRequirement("users", "update"));
+        });
+
+        options.AddPolicy(AuthorizationPolicies.DeleteUsers, policy =>
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new PermissionRequirement("users", "delete"));
+        });
+
+        options.AddPolicy(AuthorizationPolicies.ReadProducts, policy =>
+            policy.Requirements.Add(new PermissionRequirement("products", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateProducts, policy =>
+            policy.Requirements.Add(new PermissionRequirement("products", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateProducts, policy =>
+            policy.Requirements.Add(new PermissionRequirement("products", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteProducts, policy =>
+            policy.Requirements.Add(new PermissionRequirement("products", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadPurchases, policy =>
+            policy.Requirements.Add(new PermissionRequirement("purchases", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreatePurchases, policy =>
+            policy.Requirements.Add(new PermissionRequirement("purchases", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdatePurchases, policy =>
+            policy.Requirements.Add(new PermissionRequirement("purchases", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeletePurchases, policy =>
+            policy.Requirements.Add(new PermissionRequirement("purchases", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteSuppliers, policy =>
+            policy.Requirements.Add(new PermissionRequirement("suppliers", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadSales, policy =>
+            policy.Requirements.Add(new PermissionRequirement("sales", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateSales, policy =>
+            policy.Requirements.Add(new PermissionRequirement("sales", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateSales, policy =>
+            policy.Requirements.Add(new PermissionRequirement("sales", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteSales, policy =>
+            policy.Requirements.Add(new PermissionRequirement("sales", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateInventory, policy =>
+            policy.Requirements.Add(new PermissionRequirement("inventory", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadInventory, policy =>
+            policy.Requirements.Add(new PermissionRequirement("inventory", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateInventory, policy =>
+            policy.Requirements.Add(new PermissionRequirement("stock", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.AdjustInventory, policy =>
+            policy.Requirements.Add(new PermissionRequirement("stock", "adjust")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteInventory, policy =>
+            policy.Requirements.Add(new PermissionRequirement("inventory", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadInventoryMovements, policy =>
+            policy.Requirements.Add(new PermissionRequirement("inventory-movements", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.TransferInventory, policy =>
+            policy.Requirements.Add(new PermissionRequirement("stock", "transfer")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadMarkets, policy =>
+            policy.Requirements.Add(new PermissionRequirement("markets", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateMarkets, policy =>
+            policy.Requirements.Add(new PermissionRequirement("markets", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateMarkets, policy =>
+            policy.Requirements.Add(new PermissionRequirement("markets", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteMarkets, policy =>
+            policy.Requirements.Add(new PermissionRequirement("markets", "delete")));
+
+        options.AddPolicy(AuthorizationPolicies.ReadDepartments, policy =>
+            policy.Requirements.Add(new PermissionRequirement("departments", "read")));
+
+        options.AddPolicy(AuthorizationPolicies.CreateDepartments, policy =>
+            policy.Requirements.Add(new PermissionRequirement("departments", "create")));
+
+        options.AddPolicy(AuthorizationPolicies.UpdateDepartments, policy =>
+            policy.Requirements.Add(new PermissionRequirement("departments", "update")));
+
+        options.AddPolicy(AuthorizationPolicies.DeleteDepartments, policy =>
+            policy.Requirements.Add(new PermissionRequirement("departments", "delete")));
+
+        return options;
+    }
+
+    private static string CreatePostgresConnectionString(IConfiguration configuration)
+    {
+        var configuredConnectionString = configuration.GetConnectionString("DefaultConnection");
+
+        if (!string.IsNullOrWhiteSpace(configuredConnectionString))
+        {
+            return configuredConnectionString;
+        }
+
+        var portValue = GetRequiredConfigurationValue(configuration, "Database:Port", "DB_PORT");
+
+        if (!int.TryParse(portValue, out var port))
+        {
+            throw new InvalidOperationException("Database port must be a valid integer.");
+        }
+
+        return new NpgsqlConnectionStringBuilder
+        {
+            Host = GetRequiredConfigurationValue(configuration, "Database:Host", "DB_HOST"),
+            Port = port,
+            Database = GetRequiredConfigurationValue(configuration, "Database:Name", "DB_NAME"),
+            Username = GetRequiredConfigurationValue(configuration, "Database:Username", "DB_USERNAME"),
+            Password = configuration["Database:Password"] ?? string.Empty
+        }.ConnectionString;
+    }
+
+    private static string GetRequiredConfigurationValue(
+        IConfiguration configuration,
+        string configurationKey,
+        string environmentVariableName)
+    {
+        var value = configuration[configurationKey];
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        throw new InvalidOperationException(
+            $"Missing required configuration value '{configurationKey}'. Set it with '{environmentVariableName}' in .env or environment variables.");
+    }
+
+    private static string[] GetFrontendUrls(IConfiguration configuration)
+    {
+        return (configuration["Cors:FrontendUrl"] ?? string.Empty)
+            .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+}
