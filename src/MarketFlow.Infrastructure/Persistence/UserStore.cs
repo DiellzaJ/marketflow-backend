@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using NpgsqlTypes;
+using RoleAssignmentRules = MarketFlow.Application.Features.Users.Configuration.RoleAssignmentRules;
 
 namespace MarketFlow.Infrastructure.Persistence;
 
@@ -50,7 +51,10 @@ public sealed class UserStore : IUserStore
                     FullName = x.FullName,
                     Email = x.Email,
                     RoleName = x.Role.Name,
-                    IsActive = x.IsActive
+                    IsActive = x.IsActive,
+                    CompanyId = x.CompanyId,
+                    CompanyName = x.Company.Name,
+                    CreatedAt = x.CreatedAt
                 }))
             .ToListAsync(cancellationToken);
 
@@ -258,15 +262,6 @@ public sealed class UserStore : IUserStore
             return null;
         }
 
-        var email = NormalizeEmail(request.Email);
-        var emailExists = await _dbContext.Users
-            .AnyAsync(x => x.Id != id && x.Email == email, cancellationToken);
-
-        if (emailExists)
-        {
-            return null;
-        }
-
         var role = await _dbContext.Roles
             .FirstOrDefaultAsync(x => x.Name == request.RoleName, cancellationToken);
 
@@ -276,16 +271,28 @@ public sealed class UserStore : IUserStore
         }
 
         user.FullName = request.FullName.Trim();
-        user.Email = email;
         user.RoleId = role.Id;
         user.IsActive = request.IsActive;
+        user.Role = role;
 
-        if (!string.IsNullOrWhiteSpace(request.Password))
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        try
         {
-            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await UpsertStaffAssignmentAsync(
+                user.Company.SchemaName,
+                user.Id,
+                request.MarketId,
+                request.DepartmentId,
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
 
         return await MapUserWithAssignmentAsync(user, role.Name, cancellationToken);
     }
@@ -302,20 +309,6 @@ public sealed class UserStore : IUserStore
         if (user is null)
         {
             return null;
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.Email))
-        {
-            var email = NormalizeEmail(request.Email);
-            var emailExists = await _dbContext.Users
-                .AnyAsync(x => x.Id != id && x.Email == email, cancellationToken);
-
-            if (emailExists)
-            {
-                return null;
-            }
-
-            user.Email = email;
         }
 
         if (!string.IsNullOrWhiteSpace(request.FullName))
@@ -337,17 +330,45 @@ public sealed class UserStore : IUserStore
             user.Role = role;
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Password))
-        {
-            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
-        }
-
         if (request.IsActive.HasValue)
         {
             user.IsActive = request.IsActive.Value;
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        var currentAssignment = await GetStaffAssignmentAsync(
+            user.Company.SchemaName,
+            user.Id,
+            cancellationToken);
+        var updatedMarketId = ResolvePatchedMarketId(user, request, currentAssignment);
+        var updatedDepartmentId = ResolvePatchedDepartmentId(
+            user,
+            request,
+            currentAssignment,
+            updatedMarketId);
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            if (ShouldUpdateAssignment(user.Role.Name, request))
+            {
+                await UpsertStaffAssignmentAsync(
+                    user.Company.SchemaName,
+                    user.Id,
+                    updatedMarketId,
+                    updatedDepartmentId,
+                    cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw;
+        }
 
         return await MapUserWithAssignmentAsync(user, user.Role.Name, cancellationToken);
     }
@@ -451,6 +472,7 @@ public sealed class UserStore : IUserStore
         if (!includeAllCompanies)
         {
             query = query.Where(x => x.CompanyId == companyId);
+            query = query.Where(x => x.Role.Name != RoleAssignmentRules.RootAdmin);
         }
 
         return await query.FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -489,13 +511,69 @@ public sealed class UserStore : IUserStore
             FullName = user.FullName,
             Email = user.Email,
             RoleName = roleName,
-            IsActive = user.IsActive
+            IsActive = user.IsActive,
+            CompanyId = user.CompanyId,
+            CompanyName = user.Company.Name,
+            CreatedAt = user.CreatedAt
         };
     }
 
     private static string NormalizeEmail(string email)
     {
         return email.Trim().ToLowerInvariant();
+    }
+
+    private static bool ShouldUpdateAssignment(string roleName, PatchUserRequest request)
+    {
+        return request.MarketId.HasValue ||
+               request.DepartmentId.HasValue ||
+               string.Equals(roleName, RoleAssignmentRules.CompanyAdmin, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int? ResolvePatchedMarketId(
+        Domain.Entities.User user,
+        PatchUserRequest request,
+        UserAssignmentSummaryDto? currentAssignment)
+    {
+        if (string.Equals(user.Role.Name, RoleAssignmentRules.CompanyAdmin, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (request.MarketId.HasValue)
+        {
+            return request.MarketId.Value;
+        }
+
+        return currentAssignment?.MarketId;
+    }
+
+    private static int? ResolvePatchedDepartmentId(
+        Domain.Entities.User user,
+        PatchUserRequest request,
+        UserAssignmentSummaryDto? currentAssignment,
+        int? updatedMarketId)
+    {
+        if (string.Equals(user.Role.Name, RoleAssignmentRules.CompanyAdmin, StringComparison.OrdinalIgnoreCase) ||
+            !updatedMarketId.HasValue)
+        {
+            return null;
+        }
+
+        if (request.MarketId.HasValue)
+        {
+            return request.DepartmentId;
+        }
+
+        if (request.DepartmentId.HasValue)
+        {
+            return request.DepartmentId.Value;
+        }
+
+        return currentAssignment is not null &&
+               currentAssignment.MarketId == updatedMarketId.Value
+            ? currentAssignment.DepartmentId
+            : null;
     }
 
     private async Task<string?> GetCompanySchemaNameAsync(
@@ -538,6 +616,74 @@ public sealed class UserStore : IUserStore
                 new Npgsql.NpgsqlParameter("user_id", userId),
                 new Npgsql.NpgsqlParameter("market_id", marketId),
                 new Npgsql.NpgsqlParameter("department_id", departmentId ?? (object)DBNull.Value)
+            ],
+            cancellationToken);
+#pragma warning restore EF1002
+    }
+
+    private async Task UpsertStaffAssignmentAsync(
+        string schemaName,
+        int userId,
+        int? marketId,
+        int? departmentId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(schemaName))
+        {
+            return;
+        }
+
+        var currentAssignments = await GetStaffAssignmentsAsync(schemaName, [userId], cancellationToken);
+
+        if (currentAssignments.TryGetValue(userId, out var currentAssignment) &&
+            currentAssignment.MarketId == marketId &&
+            currentAssignment.DepartmentId == departmentId)
+        {
+            return;
+        }
+
+        await DeactivateStaffAssignmentsAsync(schemaName, userId, cancellationToken);
+
+        if (marketId.HasValue)
+        {
+            await CreateStaffAssignmentAsync(
+                schemaName,
+                userId,
+                marketId.Value,
+                departmentId,
+                cancellationToken);
+        }
+    }
+
+    private async Task<UserAssignmentSummaryDto?> GetStaffAssignmentAsync(
+        string schemaName,
+        int userId,
+        CancellationToken cancellationToken)
+    {
+        var assignments = await GetStaffAssignmentsAsync(schemaName, [userId], cancellationToken);
+
+        return assignments.TryGetValue(userId, out var assignment)
+            ? assignment
+            : null;
+    }
+
+    private async Task DeactivateStaffAssignmentsAsync(
+        string schemaName,
+        int userId,
+        CancellationToken cancellationToken)
+    {
+        var quotedSchemaName = QuoteIdentifier(schemaName);
+
+#pragma warning disable EF1002
+        await _dbContext.Database.ExecuteSqlRawAsync(
+            $"""
+            UPDATE {quotedSchemaName}.staff_assignments
+            SET is_active = FALSE
+            WHERE user_id = @user_id
+              AND is_active = TRUE;
+            """,
+            [
+                new NpgsqlParameter("user_id", userId)
             ],
             cancellationToken);
 #pragma warning restore EF1002

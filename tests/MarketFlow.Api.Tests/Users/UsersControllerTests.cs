@@ -2,6 +2,7 @@ using MarketFlow.Api.Controllers;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Users.DTOs;
 using MarketFlow.Application.Features.Users.Interfaces;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace MarketFlow.Api.Tests.Users;
@@ -48,6 +49,22 @@ public sealed class UsersControllerTests
     }
 
     [Fact]
+    public async Task GetAsync_WhenServiceReturnsForbidden_ReturnsForbidden()
+    {
+        var controller = new UsersController(new FakeUserService
+        {
+            GetUsersResult = ServiceResult<IReadOnlyCollection<UserDto>>.Failure(
+                "Forbidden user list access.",
+                ServiceResultFailureType.Forbidden)
+        });
+
+        var response = await controller.GetAsync(CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(response.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenUserIsCreated_ReturnsAssignmentSummary()
     {
         var createdUser = new UserDto
@@ -57,6 +74,9 @@ public sealed class UsersControllerTests
             Email = "seller@freshmarket.test",
             RoleName = "Seller",
             IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
             Assignment = new UserAssignmentSummaryDto
             {
                 MarketId = 3,
@@ -88,6 +108,73 @@ public sealed class UsersControllerTests
         Assert.Null(result.Data?.Assignment?.DepartmentId);
     }
 
+    [Fact]
+    public async Task GetByIdAsync_ReturnsUserDetailsForModal()
+    {
+        var user = new UserDto
+        {
+            Id = 7,
+            FullName = "Store Seller",
+            Email = "seller@freshmarket.test",
+            RoleName = "Seller",
+            IsActive = true,
+            CompanyId = 12,
+            CompanyName = "Fresh Market",
+            CreatedAt = new DateTimeOffset(2026, 5, 3, 14, 30, 0, TimeSpan.Zero),
+            Assignment = new UserAssignmentSummaryDto
+            {
+                MarketId = 3,
+                MarketName = "Central Market",
+                DepartmentId = 4,
+                DepartmentName = "Produce"
+            }
+        };
+        var controller = new UsersController(new FakeUserService
+        {
+            GetUserResult = ServiceResult<UserDto>.Success(user)
+        });
+
+        var response = await controller.GetByIdAsync(7, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var result = Assert.IsType<ServiceResult<UserDto>>(ok.Value);
+        Assert.True(result.Succeeded);
+        Assert.Equal(12, result.Data?.CompanyId);
+        Assert.Equal("Fresh Market", result.Data?.CompanyName);
+        Assert.Equal(4, result.Data?.Assignment?.DepartmentId);
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_WhenServiceReturnsForbidden_ReturnsForbidden()
+    {
+        var controller = new UsersController(new FakeUserService
+        {
+            GetUserResult = ServiceResult<UserDto>.Failure(
+                "Forbidden user access.",
+                ServiceResultFailureType.Forbidden)
+        });
+
+        var response = await controller.GetByIdAsync(7, CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(response.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenServiceReturnsValidation_ReturnsBadRequest()
+    {
+        var controller = new UsersController(new FakeUserService
+        {
+            DeleteUserResult = ServiceResult<bool>.Failure("You cannot deactivate your own account.")
+        });
+
+        var response = await controller.DeleteAsync(7, CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(response.Result);
+        var result = Assert.IsType<ServiceResult<bool>>(badRequest.Value);
+        Assert.Equal("You cannot deactivate your own account.", result.Message);
+    }
+
     private sealed class FakeUserService : IUserService
     {
         public ServiceResult<IReadOnlyCollection<UserDto>> GetUsersResult { get; init; } =
@@ -95,6 +182,12 @@ public sealed class UsersControllerTests
 
         public ServiceResult<UserDto> CreateUserResult { get; init; } =
             ServiceResult<UserDto>.Failure("Not configured.");
+
+        public ServiceResult<UserDto> GetUserResult { get; init; } =
+            ServiceResult<UserDto>.Failure("Not configured.");
+
+        public ServiceResult<bool> DeleteUserResult { get; init; } =
+            ServiceResult<bool>.Failure("Not configured.");
 
         public Task<ServiceResult<IReadOnlyCollection<UserDto>>> GetUsersAsync(
             CancellationToken cancellationToken = default)
@@ -106,7 +199,7 @@ public sealed class UsersControllerTests
             int id,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ServiceResult<UserDto>.Failure("Not configured."));
+            return Task.FromResult(GetUserResult);
         }
 
         public Task<ServiceResult<UserDto>> CreateUserAsync(
@@ -136,7 +229,7 @@ public sealed class UsersControllerTests
             int id,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(ServiceResult<bool>.Failure("Not configured."));
+            return Task.FromResult(DeleteUserResult);
         }
     }
 }

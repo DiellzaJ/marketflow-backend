@@ -5,7 +5,8 @@ public enum ServiceResultFailureType
     None,
     Validation,
     NotFound,
-    Conflict
+    Conflict,
+    Forbidden
 }
 
 public class ServiceResult<T>

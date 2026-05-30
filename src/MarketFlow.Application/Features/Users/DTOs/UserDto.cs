@@ -12,6 +12,12 @@ public class UserDto
 
     public bool IsActive { get; set; }
 
+    public int CompanyId { get; set; }
+
+    public string CompanyName { get; set; } = string.Empty;
+
+    public DateTimeOffset CreatedAt { get; set; }
+
     /// <summary>
     /// Current active staff assignment for operational users. CompanyAdmin users usually have no assignment.
     /// </summary>

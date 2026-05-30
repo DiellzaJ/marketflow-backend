@@ -119,7 +119,6 @@ public sealed class ProfileServiceTests
         Assert.NotNull(received);
         Assert.Equal("New", received!.FullName);
         // Restricted fields should not be set by ProfileService
-        Assert.True(string.IsNullOrWhiteSpace(received.Email));
         Assert.True(string.IsNullOrWhiteSpace(received.RoleName));
         Assert.Null(received.IsActive);
     }

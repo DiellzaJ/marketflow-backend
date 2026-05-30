@@ -325,16 +325,28 @@ public static class ServiceCollectionExtensions
             policy.Requirements.Add(new PermissionRequirement("company")));
 
         options.AddPolicy(AuthorizationPolicies.ReadUsers, policy =>
-            policy.Requirements.Add(new PermissionRequirement("users", "read")));
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new PermissionRequirement("users", "read"));
+        });
 
         options.AddPolicy(AuthorizationPolicies.CreateUsers, policy =>
-            policy.Requirements.Add(new PermissionRequirement("users", "create")));
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin");
+            policy.Requirements.Add(new PermissionRequirement("users", "create"));
+        });
 
         options.AddPolicy(AuthorizationPolicies.UpdateUsers, policy =>
-            policy.Requirements.Add(new PermissionRequirement("users", "update")));
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new PermissionRequirement("users", "update"));
+        });
 
         options.AddPolicy(AuthorizationPolicies.DeleteUsers, policy =>
-            policy.Requirements.Add(new PermissionRequirement("users", "delete")));
+        {
+            policy.RequireRole("RootAdmin", "CompanyAdmin", "MainOperator");
+            policy.Requirements.Add(new PermissionRequirement("users", "delete"));
+        });
 
         options.AddPolicy(AuthorizationPolicies.ReadProducts, policy =>
             policy.Requirements.Add(new PermissionRequirement("products", "read")));
