@@ -2,6 +2,7 @@ using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Common.Models;
 using MarketFlow.Application.Features.Profile.DTOs;
 using MarketFlow.Application.Features.Profile.Interfaces;
+using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 
 namespace MarketFlow.Application.Features.Profile.Services;
@@ -29,7 +30,11 @@ public class ProfileService : IProfileService
             return ServiceResult<UserProfileResponse>.Failure("Not authenticated.", ServiceResultFailureType.NotFound);
         }
 
-        var user = await _userStore.GetUserAsync(_currentUserService.UserId.Value, _currentUserService.CompanyId, false, cancellationToken);
+        var user = await _userStore.GetUserAsync(
+            _currentUserService.UserId.Value,
+            _currentUserService.CompanyId,
+            IncludeAllCompaniesForSelfProfile(),
+            cancellationToken);
 
         if (user is null)
         {
@@ -58,7 +63,12 @@ public class ProfileService : IProfileService
             FullName = request.FullName.Trim()
         };
 
-        var updated = await _userStore.PatchUserAsync(_currentUserService.UserId.Value, _currentUserService.CompanyId, false, patch, cancellationToken);
+        var updated = await _userStore.PatchUserAsync(
+            _currentUserService.UserId.Value,
+            _currentUserService.CompanyId,
+            IncludeAllCompaniesForSelfProfile(),
+            patch,
+            cancellationToken);
 
         return updated is null
             ? ServiceResult<UserProfileResponse>.Failure("User not found.", ServiceResultFailureType.NotFound)
@@ -77,7 +87,13 @@ public class ProfileService : IProfileService
             return ServiceResult<bool>.Failure("Current and new password are required.");
         }
 
-        var changed = await _userStore.ChangePasswordAsync(_currentUserService.UserId.Value, request.CurrentPassword, request.NewPassword, _currentUserService.CompanyId, false, cancellationToken);
+        var changed = await _userStore.ChangePasswordAsync(
+            _currentUserService.UserId.Value,
+            request.CurrentPassword,
+            request.NewPassword,
+            _currentUserService.CompanyId,
+            IncludeAllCompaniesForSelfProfile(),
+            cancellationToken);
 
         return changed
             ? ServiceResult<bool>.Success(true, "Password changed.")
@@ -104,5 +120,13 @@ public class ProfileService : IProfileService
             DepartmentId = user.Assignment?.DepartmentId,
             DepartmentName = user.Assignment?.DepartmentName
         };
+    }
+
+    private bool IncludeAllCompaniesForSelfProfile()
+    {
+        return string.Equals(
+            _currentUserService.Role,
+            RoleAssignmentRules.RootAdmin,
+            StringComparison.OrdinalIgnoreCase);
     }
 }

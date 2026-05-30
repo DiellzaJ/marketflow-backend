@@ -2,6 +2,7 @@ using MarketFlow.Application.Common.Interfaces;
 using MarketFlow.Application.Features.Companies.DTOs;
 using MarketFlow.Application.Features.Profile.DTOs;
 using MarketFlow.Application.Features.Profile.Services;
+using MarketFlow.Application.Features.Users.Configuration;
 using MarketFlow.Application.Features.Users.DTOs;
 
 namespace MarketFlow.Api.Tests.Profile;
@@ -40,6 +41,7 @@ public sealed class ProfileServiceTests
         Assert.Equal(7, result.Data?.DepartmentId);
         Assert.Equal(2, result.Data?.CompanyId);
         Assert.Equal("Test Company", result.Data?.CompanyName);
+        Assert.True(store.LastGetIncludeAllCompanies == false);
     }
 
     [Fact]
@@ -73,6 +75,31 @@ public sealed class ProfileServiceTests
     }
 
     [Fact]
+    public async Task GetProfileAsync_ForRootAdmin_UsesAllCompaniesLookup()
+    {
+        var store = new FakeUserStore();
+        var companyStore = new FakeCompanyStore();
+        var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2, Role = RoleAssignmentRules.RootAdmin };
+        companyStore.Companies.Add(new CompanyDto { Id = 2, Name = "Root Company" });
+        store.Users.Add(new UserDto
+        {
+            Id = 1,
+            FullName = "Root Admin",
+            Email = "root@x.test",
+            RoleName = RoleAssignmentRules.RootAdmin,
+            IsActive = true
+        });
+
+        var service = new ProfileService(store, current, companyStore);
+
+        var result = await service.GetProfileAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Root Admin", result.Data?.FullName);
+        Assert.True(store.LastGetIncludeAllCompanies == true);
+    }
+
+    [Fact]
     public async Task UpdateProfileAsync_UpdatesFullName()
     {
         var store = new FakeUserStore();
@@ -85,6 +112,30 @@ public sealed class ProfileServiceTests
 
         Assert.True(result.Succeeded);
         Assert.Equal("New Name", store.Users.First().FullName);
+        Assert.True(store.LastPatchIncludeAllCompanies == false);
+    }
+
+    [Fact]
+    public async Task UpdateProfileAsync_ForRootAdmin_UsesAllCompaniesLookup()
+    {
+        var store = new FakeUserStore();
+        var companyStore = new FakeCompanyStore();
+        var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2, Role = RoleAssignmentRules.RootAdmin };
+        store.Users.Add(new UserDto
+        {
+            Id = 1,
+            FullName = "Old Name",
+            Email = "root@x.test",
+            RoleName = RoleAssignmentRules.RootAdmin,
+            IsActive = true
+        });
+        var service = new ProfileService(store, current, companyStore);
+
+        var result = await service.UpdateProfileAsync(new UpdateProfileRequest { FullName = "New Root Name" });
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("New Root Name", store.Users.First().FullName);
+        Assert.True(store.LastPatchIncludeAllCompanies == true);
     }
 
     [Fact]
@@ -136,6 +187,7 @@ public sealed class ProfileServiceTests
         var result = await service.ChangePasswordAsync(new ChangePasswordRequest { CurrentPassword = "OldPass123", NewPassword = "NewPass456" });
 
         Assert.True(result.Succeeded);
+        Assert.True(store.LastChangePasswordIncludeAllCompanies == false);
     }
 
     [Fact]
@@ -153,6 +205,22 @@ public sealed class ProfileServiceTests
 
         Assert.True(result.Succeeded);
         Assert.Null(store.GetRefreshTokenHash(1));
+    }
+
+    [Fact]
+    public async Task ChangePasswordAsync_ForRootAdmin_UsesAllCompaniesLookup()
+    {
+        var store = new FakeUserStore();
+        var current = new FakeCurrentUserService { UserId = 1, CompanyId = 2, Role = RoleAssignmentRules.RootAdmin };
+        var companyStore = new FakeCompanyStore();
+        store.AddUserWithPassword(1, "root@x.test", "OldPass123", RoleAssignmentRules.RootAdmin);
+
+        var service = new ProfileService(store, current, companyStore);
+
+        var result = await service.ChangePasswordAsync(new ChangePasswordRequest { CurrentPassword = "OldPass123", NewPassword = "NewPass456" });
+
+        Assert.True(result.Succeeded);
+        Assert.True(store.LastChangePasswordIncludeAllCompanies == true);
     }
 
     [Fact]
@@ -174,15 +242,21 @@ public sealed class ProfileServiceTests
     {
         public List<UserDto> Users { get; } = new();
 
+        public bool? LastGetIncludeAllCompanies { get; private set; }
+
+        public bool? LastPatchIncludeAllCompanies { get; private set; }
+
+        public bool? LastChangePasswordIncludeAllCompanies { get; private set; }
+
         public Func<int, int?, bool, MarketFlow.Application.Features.Users.DTOs.PatchUserRequest, CancellationToken, Task<UserDto?>>? OverridePatch { get; set; }
 
         private readonly Dictionary<int, string> _passwordHashes = new();
 
         private readonly Dictionary<int, string?> _refreshTokenHashes = new();
 
-        public void AddUserWithPassword(int id, string email, string password)
+        public void AddUserWithPassword(int id, string email, string password, string roleName = RoleAssignmentRules.Seller)
         {
-            Users.Add(new UserDto { Id = id, FullName = "User", Email = email, RoleName = "Seller", IsActive = true });
+            Users.Add(new UserDto { Id = id, FullName = "User", Email = email, RoleName = roleName, IsActive = true });
             _passwordHashes[id] = BCrypt.Net.BCrypt.HashPassword(password);
         }
 
@@ -200,7 +274,11 @@ public sealed class ProfileServiceTests
             => Task.FromResult<IReadOnlyCollection<UserDto>>(Users);
 
         public Task<UserDto?> GetUserAsync(int id, int? companyId, bool includeAllCompanies, CancellationToken cancellationToken = default)
-            => Task.FromResult(Users.FirstOrDefault(x => x.Id == id));
+        {
+            LastGetIncludeAllCompanies = includeAllCompanies;
+
+            return Task.FromResult(FindVisibleUser(id, includeAllCompanies));
+        }
 
         public Task<UserDto?> CreateUserAsync(int companyId, MarketFlow.Application.Features.Users.DTOs.CreateUserRequest request, CancellationToken cancellationToken = default)
             => Task.FromResult<UserDto?>(null);
@@ -221,12 +299,14 @@ public sealed class ProfileServiceTests
 
         public Task<UserDto?> PatchUserAsync(int id, int? companyId, bool includeAllCompanies, MarketFlow.Application.Features.Users.DTOs.PatchUserRequest request, CancellationToken cancellationToken = default)
         {
+            LastPatchIncludeAllCompanies = includeAllCompanies;
+
             if (OverridePatch is not null)
             {
                 return OverridePatch(id, companyId, includeAllCompanies, request, cancellationToken);
             }
 
-            var user = Users.FirstOrDefault(x => x.Id == id);
+            var user = FindVisibleUser(id, includeAllCompanies);
 
             if (user is null) return Task.FromResult<UserDto?>(null);
 
@@ -243,6 +323,13 @@ public sealed class ProfileServiceTests
 
         public Task<bool> ChangePasswordAsync(int id, string currentPassword, string newPassword, int? companyId, bool includeAllCompanies, CancellationToken cancellationToken = default)
         {
+            LastChangePasswordIncludeAllCompanies = includeAllCompanies;
+
+            if (FindVisibleUser(id, includeAllCompanies) is null)
+            {
+                return Task.FromResult(false);
+            }
+
             if (!_passwordHashes.TryGetValue(id, out var hash))
             {
                 return Task.FromResult(false);
@@ -257,6 +344,19 @@ public sealed class ProfileServiceTests
             _refreshTokenHashes[id] = null;
 
             return Task.FromResult(true);
+        }
+
+        private UserDto? FindVisibleUser(int id, bool includeAllCompanies)
+        {
+            var user = Users.FirstOrDefault(x => x.Id == id);
+
+            if (!includeAllCompanies &&
+                string.Equals(user?.RoleName, RoleAssignmentRules.RootAdmin, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return user;
         }
     }
 
